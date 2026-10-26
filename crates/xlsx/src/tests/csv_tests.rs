@@ -206,14 +206,44 @@ fn writing() {
     };
     let out = String::from_utf8(write_csv(sh, b',', raw).unwrap()).unwrap();
     // The first cell is B2: the file starts at A1, so the leading empty row and column stay.
-    assert_eq!(out, ",,,\r\n,\"a,b\",\"q\"\"t\",\r\n,0.1,FALSE,\r\n,#DIV/0!,,\"x\ny\"\r\n");
+    // UTF-8 with a byte order mark, as Excel's CSV UTF-8.
+    assert_eq!(out, "\u{FEFF},,,\r\n,\"a,b\",\"q\"\"t\",\r\n,0.1,FALSE,\r\n,#DIV/0!,,\"x\ny\"\r\n");
     let semi = String::from_utf8(write_csv(sh, b';', raw).unwrap()).unwrap();
-    assert!(semi.starts_with(";;;\r\n;a,b;"));
+    assert!(semi.starts_with("\u{FEFF};;;\r\n;a,b;"));
     assert!(write_csv(&Sheet::new("E"), b',', raw).unwrap().is_empty());
     // Round trip.
     let back = read_csv(out.as_bytes(), &CsvOptions::default()).unwrap();
     assert_eq!(v(&back, 1, 1), Value::text("a,b"));
     assert_eq!(v(&back, 3, 3), Value::text("x\ny"));
+}
+
+/// P2: `₹`, `°`, `±`, `Ø` survive Excel because the file starts with the UTF-8 byte order mark;
+/// reading tolerates the mark (it is not part of A1).
+#[test]
+fn csv_export_has_a_bom_and_import_ignores_it() {
+    let mut s = Sheet::new("S");
+    s.set_value(CellRef::new(0, 0), Value::text("₹ 1,200"));
+    s.set_value(CellRef::new(0, 1), Value::text("90° ±0.5 Ø114.3"));
+    let bytes = write_csv(&s, b',', text_of(&s)).unwrap();
+    assert!(bytes.starts_with(&[0xEF, 0xBB, 0xBF]));
+    assert_eq!(&bytes[3..], "\"₹ 1,200\",90° ±0.5 Ø114.3\r\n".as_bytes());
+    let back = read_csv(&bytes, &CsvOptions::default()).unwrap();
+    assert_eq!(v(&back, 0, 0), Value::text("₹ 1,200"));
+    assert_eq!(v(&back, 0, 1), Value::text("90° ±0.5 Ø114.3"));
+    // A BOM in front of a number still reads a number.
+    let back = read_csv("\u{FEFF}42,x\r\n".as_bytes(), &CsvOptions::default()).unwrap();
+    assert_eq!(v(&back, 0, 0), Value::Number(42.0));
+}
+
+/// CSV import reads dates and grouped numbers by the current locale (en-IN: day first, 3;2).
+#[test]
+fn csv_import_follows_the_locale() {
+    let _l = gridcraft_core::locale::scoped(gridcraft_core::locale::Locale::en_in());
+    let back = read_csv(b"15-03-2026,03/04/2026,\"1,23,456\",1.2.3\r\n", &CsvOptions::default()).unwrap();
+    assert_eq!(v(&back, 0, 0), Value::Number(46096.0));
+    assert_eq!(v(&back, 0, 1), Value::Number(46115.0));
+    assert_eq!(v(&back, 0, 2), Value::Number(123456.0));
+    assert_eq!(v(&back, 0, 3), Value::text("1.2.3"));
 }
 
 #[test]

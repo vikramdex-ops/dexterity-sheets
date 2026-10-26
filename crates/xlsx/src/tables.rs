@@ -2,7 +2,7 @@
 //! functions that need the `_xlfn.` prefix in files, and unit conversions.
 
 /// Built-in number format codes (en-US) by id. Ids not listed (23–36 are East Asian
-/// locale formats) read as General.
+/// locale formats) read as General unless the current locale defines them.
 const BUILTIN_FORMATS: [(u32, &str); 36] = [
     (0, "General"),
     (1, "0"),
@@ -37,20 +37,32 @@ const BUILTIN_FORMATS: [(u32, &str); 36] = [
     (44, "_(\"$\"* #,##0.00_);_(\"$\"* \\(#,##0.00\\);_(\"$\"* \"-\"??_);_(@_)"),
     (45, "mm:ss"),
     (46, "[h]:mm:ss"),
-    (47, "mmss.0"),
+    // ECMA-376 lists `mmss.0`; Excel shows id 47 as `mm:ss.0` (37:43.7, not 3743.7).
+    (47, "mm:ss.0"),
     (48, "##0.0E+0"),
     (49, "@"),
 ];
 
+/// The code a built-in id read from a file stands for: Excel shows the locale-dependent ids
+/// (5–8, 14–22, 37–47) with the reader's regional settings, so they read as the current locale's
+/// code (`40` is `#,##0.00;[Red](#,##0.00)` in en-US, `#,##0.00;[Red]\-#,##0.00` in en-IN).
 pub fn builtin_format(id: u32) -> Option<&'static str> {
+    if let Some(code) = gridcraft_core::locale::locale().builtin(id) {
+        return Some(code);
+    }
     BUILTIN_FORMATS.iter().find(|(i, _)| *i == id).map(|(_, c)| *c)
 }
 
-/// Id to write for a format code when it is a locale-independent built-in. The currency formats
-/// 5–8 and the accounting formats with a currency, 42 and 44, are written as custom formats because
-/// their meaning depends on the reader's locale.
+/// Id to write for a format code when it is a locale-independent built-in (0–4, 9–13, 48, 49).
+/// Every other code is written as a custom format with its own text, whatever the current locale:
+/// a bare locale-dependent id (5–8 currency, 14–22 dates and times, 37–44 accounting, 45–47)
+/// shows the reader's version instead (en-IN Excel shows id 20 `h:mm` as `hh:mm` and id 43
+/// without parentheses).
 pub fn builtin_id(code: &str) -> Option<u32> {
-    BUILTIN_FORMATS.iter().find(|(i, c)| *c == code && !matches!(i, 5..=8 | 42 | 44)).map(|(i, _)| *i)
+    BUILTIN_FORMATS
+        .iter()
+        .find(|(i, c)| *c == code && !gridcraft_core::locale::is_locale_dependent_builtin(*i))
+        .map(|(i, _)| *i)
 }
 
 pub use gridcraft_core::color::INDEXED;
@@ -354,8 +366,15 @@ mod tests {
         assert_eq!(file_function_name("TRIMRANGE").as_deref(), Some("_xlfn.TRIMRANGE"));
         assert_eq!(file_function_name("SUM"), None);
         assert_eq!(builtin_format(14), Some("m/d/yyyy"));
+        assert_eq!(builtin_format(47), Some("mm:ss.0"));
         assert_eq!(builtin_id("0.00%"), Some(10));
         assert_eq!(builtin_id(builtin_format(5).unwrap()), None);
+        for id in [5, 14, 20, 22, 37, 40, 43, 45, 46, 47] {
+            assert_eq!(builtin_id(builtin_format(id).unwrap()), None, "{id}");
+        }
+        for id in [0, 1, 2, 3, 4, 9, 10, 11, 12, 13, 48, 49] {
+            assert_eq!(builtin_id(builtin_format(id).unwrap()), Some(id), "{id}");
+        }
         assert_eq!(paper_name(9), Some("A4"));
         assert_eq!(paper_id("a4"), Some(9));
         // 12/13 are the JIS B4/B5 Japanese Excel uses; 42 is ISO B4.

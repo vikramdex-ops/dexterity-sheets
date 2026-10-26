@@ -1,5 +1,7 @@
 //! GridCraft number formats: Excel format codes (`#,##0.00;[Red](#,##0.00)`, dates, fractions,
-//! scientific…), the General display format and the `TEXT()` worksheet function. en-US only.
+//! scientific…), the General display format and the `TEXT()` worksheet function. Cell display
+//! follows the current [`locale`](gridcraft_core::locale) where Excel does: the date separator
+//! (`/` in a date code), the decimal point, digit grouping and the locale built-in formats.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 #![forbid(unsafe_code)]
 
@@ -15,8 +17,8 @@ use gridcraft_core::{CellError, DateSystem, Value};
 pub use builtin::{builtin_format, builtin_id};
 pub use decimal::format_general_fit;
 
-use parse::{SecKind, Section, Tok};
-use render::Out;
+use parse::{CondOp, SecKind, Section, Tok};
+use render::{Ctx, Out};
 
 /// Width (in characters) of General output in a cell.
 const GENERAL_WIDTH: usize = 11;
@@ -241,42 +243,71 @@ impl NumberFormat {
         }
     }
 
-    /// Picks the number section for `v`. Returns the section and whether the minus sign is
-    /// dropped (the default negative section shows the absolute value). `None` = General.
-    fn select(&self, v: f64) -> Option<(&Section, bool)> {
+    /// Picks the number section for `v`: the section and whether the minus sign is dropped (a
+    /// negative section shows the absolute value).
+    ///
+    /// Conditions (in the first two sections only), as observed in Excel 16:
+    /// - a section picked by its own condition drops the sign when only negative numbers meet the
+    ///   condition (`[<0]`, `[<=-5]`, `[=-5]`), and keeps it otherwise (`[<=0]`, `[<10]`, `[>-10]`);
+    /// - first condition only, two sections: the second takes the rest; it drops the sign when the
+    ///   condition's number is zero or below and it isn't `=` (`[>=1000]0;0` shows -5 as `-5`,
+    ///   `[>-10]0;0` shows -20 as `20`);
+    /// - first condition only, three sections: the rest is the second section (no sign) when
+    ///   negative, the third otherwise;
+    /// - second condition only: the first section takes positive numbers, the second those that
+    ///   meet its condition, the third (signed) the rest;
+    /// - both conditions: the third section (signed) takes the rest.
+    ///
+    /// With two sections and nothing left for a value, it can't be shown (`#VALUE!` in `TEXT`,
+    /// `####` in a cell); a single conditional section shows a value outside it as General.
+    fn select(&self, v: f64) -> Selected<'_> {
         let secs = self.num_sections();
         let k = secs.len();
-        let s0 = secs.first()?;
+        let Some(s0) = secs.first() else { return Selected::General };
+        let pick = |i: usize, drop: bool| secs.get(i).map_or(Selected::General, |s| Selected::Section(s, drop));
         let c0 = s0.cond;
         let c1 = secs.get(1).and_then(|s| s.cond);
-        if c0.is_some() || c1.is_some() {
-            let idx = if c0.is_some_and(|c| c.test(v)) {
-                0
-            } else if c1.is_some_and(|c| c.test(v)) {
-                1
-            } else if c0.is_some() && c1.is_some() {
-                2
-            } else if c0.is_none() {
-                0
-            } else {
-                1
-            };
-            // Excel never adds a minus sign in a multi-section conditional format.
-            return secs.get(idx).map(|s| (s, k >= 2));
+        match (c0, c1) {
+            (None, None) => {}
+            (Some(c0), None) => {
+                if c0.test(v) {
+                    return pick(0, c0.negative_only());
+                }
+                return match k {
+                    1 => Selected::General,
+                    2 => pick(1, c0.op != CondOp::Eq && c0.value <= 0.0),
+                    _ if v < 0.0 => pick(1, true),
+                    _ => pick(2, false),
+                };
+            }
+            (c0, Some(c1)) => {
+                let first = match c0 {
+                    Some(c0) => c0.test(v).then_some(c0.negative_only()),
+                    None => (v > 0.0).then_some(false),
+                };
+                if let Some(drop) = first {
+                    return pick(0, drop);
+                }
+                if c1.test(v) {
+                    return pick(1, c1.negative_only());
+                }
+                return if k >= 3 { pick(2, false) } else { Selected::Invalid };
+            }
         }
         if v < 0.0 && k >= 2 {
-            return secs.get(1).map(|s| (s, true));
+            return pick(1, true);
         }
         if v == 0.0 && k >= 3 {
-            return secs.get(2).map(|s| (s, false));
+            return pick(2, false);
         }
-        Some((s0, false))
+        Selected::Section(s0, false)
     }
 
-    /// Formats a number. The flag is true when the value cannot be shown (date out of range).
-    fn format_number(&self, n: f64, sys: DateSystem) -> (Formatted, bool) {
+    /// Formats a number. The flag is true when the value cannot be shown (date out of range, or
+    /// no section for it).
+    fn format_number(&self, n: f64, sys: DateSystem, ctx: Ctx) -> (Formatted, bool) {
         let general = |n: f64| Formatted {
-            text: format_general_fit(n, GENERAL_WIDTH).unwrap_or_else(|| OVERFLOW.into()),
+            text: format_general_fit(n, GENERAL_WIDTH).map_or_else(|| OVERFLOW.into(), |s| ctx.general(s)),
             color: None,
             fill: None,
             numeric: true,
@@ -284,22 +315,26 @@ impl NumberFormat {
         if self.is_general() {
             return (general(n), false);
         }
-        let Some((sec, drop_sign)) = self.select(n) else { return (general(n), false) };
+        let (sec, drop_sign) = match self.select(n) {
+            Selected::Section(sec, drop) => (sec, drop),
+            Selected::General => return (general(n), false),
+            Selected::Invalid => return (Formatted { text: OVERFLOW.into(), color: None, fill: None, numeric: true }, true),
+        };
         let minus = n < 0.0 && !drop_sign;
         let out: Option<Out> = match sec.kind {
             SecKind::Text => Some(render::render_text(sec, &format_general_fit(n, GENERAL_WIDTH).unwrap_or_default())),
             SecKind::General => {
                 let width = if minus { GENERAL_WIDTH - 1 } else { GENERAL_WIDTH };
-                Some(render::render_general(sec, n.abs(), width))
+                Some(render::render_general(sec, n.abs(), width, ctx))
             }
             SecKind::Date => {
                 if minus {
                     None
                 } else {
-                    render::render_date(sec, n.abs(), sys)
+                    render::render_date(sec, n.abs(), sys, ctx)
                 }
             }
-            SecKind::Number => Some(render::render_number(sec, n.abs())),
+            SecKind::Number => Some(render::render_number(sec, n.abs(), ctx)),
         };
         let Some(mut out) = out else {
             return (Formatted { text: OVERFLOW.into(), color: sec.color, fill: None, numeric: true }, true);
@@ -327,7 +362,7 @@ pub fn format_value(v: &Value, fmt: &NumberFormat, sys: DateSystem) -> Formatted
     match v {
         Value::Empty => Formatted::default(),
         Value::Number(n) if !n.is_finite() => Formatted { text: CellError::Num.as_str().into(), ..Formatted::default() },
-        Value::Number(n) => fmt.format_number(*n, sys).0,
+        Value::Number(n) => fmt.format_number(*n, sys, Ctx::display()).0,
         Value::Text(t) => fmt.format_text(t),
         Value::Bool(b) => Formatted { text: if *b { "TRUE" } else { "FALSE" }.into(), ..Formatted::default() },
         Value::Error(e) => Formatted { text: e.as_str().into(), ..Formatted::default() },
@@ -435,8 +470,17 @@ pub fn text_function(v: &Value, code: &str, sys: DateSystem) -> Result<String, C
     if !n.is_finite() {
         return Err(CellError::Num);
     }
-    let (f, overflow) = fmt.format_number(n, sys);
+    let (f, overflow) = fmt.format_number(n, sys, Ctx::text_function());
     if overflow { Err(CellError::Value) } else { Ok(f.text) }
+}
+
+/// The section [`NumberFormat::select`] picks for a number.
+enum Selected<'a> {
+    Section(&'a Section, bool),
+    /// Shown as General.
+    General,
+    /// No section takes the number.
+    Invalid,
 }
 
 #[cfg(test)]

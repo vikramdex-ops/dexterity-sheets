@@ -96,6 +96,44 @@ fn nonspilling_formulas_preserve_array_evaluation_and_metadata() {
     assert_eq!(results.value(at("C107")), Value::text("neighbor"));
 }
 
+/// P3: Excel shows a legacy (non-array) IFS, SWITCH, INDIRECT or CELL used as a value with a
+/// spurious `@` (`=@IFS(…)`); written with array evaluation, as Excel writes them, they read back
+/// as typed. A reference-taking argument (`SUM(INDIRECT(…))`) and other functions stay plain.
+#[test]
+fn reference_functions_used_as_values_keep_array_evaluation() {
+    let mut wb = Workbook::new();
+    let sh = wb.sheet_mut(0).unwrap();
+    sh.cells.set(at("A1"), Cell::value(Value::Number(5.0)));
+    let dynamic = [
+        ("C1", "IFS(A1>0,1,TRUE,2)"),
+        ("C2", "SWITCH(A1,1,\"a\",\"b\")"),
+        ("C3", "INDIRECT(\"A1\")"),
+        ("C4", "CELL(\"address\",A1)"),
+        ("C5", "1+IFS(A1>0,1,TRUE,2)"),
+        ("C6", "UPPER(SWITCH(A1,1,\"a\",\"b\"))"),
+        ("C7", "INDIRECT(\"A1\")+1"),
+    ];
+    let plain = [("D1", "SUM(INDIRECT(\"A1:A2\"))"), ("D2", "IF(A1>0,1,2)"), ("D3", "ROWS(INDIRECT(\"A1:A2\"))"), ("D4", "OFFSET(A1,0,0)")];
+    for (address, text) in dynamic.iter().chain(&plain) {
+        sh.cells.set(at(address), formula(text, 1.0));
+    }
+    let bytes = write_xlsx(&wb).unwrap();
+    let mut pkg = Package::open(&bytes).unwrap();
+    let sheet = pkg.read_xml("xl/worksheets/sheet1.xml").unwrap().unwrap();
+    for (address, _) in dynamic {
+        assert_dynamic(&sheet, address, address);
+    }
+    for (address, _) in plain {
+        assert_scalar(&sheet, address);
+    }
+    let (back, _) = read_xlsx(&bytes).unwrap();
+    for (address, text) in dynamic.iter().chain(&plain) {
+        let f = back.sheet(0).unwrap().cell(at(address)).unwrap().formula.clone().unwrap();
+        assert_eq!(f.text, *text);
+        assert_eq!(f.array, None);
+    }
+}
+
 #[test]
 fn dynamic_spills_and_legacy_cse_keep_distinct_ranges() {
     let mut wb = Workbook::new();
@@ -338,7 +376,8 @@ fn implicit_intersection_metadata_respects_function_argument_context() {
             ("SQRT(@A1:A3)", true),
             ("@A1:A3*2", true),
             ("@(A1:A3*2)", true),
-            ("SQRT(INDIRECT(\"A1\"))", false),
+            // Excel loads a legacy `SQRT(INDIRECT("A1"))` as `SQRT(@INDIRECT("A1"))` (observed).
+            ("SQRT(INDIRECT(\"A1\"))", true),
             ("SUM(INDIRECT(\"A1:A3\"))", false),
             ("SQRT(INDIRECT(\"A1:A3\"))", true),
             ("SUM(INDIRECT(A1))", false),

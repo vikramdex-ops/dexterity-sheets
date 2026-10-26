@@ -1,0 +1,7 @@
+# Upstream GridCraft uses LF; keep it so upstream merges stay line-for-line.
+* text=auto eol=lf
+*.ps1 text eol=lf
+*.png binary
+*.ico binary
+*.icns binary
+*.msi binary

@@ -2067,9 +2067,10 @@ mod tests {
         let row: Vec<Json> = strings.iter().map(|v| json!(v)).collect();
         let get = |s: &mut Session, a: &str| s.execute("cell.get", json!({"cell": a})).unwrap();
 
-        // The default is unchanged: the dates swap, the thousands separator is a decimal point.
+        // The default is unchanged: the thousands separator is a decimal point. A dotted date is
+        // text where `.` isn't the date separator, as in Excel (en-US).
         s.execute("range.setValues", json!({"range": "A1", "values": [row.clone()]})).unwrap();
-        assert_eq!(get(&mut s, "A1")["text"], "5/4/2026", "dd.mm.yyyy read as mm.dd.yyyy");
+        assert_eq!(get(&mut s, "A1")["value"], json!("05.04.2026"), "dotted dates stay text");
         assert_eq!(get(&mut s, "C1")["value"], json!(2.5), "\"2.500\" read as a decimal");
         assert_eq!(get(&mut s, "D1")["value"], json!(0.0425), "\"4.25 %\" read as a percentage");
 

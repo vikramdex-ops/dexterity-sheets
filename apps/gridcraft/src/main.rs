@@ -18,6 +18,7 @@ mod logging;
 #[cfg(target_os = "macos")]
 mod native_menu;
 mod print;
+mod regional;
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -299,6 +300,8 @@ fn main() -> eframe::Result<()> {
             None => logger.no_file(),
         }
     }
+    // Regional settings (date order and separator, digit grouping) before any workbook is read.
+    regional::apply();
     let mut session = Session::new();
     if let Some(s) = &sample
         && let Err(e) = session.execute("file.new", json!({"sample": s}))

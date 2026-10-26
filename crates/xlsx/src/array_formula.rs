@@ -29,7 +29,43 @@ pub(crate) fn needs_array(wb: &Workbook, sheet: usize, at: CellRef, formula: &Fo
     // An explicit `@` is written as `_xlfn.SINGLE`, which only dynamic-array formulas carry.
     let mut at = false;
     expr.walk(&mut |e| at |= matches!(e, Expr::Unary(UnOp::At, _)));
-    shape.array || shape.affected || at
+    shape.array || shape.affected || at || reference_function_used_as_value(&expr)
+}
+
+/// True when a call to IFS, SWITCH, INDIRECT or CELL sits where a single value is used. Excel
+/// loads such a formula written without array evaluation as `=@IFS(…)`, `=1+@INDIRECT(…)`,
+/// `=UPPER(@SWITCH(…))` (observed with Excel 16), and saves its own with array evaluation; a
+/// reference-taking argument (`SUM(INDIRECT(…))`) gets no `@`.
+fn reference_function_used_as_value(e: &Expr) -> bool {
+    let mut stack = vec![(e, true)];
+    // Same node budget as the shape scan; past it the formula keeps its plain spelling.
+    let mut budget = 16_384usize;
+    while let Some((e, value)) = stack.pop() {
+        if budget == 0 {
+            return false;
+        }
+        budget -= 1;
+        match e {
+            Expr::Call(name, args) => {
+                if value && matches!(name.as_str(), "IFS" | "SWITCH" | "INDIRECT" | "CELL") {
+                    return true;
+                }
+                stack.extend(args.iter().enumerate().map(|(i, a)| (a, scalar_arg(name, i))));
+            }
+            Expr::Paren(x) | Expr::Unary(_, x) => stack.push((x, value)),
+            Expr::Binary(op, a, b) => {
+                let value = !matches!(op, BinOp::Range | BinOp::Union | BinOp::Intersect);
+                stack.push((a, value));
+                stack.push((b, value));
+            }
+            Expr::Invoke(c, args) => {
+                stack.push((c, true));
+                stack.extend(args.iter().map(|a| (a, true)));
+            }
+            _ => {}
+        }
+    }
+    false
 }
 
 struct Scan<'a> {

@@ -303,7 +303,9 @@ pub fn read_csv(bytes: &[u8], opts: &CsvOptions) -> Result<Workbook, IoError> {
 }
 
 /// Writes the sheet as CSV from A1 to the end of its used range, so leading empty columns and rows
-/// stay as empty fields and every cell keeps its position (CRLF line ends, UTF-8 without BOM). `cell_text` gives
+/// stay as empty fields and every cell keeps its position (CRLF line ends, UTF-8 with a byte order
+/// mark, as Excel's "CSV UTF-8": without it Excel reads the file in the system code page and `₹`,
+/// `°`, `±`, `Ø` come out garbled; an empty sheet is an empty file). `cell_text` gives
 /// each cell's field text: the caller decides how values look (Save As CSV writes them as
 /// displayed, number formats applied); quoting is done here.
 ///
@@ -313,14 +315,18 @@ pub fn read_csv(bytes: &[u8], opts: &CsvOptions) -> Result<Workbook, IoError> {
 /// field or line end that takes it past the cap (a field is measured before it is written), with
 /// [`IoError::TooLarge`]; accepted exports keep every field in its place.
 pub fn write_csv(sheet: &Sheet, delimiter: u8, cell_text: impl FnMut(CellRef) -> String) -> Result<Vec<u8>, IoError> {
-    write_csv_limited(sheet, delimiter, MAX_CSV_BYTES, cell_text)
+    write_csv_text(sheet, delimiter, MAX_CSV_BYTES, true, cell_text)
 }
 
-/// [`write_csv`] with the output cap `limit` (bytes) given.
-pub fn write_csv_limited(sheet: &Sheet, delimiter: u8, limit: usize, mut cell_text: impl FnMut(CellRef) -> String) -> Result<Vec<u8>, IoError> {
+/// [`write_csv`] with the output cap `limit` (bytes) given, and no byte order mark.
+pub fn write_csv_limited(sheet: &Sheet, delimiter: u8, limit: usize, cell_text: impl FnMut(CellRef) -> String) -> Result<Vec<u8>, IoError> {
+    write_csv_text(sheet, delimiter, limit, false, cell_text)
+}
+
+fn write_csv_text(sheet: &Sheet, delimiter: u8, limit: usize, bom: bool, mut cell_text: impl FnMut(CellRef) -> String) -> Result<Vec<u8>, IoError> {
     let delim = if delimiter == 0 { ',' } else { delimiter as char };
-    let mut out = String::new();
     let Some(r) = sheet.used_range() else { return Ok(Vec::new()) };
+    let mut out = String::from(if bom { "\u{FEFF}" } else { "" });
     let too_large =
         |what: String| IoError::TooLarge(format!("the CSV would be {what}, over the limit of {} MiB; export a smaller range", limit >> 20));
     // Every row has a delimiter between its fields and a CRLF, whatever the cells hold: a lower

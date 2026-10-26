@@ -13,6 +13,9 @@
 //! gridcraft-cli send <port> <method> [json]
 //! gridcraft-cli version | --version
 //! ```
+//!
+//! `DEXSHEETS_LOCALE=en-IN` (or `en-US`, the default) reads typed dates and numbers, and shows
+//! number formats, with those regional settings, as Excel does on a computer set up that way.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 #![forbid(unsafe_code)]
 
@@ -49,7 +52,9 @@ const USAGE: &str = "usage:
   gridcraft-cli functions [--json] [--search X] [--category C]
   gridcraft-cli mcp [--connect PORT] [--in FILE | --sample NAME]
   gridcraft-cli send <port> <method> [json]
-  gridcraft-cli version";
+  gridcraft-cli version
+environment:
+  DEXSHEETS_LOCALE=en-IN|en-US   regional settings for typed dates/numbers and display (default en-US)";
 
 /// stdout went away. A reader that stopped early (a closed pipe) ends the program quietly; any
 /// other write error is reported.
@@ -62,6 +67,10 @@ fn stdout_failed(e: std::io::Error) -> ! {
 }
 
 fn main() -> ExitCode {
+    if let Err(e) = apply_locale() {
+        eprintln!("gridcraft-cli: {e}");
+        return ExitCode::FAILURE;
+    }
     let args: Vec<String> = std::env::args().skip(1).collect();
     let rest = args.get(1..).unwrap_or_default();
     let r = match args.first().map(String::as_str) {
@@ -92,6 +101,20 @@ fn main() -> ExitCode {
             eprintln!("gridcraft-cli: {e}");
             ExitCode::FAILURE
         }
+    }
+}
+
+/// `DEXSHEETS_LOCALE`: the regional settings typed input and display follow (files never depend
+/// on them).
+fn apply_locale() -> Result<(), String> {
+    use gridcraft_engine::core::locale::{Locale, set_locale};
+    match std::env::var("DEXSHEETS_LOCALE") {
+        Ok(name) if !name.trim().is_empty() => {
+            let l = Locale::preset(&name).ok_or_else(|| format!("DEXSHEETS_LOCALE={name}: unknown locale (en-US, en-IN)"))?;
+            set_locale(l);
+            Ok(())
+        }
+        _ => Ok(()),
     }
 }
 

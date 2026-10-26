@@ -218,6 +218,8 @@ pub fn write_xlsx_named(wb: &Workbook, kind: XlsxKind, book_name: Option<&str>) 
         return Err(IoError::Format("a static cell picture cannot also contain a formula".into()));
     }
     check_sheet_names(wb)?;
+    // Formulas written from here on spell this workbook's bare table names `Table[]`.
+    let _tables = crate::fmla::TableNames::of(wb);
     let mut out = Out {
         parts: vec![],
         overrides: vec![],

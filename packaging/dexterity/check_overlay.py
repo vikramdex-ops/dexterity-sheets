@@ -31,6 +31,7 @@ HOOKS = [
     ("crates/ui-egui/src/ribbon.rs", '"collab.history"', "Review tab: Edit History"),
     ("crates/ui-egui/src/ribbon.rs", "Share with the team (office server)", "title-bar Share menu"),
     ("apps/gridcraft/Cargo.toml", 'name = "DexteritySheets"', "executable name"),
+    ("apps/gridcraft/src/main.rs", "regional::apply();", "Windows regional settings (dates, grouping) like Excel"),
     ("packaging/windows/gridcraft.wxs", 'UpgradeCode="FE2AD491-38E3-4E1B-8441-FDF652AB8443"', "installer identity (never change)"),
     ("packaging/windows/gridcraft.wxs", 'Scope="perUser"', "per-user install so updates need no admin"),
 ]

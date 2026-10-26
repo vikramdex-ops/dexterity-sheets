@@ -1,4 +1,5 @@
-//! Built-in number formats (ECMA-376 §18.8.30, en-US).
+//! Built-in number formats (ECMA-376 §18.8.30, en-US), with the current locale's codes for
+//! the ids whose display depends on it (see [`gridcraft_core::locale`]).
 
 const BUILTINS: [(u32, &str); 36] = [
     (0, "General"),
@@ -34,14 +35,19 @@ const BUILTINS: [(u32, &str); 36] = [
     (44, "_(\"$\"* #,##0.00_);_(\"$\"* \\(#,##0.00\\);_(\"$\"* \"-\"??_);_(@_)"),
     (45, "mm:ss"),
     (46, "[h]:mm:ss"),
-    (47, "mmss.0"),
+    // ECMA-376 lists `mmss.0`, but Excel shows id 47 as `mm:ss.0` (37:43.7, not 3743.7).
+    (47, "mm:ss.0"),
     (48, "##0.0E+0"),
     (49, "@"),
 ];
 
-/// Built-in format code for an id (0..=49, en-US), e.g. 14 => "m/d/yyyy". Locale-specific ids
-/// (23–36) and unknown ids return `None`.
+/// Built-in format code for an id (0..=49) as Excel shows it under the current locale, e.g. 14
+/// => "m/d/yyyy" in en-US, "dd/mm/yyyy" in en-IN. Ids the locale doesn't define (23–36 in en-US)
+/// and unknown ids return `None`.
 pub fn builtin_format(id: u32) -> Option<&'static str> {
+    if let Some(code) = gridcraft_core::locale::locale().builtin(id) {
+        return Some(code);
+    }
     BUILTINS.iter().find(|(i, _)| *i == id).map(|(_, c)| *c)
 }
 

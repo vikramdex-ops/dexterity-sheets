@@ -86,6 +86,15 @@ pub(crate) struct Cond {
 }
 
 impl Cond {
+    /// True when only negative numbers meet the condition (`[<0]`, `[<=-1]`, `[=-5]`).
+    pub(crate) fn negative_only(&self) -> bool {
+        match self.op {
+            CondOp::Lt => self.value <= 0.0,
+            CondOp::Le | CondOp::Eq => self.value < 0.0,
+            CondOp::Ne | CondOp::Gt | CondOp::Ge => false,
+        }
+    }
+
     pub(crate) fn test(&self, v: f64) -> bool {
         match self.op {
             CondOp::Eq => v == self.value,
@@ -488,7 +497,8 @@ fn analyze(raw: Raw) -> Section {
                 continue;
             }
             match t {
-                Tok::Date(_) | Tok::Fill(_) => out.push(t.clone()),
+                // `/` is the date separator: shown as the locale's (an escaped `\/` is a literal).
+                Tok::Date(_) | Tok::Fill(_) | Tok::Slash => out.push(t.clone()),
                 other => push_lit(&mut out, &other.literal_text()),
             }
             i += 1;

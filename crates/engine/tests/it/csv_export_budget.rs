@@ -30,12 +30,14 @@ fn a_sparse_sheet_spanning_the_grid_is_refused_not_expanded() {
     // Other formats are unaffected, and so is a small export from the same session.
     assert!(s.execute("file.saveBytes", json!({"format": "xlsx"})).is_ok());
     s.execute("cell.set", json!({"cell": "XFD1048576", "input": ""})).unwrap();
-    assert_eq!(s.execute("file.saveBytes", json!({"format": "csv"})).unwrap()["bytes"], 3);
+    // "a\r\n" after the 3-byte UTF-8 byte order mark.
+    assert_eq!(s.execute("file.saveBytes", json!({"format": "csv"})).unwrap()["bytes"], 6);
 }
 
 #[test]
 fn exports_below_the_cap_keep_their_positions() {
-    for (corner, bytes) in [("C3", 14), ("Z10", 272), ("XFD8", 131_082)] {
+    // Each size includes the 3-byte UTF-8 byte order mark.
+    for (corner, bytes) in [("C3", 17), ("Z10", 275), ("XFD8", 131_085)] {
         let mut s = Session::new();
         s.new_workbook();
         s.execute("cell.set", json!({"cell": "A1", "input": "a"})).unwrap();

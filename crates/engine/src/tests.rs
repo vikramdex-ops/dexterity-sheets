@@ -18,6 +18,67 @@ fn v(s: &Session, a: &str) -> Value {
     s.doc().unwrap().wb.active().unwrap().value(CellRef::parse(a).unwrap())
 }
 
+/// P2: `file.saveAs {path, password}` used to write an unencrypted file and report success.
+/// Encryption isn't written, so a password is refused and nothing is saved; an empty one is no
+/// password.
+#[test]
+#[cfg(not(target_arch = "wasm32"))]
+fn save_with_a_password_is_refused_not_written_unencrypted() {
+    let dir = std::env::temp_dir().join(format!("gridcraft-pw-save-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("secret.xlsx");
+    let mut s = s();
+    s.execute("cell.set", json!({"cell": "A1", "input": "5"})).unwrap();
+    for cmd in ["file.saveAs", "file.save"] {
+        let err = s.execute(cmd, json!({"path": path, "password": "pw"})).unwrap_err().to_string();
+        assert!(err.contains("password") && err.contains("not supported"), "{cmd}: {err}");
+        assert!(!err.contains("pw\""), "the password is never quoted: {err}");
+        assert!(!path.exists(), "{cmd} wrote a file");
+    }
+    assert!(s.doc().unwrap().is_dirty());
+    s.execute("file.saveAs", json!({"path": path, "password": ""})).unwrap();
+    s.execute("file.saveAs", json!({"path": path, "password": null})).unwrap();
+    assert!(path.exists());
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+/// P1: under en-IN regional settings typed dates are day-first with `-`, numbers group 3;2, dotted
+/// version numbers stay text, and the cell shows what Excel shows on such a computer; the xlsx
+/// written is the same as under en-US for the same cells.
+#[test]
+fn en_in_entry_and_display() {
+    use gridcraft_core::locale::{Locale, scoped};
+    let shown = |s: &Session, a: &str| {
+        let d = s.doc().unwrap();
+        let sh = d.wb.active().unwrap();
+        crate::display::value_text(&d.wb, sh, CellRef::parse(a).unwrap())
+    };
+    let _l = scoped(Locale::en_in());
+    let mut s = s();
+    for (cell, input) in [("A1", "15-03-2026"), ("A2", "03/04/2026"), ("A3", "1,23,456"), ("A4", "1.2.3"), ("A5", "001-002"), ("A6", "9:05"), ("A7", "123456789")] {
+        s.execute("cell.set", json!({"cell": cell, "input": input})).unwrap();
+    }
+    s.execute("cell.set", json!({"cell": "B1", "input": "=DATEVALUE(\"03/04/2026\")"})).unwrap();
+    s.execute("cell.set", json!({"cell": "B2", "input": "=VALUE(\"15-03-2026\")"})).unwrap();
+    s.execute("cell.set", json!({"cell": "B3", "input": "=TEXT(123456789,\"#,##0\")"})).unwrap();
+    s.execute("home.numberFormat", json!({"range": "A7", "code": "#,##0"})).unwrap();
+    assert_eq!(v(&s, "A1"), Value::Number(46096.0));
+    assert_eq!(shown(&s, "A1"), "15-03-2026");
+    assert_eq!(v(&s, "A2"), Value::Number(46115.0));
+    assert_eq!(v(&s, "A3"), Value::Number(123456.0));
+    assert_eq!(shown(&s, "A3"), "1,23,456");
+    assert_eq!(v(&s, "A4"), Value::text("1.2.3"));
+    assert_eq!(v(&s, "A5"), Value::text("001-002"));
+    assert_eq!(shown(&s, "A6"), "09:05");
+    assert_eq!(shown(&s, "A7"), "12,34,56,789");
+    assert_eq!(v(&s, "B1"), Value::Number(46115.0));
+    assert_eq!(v(&s, "B2"), Value::Number(46096.0));
+    assert_eq!(v(&s, "B3"), Value::text("12,34,56,789"));
+    // The editor shows the date as typed, and it reads back as the same date.
+    let d = s.doc().unwrap();
+    assert_eq!(crate::display::edit_text(&d.wb, d.wb.active().unwrap(), CellRef::parse("A1").unwrap()), "15-03-2026");
+}
+
 #[test]
 fn entering_empty_cells_preserves_whole_sheet_formatting() {
     let mut s = s();
@@ -2447,16 +2508,17 @@ fn saving_an_opened_semicolon_csv_keeps_semicolons() {
     s.execute("file.open", json!({"path": path})).unwrap();
     s.execute("cell.set", json!({"cell": "B2", "input": "600"})).unwrap();
     s.execute("file.save", json!({})).unwrap();
+    // CSV is written as UTF-8 with a byte order mark (Excel's CSV UTF-8).
     assert_eq!(
         std::fs::read_to_string(&path).unwrap(),
-        "1;511;184;P3_L1_led;2162PE;16;;1244121406FB\r\n1;600;510;P3_pod;2162PE;19;;124412140710\r\n"
+        "\u{FEFF}1;511;184;P3_L1_led;2162PE;16;;1244121406FB\r\n1;600;510;P3_pod;2162PE;19;;124412140710\r\n"
     );
     let exported = dir.join("export.csv");
     s.execute("file.exportCsv", json!({"path": exported})).unwrap();
-    assert!(std::fs::read_to_string(&exported).unwrap().starts_with("1;511;184;"));
+    assert!(std::fs::read_to_string(&exported).unwrap().starts_with("\u{FEFF}1;511;184;"));
     let saved = s.execute("file.saveBytes", json!({"format": "csv"})).unwrap();
     let bytes = crate::io::base64_decode(saved["base64"].as_str().unwrap()).unwrap();
-    assert!(bytes.starts_with(b"1;511;184;"));
+    assert!(bytes.starts_with(b"\xEF\xBB\xBF1;511;184;"));
     std::fs::remove_dir_all(dir).unwrap();
 }
 
@@ -4536,7 +4598,7 @@ fn csv_as_text_keeps_identifier_columns_as_written() {
         assert_eq!(value(&mut s, cell), json!(text), "{cell}");
     }
     let saved = s.execute("file.saveBytes", json!({"format": "csv"})).unwrap();
-    assert_eq!(crate::io::base64_decode(saved["base64"].as_str().unwrap()).unwrap(), csv.replace('\n', "\r\n").as_bytes());
+    assert_eq!(crate::io::base64_decode(saved["base64"].as_str().unwrap()).unwrap(), format!("\u{FEFF}{}", csv.replace('\n', "\r\n")).as_bytes());
 }
 
 /// Open a workbook by path, and `CELL("filename")` names the file it came from, as Excel does;
@@ -4712,7 +4774,7 @@ fn convert_to_number_turns_numbers_stored_as_text_into_numbers() {
 fn saving_csv_keeps_leading_empty_columns_and_rows() {
     let wb = gridcraft_xlsx::read_csv(b",x\r\n\r\n,,y\r\n", &gridcraft_xlsx::CsvOptions::default()).unwrap();
     let out = crate::io::save_bytes(&wb, "a.csv").unwrap();
-    assert_eq!(String::from_utf8(out).unwrap(), ",x,\r\n,,\r\n,,y\r\n");
+    assert_eq!(String::from_utf8(out).unwrap(), "\u{FEFF},x,\r\n,,\r\n,,y\r\n");
 }
 
 #[test]

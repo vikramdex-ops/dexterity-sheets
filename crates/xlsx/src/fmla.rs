@@ -1,8 +1,48 @@
 //! Formula text conversion between the model (canonical text, no `=`) and files (`_xlfn.`
 //! prefixes for newer functions).
 
+use std::cell::RefCell;
+
 use gridcraft_formula::Expr;
-use gridcraft_model::Formula;
+use gridcraft_model::{Formula, Workbook};
+
+thread_local! {
+    /// Names of the tables of the workbook being written (see [`TableNames`]).
+    static TABLES: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+}
+
+/// While alive, formulas written on this thread spell a bare table name as a table reference:
+/// `MTO` is written `MTO[]`. Excel reads a bare table name in a file as an undefined name
+/// (`#NAME?`); `Table[]` is the same range in its file syntax.
+pub(crate) struct TableNames {
+    previous: Vec<String>,
+}
+
+impl TableNames {
+    /// The tables of `wb` (except any that a defined name shadows).
+    pub(crate) fn of(wb: &Workbook) -> TableNames {
+        let names: Vec<String> = wb
+            .sheets
+            .iter()
+            .flat_map(|s| s.tables.iter().map(|t| t.name.clone()))
+            .filter(|t| !t.is_empty() && !wb.names.iter().any(|n| n.name.eq_ignore_ascii_case(t)))
+            .collect();
+        let previous = TABLES.try_with(|c| c.try_borrow_mut().map(|mut v| std::mem::replace(&mut *v, names)).unwrap_or_default()).unwrap_or_default();
+        TableNames { previous }
+    }
+}
+
+impl Drop for TableNames {
+    fn drop(&mut self) {
+        let previous = std::mem::take(&mut self.previous);
+        let _ = TABLES.try_with(|c| c.try_borrow_mut().map(|mut v| *v = previous));
+    }
+}
+
+/// True when `name` is a table of the workbook being written.
+fn is_table(name: &str) -> bool {
+    TABLES.try_with(|c| c.try_borrow().map(|v| v.iter().any(|t| t.eq_ignore_ascii_case(name))).unwrap_or(false)).unwrap_or(false)
+}
 
 /// Formula text for a file.
 pub fn to_file(f: &Formula) -> String {
@@ -99,6 +139,8 @@ fn expr_to_file(e: Expr) -> String {
         // Nor the `[@Col]` shorthand: files spell it `[[#This Row],[Col]]`, or Excel repairs
         // the file and drops the table. Carried as a name, which prints verbatim.
         Expr::Struct(st) => Expr::Name(gridcraft_formula::printer::struct_ref_file(&st)),
+        // Nor a bare table name: `=VLOOKUP(x,MTO,4,FALSE)` is `MTO[]` in a file (else `#NAME?`).
+        Expr::Name(n) if is_table(&n) => Expr::Name(format!("{n}[]")),
         // Nor trim-reference operators: written as the equivalent `TRIMRANGE(range,n,n)`, which
         // every Excel with trim references reads. (Excel's own file spelling of `A1:.E10` is
         // not publicly documented; the `_xlfn._TRO_*` call forms are accepted on read.)
@@ -135,6 +177,87 @@ pub fn from_file(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// P1: a bare table name is written `MTO[]` while that workbook is being written, and only
+    /// for its tables.
+    #[test]
+    fn bare_table_names_are_written_as_table_references() {
+        let mut wb = Workbook::new();
+        if let Some(sh) = wb.sheet_mut(0) {
+            sh.tables.push(gridcraft_model::Table {
+                id: 1,
+                name: "MTO".into(),
+                range: gridcraft_core::RangeRef::parse("A1:D3").unwrap(),
+                header_row: true,
+                totals_row: false,
+                columns: vec![],
+                style: String::new(),
+                banded_rows: true,
+                banded_cols: false,
+                first_col: false,
+                last_col: false,
+                filter_button: true,
+                filter: vec![],
+                table_type: None,
+                connection_id: None,
+            });
+        }
+        let f = Formula::new("VLOOKUP(\"Tee eq\",MTO,4,FALSE)+ROWS(mto)+SUM(MTO[Qty])+Other");
+        assert_eq!(to_file(&f), "VLOOKUP(\"Tee eq\",MTO,4,FALSE)+ROWS(mto)+SUM(MTO[Qty])+Other");
+        {
+            let _t = TableNames::of(&wb);
+            assert_eq!(to_file(&f), "VLOOKUP(\"Tee eq\",MTO[],4,FALSE)+ROWS(mto[])+SUM(MTO[Qty])+Other");
+            assert_eq!(text_to_file("=COUNTA(MTO)"), "COUNTA(MTO[])");
+            assert_eq!(from_file("VLOOKUP(\"Tee eq\",MTO[],4,FALSE)"), "VLOOKUP(\"Tee eq\",MTO[],4,FALSE)");
+        }
+        assert_eq!(text_to_file("=COUNTA(MTO)"), "COUNTA(MTO)");
+    }
+
+    /// The same through a whole file: the sheet XML holds `MTO[]`, and it reads back as the table.
+    #[test]
+    fn bare_table_name_round_trips_through_xlsx() {
+        use gridcraft_core::{CellRef, Value};
+        use gridcraft_model::{Cell, TableColumn, TotalsFn};
+        let mut wb = Workbook::new();
+        let sh = wb.sheet_mut(0).unwrap();
+        for (c, h) in ["Item", "Size", "Sch", "Qty"].iter().enumerate() {
+            sh.set_value(CellRef::new(0, c as u32), Value::text(*h));
+        }
+        for (c, v) in ["Tee eq", "4\"", "40"].iter().enumerate() {
+            sh.set_value(CellRef::new(1, c as u32), Value::text(*v));
+        }
+        sh.set_value(CellRef::new(1, 3), Value::Number(12.0));
+        let col = |n: &str| TableColumn { name: n.into(), totals: TotalsFn::None, totals_label: None, formula: None, unique_name: None, xml: None };
+        sh.tables.push(gridcraft_model::Table {
+            id: 1,
+            name: "MTO".into(),
+            range: gridcraft_core::RangeRef::parse("A1:D2").unwrap(),
+            header_row: true,
+            totals_row: false,
+            columns: vec![col("Item"), col("Size"), col("Sch"), col("Qty")],
+            style: "TableStyleMedium2".into(),
+            banded_rows: true,
+            banded_cols: false,
+            first_col: false,
+            last_col: false,
+            filter_button: true,
+            filter: vec![],
+            table_type: None,
+            connection_id: None,
+        });
+        let mut cell = Cell::formula(Formula::new("VLOOKUP(\"Tee eq\",MTO,4,FALSE)"));
+        cell.value = Value::Number(12.0);
+        sh.set_cell(CellRef::new(4, 0), cell);
+        let bytes = crate::write_xlsx(&wb).unwrap();
+        let mut zip = zip::ZipArchive::new(std::io::Cursor::new(&bytes)).unwrap();
+        let mut xml = String::new();
+        std::io::Read::read_to_string(&mut zip.by_name("xl/worksheets/sheet1.xml").unwrap(), &mut xml).unwrap();
+        assert!(xml.contains("<f>VLOOKUP(&quot;Tee eq&quot;,MTO[],4,FALSE)</f>") || xml.contains("<f>VLOOKUP(\"Tee eq\",MTO[],4,FALSE)</f>"), "{xml}");
+        let (back, _) = crate::read_xlsx(&bytes).unwrap();
+        let f = back.sheet(0).unwrap().cell(CellRef::new(4, 0)).unwrap().formula.clone().unwrap();
+        assert_eq!(f.text, "VLOOKUP(\"Tee eq\",MTO[],4,FALSE)");
+        assert_eq!(back.sheet(0).unwrap().tables.first().map(|t| t.name.as_str()), Some("MTO"));
+    }
 
     #[test]
     fn spill_references() {
