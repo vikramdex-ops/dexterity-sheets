@@ -1,0 +1,99 @@
+name: Dexterity Release
+
+# Builds the Windows installer and the server bundle and publishes them as a GitHub release
+# tagged v<packaging/dexterity/VERSION>. Office servers configured with update-source.json
+# download the .msi from the release and offer it to every Dexterity Sheets on the LAN.
+#
+# Triggers: a push to main that changes packaging/dexterity/VERSION (a person bumping the
+# version), a manual run, or the upstream sync after it merged and tested a new GridCraft.
+on:
+  push:
+    branches: [main]
+    paths: [packaging/dexterity/VERSION]
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      ref:
+        type: string
+        required: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+          fetch-depth: 0
+      - name: Version
+        id: v
+        shell: pwsh
+        run: |
+          $v = (Get-Content packaging/dexterity/VERSION -Raw).Trim()
+          "version=$v" >> $env:GITHUB_OUTPUT
+          $exists = git tag --list "v$v"
+          "exists=$([bool]$exists)".ToLower() >> $env:GITHUB_OUTPUT
+          $base = (Select-String -Path Cargo.toml -Pattern '^version = "(.+)"' | Select-Object -First 1).Matches.Groups[1].Value
+          "gridcraft=$base" >> $env:GITHUB_OUTPUT
+      - uses: dtolnay/rust-toolchain@stable
+        if: steps.v.outputs.exists != 'true'
+        with:
+          targets: x86_64-pc-windows-msvc
+      - uses: Swatinem/rust-cache@v2
+        if: steps.v.outputs.exists != 'true'
+      - name: Install WiX 5
+        if: steps.v.outputs.exists != 'true'
+        run: dotnet tool install --global wix --version 5.0.2
+      - name: Build MSI and portable zip
+        if: steps.v.outputs.exists != 'true'
+        shell: pwsh
+        env:
+          DIST: dist
+        run: ./packaging/windows/package.ps1 -Arch x64
+      - name: Server bundle and checksums
+        if: steps.v.outputs.exists != 'true'
+        shell: pwsh
+        run: |
+          $v = '${{ steps.v.outputs.version }}'
+          $s = "dist/DexSheetsServer-$v-x64"
+          New-Item -ItemType Directory -Force $s | Out-Null
+          Copy-Item target/x86_64-pc-windows-msvc/release/DexSheetsServer.exe, packaging/dexterity/Install-Server.ps1, docs/collaboration.md, LICENSE-MIT, LICENSE-APACHE, NOTICE $s
+          Compress-Archive -Path $s -DestinationPath "$s.zip"
+          Remove-Item -Recurse $s
+          Push-Location dist
+          Get-ChildItem -File | Where-Object Name -ne 'SHA256SUMS' | ForEach-Object { "{0}  {1}" -f (Get-FileHash $_.Name -Algorithm SHA256).Hash.ToLower(), $_.Name } | Set-Content -Encoding ascii SHA256SUMS
+          Get-Content SHA256SUMS
+          Pop-Location
+      - name: Release notes
+        if: steps.v.outputs.exists != 'true'
+        shell: pwsh
+        run: |
+          $prev = git describe --tags --abbrev=0 2>$null
+          $range = if ($prev) { "$prev..HEAD" } else { "HEAD~30..HEAD" }
+          $log = git log --no-merges --format='- %s' $range | Select-Object -First 60
+          @(
+            "Dexterity Sheets ${{ steps.v.outputs.version }} (based on GridCraft ${{ steps.v.outputs.gridcraft }})",
+            "",
+            "Install: run the .msi on each PC (no administrator rights needed). Office server: DexSheetsServer zip, see docs/collaboration.md.",
+            "Teammates already running Dexterity Sheets are offered this update by the office server automatically.",
+            "",
+            "Changes:",
+            $log
+          ) | Set-Content -Encoding utf8 dist/notes.md
+      - name: Publish
+        if: steps.v.outputs.exists != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          $v = '${{ steps.v.outputs.version }}'
+          $files = Get-ChildItem dist -File | Where-Object Name -ne 'notes.md' | ForEach-Object FullName
+          gh release create "v$v" @files --target (git rev-parse HEAD) --title "Dexterity Sheets $v" --notes-file dist/notes.md

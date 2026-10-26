@@ -1,0 +1,138 @@
+name: Upstream sync
+
+# Keeps Dexterity Sheets on top of official GridCraft (storytold/gridcraft).
+#
+# Every 6 hours: merge upstream main into main with packaging/dexterity/sync_upstream.py.
+# - Nothing new: done.
+# - Merged cleanly (or only branding text conflicted): test it with the full CI, then push to
+#   main, tag v<version> and publish the release. Office servers then offer the update to every PC.
+# - Real conflicts, or CI fails: open a pull request (and an issue) for a person. If the
+#   ANTHROPIC_API_KEY secret is set, an AI attempt to resolve the conflicts is added to that PR.
+# The `upstream` branch always mirrors official GridCraft, so the pull request shows exactly
+# what upstream changed.
+on:
+  schedule:
+    - cron: "17 */6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: upstream-sync
+  cancel-in-progress: false
+
+jobs:
+  merge:
+    runs-on: ubuntu-latest
+    outputs:
+      status: ${{ steps.sync.outputs.status }}
+      version: ${{ steps.sync.outputs.version }}
+      upstream: ${{ steps.sync.outputs.upstream }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - name: Identity
+        run: |
+          git config user.name "dexterity-sync[bot]"
+          git config user.email "dexterity-sync@users.noreply.github.com"
+      - name: Merge upstream GridCraft
+        id: sync
+        run: python packaging/dexterity/sync_upstream.py
+      - name: Mirror upstream into the `upstream` branch
+        run: git push --force origin "refs/remotes/upstream/main:refs/heads/upstream"
+      - name: Push the merge candidate
+        if: steps.sync.outputs.status == 'merged'
+        run: git push --force origin HEAD:refs/heads/sync/candidate
+      - name: Pull request for a person (conflicts)
+        if: steps.sync.outputs.status == 'conflict'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          sha="${{ steps.sync.outputs.upstream }}"
+          title="Sync with upstream GridCraft ${sha:0:10} (needs a person)"
+          if gh pr list --head upstream --base main --state open --json number --jq '.[0].number' | grep -q .; then
+            echo "A sync pull request is already open."; exit 0
+          fi
+          {
+            echo "Official GridCraft has changes that could not be merged automatically."
+            echo
+            echo "Unresolved:"
+            python -c "import json;[print('- `'+u+'`') for u in json.load(open('sync-result.json'))['unresolved']]"
+            echo
+            echo "How to finish: see packaging/dexterity/UPSTREAM.md. Resolve so that"
+            echo "\`python packaging/dexterity/check_overlay.py\` passes, bump packaging/dexterity/VERSION,"
+            echo "and merge: the release workflow then publishes the new version."
+          } > body.md
+          gh pr create --head upstream --base main --title "$title" --body-file body.md --label upstream-sync || gh pr create --head upstream --base main --title "$title" --body-file body.md
+
+  test:
+    needs: merge
+    if: needs.merge.outputs.status == 'merged'
+    uses: ./.github/workflows/dexterity-ci.yml
+    with:
+      ref: sync/candidate
+
+  publish:
+    needs: [merge, test]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: sync/candidate
+          fetch-depth: 0
+      - name: Fast-forward main and tag
+        run: |
+          git push origin HEAD:refs/heads/main
+          git tag "v${{ needs.merge.outputs.version }}"
+          git push origin "v${{ needs.merge.outputs.version }}"
+
+  release:
+    needs: [merge, publish]
+    uses: ./.github/workflows/dexterity-release.yml
+    with:
+      ref: v${{ needs.merge.outputs.version }}
+
+  report-failure:
+    needs: [merge, test]
+    if: failure() && needs.merge.outputs.status == 'merged'
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Issue for a person
+        run: |
+          gh issue create --title "Upstream GridCraft ${{ needs.merge.outputs.upstream }} merged but tests fail" \
+            --body "The merge is on branch \`sync/candidate\`. CI run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}. Nothing was released. Fix on that branch, then merge it into main and bump packaging/dexterity/VERSION."
+
+  ai-assist:
+    needs: merge
+    if: needs.merge.outputs.status == 'conflict'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check for an API key
+        id: key
+        env:
+          K: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: echo "present=$([ -n "$K" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v4
+        if: steps.key.outputs.present == 'true'
+        with:
+          ref: main
+          fetch-depth: 0
+      - uses: anthropics/claude-code-action@v1
+        if: steps.key.outputs.present == 'true'
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: |
+            Merge branch `upstream` (official GridCraft) into `main` on a new branch `sync/ai-resolution`.
+            Follow packaging/dexterity/UPSTREAM.md: keep Dexterity-owned files, keep every hook that
+            packaging/dexterity/check_overlay.py checks, take upstream's logic everywhere else, re-apply
+            branding text. Make `python packaging/dexterity/check_overlay.py` and
+            `cargo check -p gridcraft -p gridcraft-server` pass. Bump packaging/dexterity/VERSION (patch).
+            Open a pull request into main describing every conflict and how it was resolved. Do not merge it.

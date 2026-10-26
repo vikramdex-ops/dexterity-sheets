@@ -1,0 +1,58 @@
+name: Dexterity CI
+
+# Tests and builds Dexterity Sheets. Runs on every push and pull request, and is called by the
+# upstream sync before anything it merged is released.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      ref:
+        description: Commit, branch or tag to test
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ inputs.ref || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - name: Dexterity hooks into upstream files are intact
+        run: python packaging/dexterity/check_overlay.py
+      - name: Format
+        run: cargo fmt --all --check
+      - name: Clippy (Dexterity crates and the app)
+        run: cargo clippy --release --locked -p gridcraft-collab -p gridcraft-server -p gridcraft-ui-egui -p gridcraft --tests -- -D warnings
+      - name: Collaboration tests (patches, convergence, real TCP server)
+        run: cargo test --release --locked -p gridcraft-collab
+      - name: Engine, formula and file-format tests
+        run: cargo test --release --locked -p gridcraft-core -p gridcraft-numfmt -p gridcraft-formula -p gridcraft-functions -p gridcraft-model -p gridcraft-calc -p gridcraft-xlsx -p gridcraft-engine
+      - name: Build app, CLI and server
+        run: cargo build --release --locked -p gridcraft -p gridcraft-cli -p gridcraft-server
+      - name: Three windows editing one shared workbook (end to end)
+        # Real app windows on the runner's desktop (software rendering). Reported, not yet gating:
+        # hosted runners' GPUs vary.
+        continue-on-error: true
+        run: python packaging/dexterity/tests/lan_e2e.py target/release
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: e2e-results
+          path: tests/out
+          if-no-files-found: ignore

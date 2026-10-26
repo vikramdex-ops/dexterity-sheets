@@ -33,7 +33,13 @@ function Invoke-Native([string] $What, [scriptblock] $Block) {
 }
 
 # The version lives in one place: [workspace.package] version in the root Cargo.toml.
+# Dexterity Sheets has its own version (packaging/dexterity/VERSION); the upstream GridCraft
+# version in Cargo.toml is left alone so upstream merges never conflict on it.
 $Version = $env:GRIDCRAFT_VERSION
+if (-not $Version) {
+  $vf = Join-Path $Root 'packaging\dexterity\VERSION'
+  if (Test-Path $vf) { $Version = (Get-Content $vf -Raw).Trim() }
+}
 if (-not $Version) {
   $inPkg = $false
   foreach ($line in Get-Content (Join-Path $Root 'Cargo.toml')) {
@@ -62,7 +68,7 @@ if (-not $SkipBuild) {
   [Environment]::SetEnvironmentVariable($flagVar, '-C target-feature=+crt-static')
   # Fail the build (rather than warn) if the icon/VERSIONINFO can't be embedded.
   $env:GRIDCRAFT_REQUIRE_WINRES = '1'
-  Invoke-Native "cargo build ($Target)" { cargo build --release --locked -p gridcraft -p gridcraft-cli --target $Target }
+  Invoke-Native "cargo build ($Target)" { cargo build --release --locked -p gridcraft -p gridcraft-cli -p gridcraft-server --target $Target }
 }
 
 $Bin = Join-Path $TargetDir "$Target\release"

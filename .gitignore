@@ -8,3 +8,7 @@ plan/
 /.claude/
 /target-*/
 /craft-fonts/
+
+/tests/out/
+/dist/
+/sync-result.json
