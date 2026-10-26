@@ -58,6 +58,11 @@
     <SetProperty Id="DesktopShortcutChoice" Value="1" After="DefaultDesktopShortcut"
         Sequence="ui" Condition="DESKTOPSHORTCUT = &quot;1&quot;" />
 
+    <!-- Upgrades (including the in-app updater's) install where the previous version was. -->
+    <Property Id="SAVEDINSTALLFOLDER" Secure="yes">
+      <RegistrySearch Id="FindInstallFolder" Root="HKCU" Key="Software\Dexterity Sheets\Installer" Name="App" Type="raw" />
+    </Property>
+    <SetDirectory Id="INSTALLFOLDER" Value="[SAVEDINSTALLFOLDER]" Condition="SAVEDINSTALLFOLDER" Sequence="both" />
     <Property Id="DefaultUIFont" Value="GridcraftUIFont" />
     <Property Id="ErrorDialog" Value="GridcraftErrorDlg" />
     <EnsureTable Id="ListBox" />
@@ -175,7 +180,7 @@
     <?if $(var.HasCraftFontLicences) = 1 ?>
     <ComponentGroup Id="CraftFontLicences" Directory="INSTALLFOLDER">
       <!-- Per-user files need an HKCU key path (ICE38), so the notices are listed explicitly. -->
-      <Component Id="Notices">
+      <Component Id="Notices" Guid="5B0E2F44-9C1A-4D7E-A3B6-2E8F71C40D19">
         <RegistryValue Root="HKCU" Key="Software\Dexterity Sheets\Installer" Name="Notices" Value="1" Type="integer" KeyPath="yes" />
         <File Id="NoticeFile" Source="$(var.DocsDir)\NOTICE" />
         <File Id="AttributionFile" Source="$(var.DocsDir)\ATTRIBUTION.md" />
@@ -189,7 +194,7 @@
         <RemoveFolder Id="RemoveProgramsDir" Directory="ProgramsDir" On="uninstall" />
         <File Id="GridcraftExe" Source="$(var.BinDir)\DexteritySheets.exe">
           <Shortcut Id="StartMenuShortcut" Directory="ProgramMenuFolder" Name="Dexterity Sheets"
-              Description="Dexterity Sheets spreadsheet" WorkingDirectory="INSTALLFOLDER" Advertise="yes"
+              Description="Dexterity Sheets spreadsheet" WorkingDirectory="INSTALLFOLDER" Advertise="no"
               Icon="GridcraftIcon.ico" IconIndex="0" />
         </File>
 
@@ -224,7 +229,7 @@
         <RegistryValue Root="HKCU" Key="Software\RegisteredApplications" Name="Dexterity Sheets" Value="Software\Dexterity Sheets\Capabilities" Type="string" />
       </Component>
 
-      <Component Id="GridcraftCli">
+      <Component Id="GridcraftCli" Guid="9A3C6D21-47E8-4B05-8F2C-D61E05B7A3F4">
         <RegistryValue Root="HKCU" Key="Software\Dexterity Sheets\Installer" Name="Cli" Value="1" Type="integer" KeyPath="yes" />
         <File Id="GridcraftCliExe" Source="$(var.BinDir)\gridcraft-cli.exe" />
       </Component>
