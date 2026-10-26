@@ -394,7 +394,7 @@ impl Default for Prefs {
         Prefs {
             enter_direction: "down".into(),
             autocomplete: true,
-            user_name: "GridCraft User".into(),
+            user_name: "Dexterity Sheets User".into(),
             default_font: gridcraft_model::DEFAULT_FONT.into(),
             default_font_size: gridcraft_model::DEFAULT_FONT_SIZE,
             sheets_in_new_workbook: 1,
@@ -512,6 +512,11 @@ impl Session {
     /// Where the open workbook with this [`DocState::uid`] is in [`Session::documents`].
     pub fn document_index(&self, uid: u64) -> Option<usize> {
         self.docs.iter().position(|d| d.uid == uid)
+    }
+    /// The open workbook with this [`DocState::uid`], for changes that don't go through a command
+    /// (LAN co-authoring applies other people's edits this way).
+    pub fn document_mut(&mut self, uid: u64) -> Option<&mut DocState> {
+        self.docs.iter_mut().find(|d| d.uid == uid)
     }
     pub fn active_mut(&mut self) -> Option<&mut DocState> {
         self.docs.get_mut(self.active)

@@ -2365,6 +2365,19 @@ fn data(app: &mut SheetApp, ui: &mut Ui) {
 }
 
 fn review(app: &mut SheetApp, ui: &mut Ui) {
+    // Shared workbooks (Dexterity Sheets LAN co-authoring).
+    if big_button(ui, Icon::Share, "Shared
+Workbooks", "Sign in and open shared workbooks (File > Shared)", false).clicked() {
+        act(app, "collab.shared", json!({}));
+    }
+    if big_button(ui, Icon::Clock, "Edit
+History", "Who changed what, and when", false).clicked() {
+        act(app, "collab.history", json!({}));
+    }
+    if big_button(ui, Icon::Book, "Versions", "Versions kept on the server", false).clicked() {
+        act(app, "collab.versions", json!({}));
+    }
+    sep(ui);
     let __k = big_button(ui, Icon::Spell, "Spelling", "Spelling (F7)", false);
     control_keytip(app, ui, &__k, "dialog:spelling");
     if __k.clicked() {
@@ -2633,7 +2646,7 @@ fn automate(app: &mut SheetApp, ui: &mut Ui) {
     if __k.clicked() {
         app.open_dialog("commandSearch", json!({}));
     }
-    let __k = big_button(ui, Icon::Script, "Agent\nControl", "How agents drive GridCraft (MCP / control channel)", false);
+    let __k = big_button(ui, Icon::Script, "Agent\nControl", "How agents drive Dexterity Sheets (MCP / control channel)", false);
     control_keytip(app, ui, &__k, "agents");
     if __k.clicked() {
         app.open_dialog("agents", json!({}));
@@ -2643,12 +2656,8 @@ fn automate(app: &mut SheetApp, ui: &mut Ui) {
     if __k.clicked() {
         app.open_dialog("journal", json!({}));
     }
-    let __k = big_button(ui, Icon::Script, "Check for\nUpdates…", "Look for a newer GridCraft release", false);
-    control_keytip(app, ui, &__k, "checkForUpdates");
-    if __k.clicked() {
-        app.run_or_alert("app.checkForUpdates", json!({}));
-    }
-    let __k = big_button(ui, Icon::Script, "About\nGridCraft", "Version, contributors and the AI models that helped", false);
+    // Dexterity Sheets: no Check for Updates button (an internal LAN tool never contacts the internet).
+    let __k = big_button(ui, Icon::Script, "About\nDexterity Sheets", "Version, contributors and the AI models that helped", false);
     control_keytip(app, ui, &__k, "about");
     if __k.clicked() {
         app.open_dialog("about", json!({}));

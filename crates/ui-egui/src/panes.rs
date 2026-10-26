@@ -27,6 +27,8 @@ pub fn show(app: &mut SheetApp, ui: &mut Ui) {
                 "watch" => "Watch Window",
                 "selection" => "Selection",
                 "formatChart" => "Format Chart Area",
+                "history" => "Edit History",
+                "versions" => "Versions",
                 _ => "",
             };
             ui.label(egui::RichText::new(title).font(theme::ui_bold(15.0)));
@@ -45,6 +47,8 @@ pub fn show(app: &mut SheetApp, ui: &mut Ui) {
             "watch" => watch(app, ui),
             "selection" => selection(app, ui),
             "formatChart" => format_chart(app, ui),
+            "history" => crate::collab_ui::history_pane(app, ui),
+            "versions" => crate::collab_ui::versions_pane(app, ui),
             _ => {}
         });
     });

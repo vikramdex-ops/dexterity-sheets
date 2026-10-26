@@ -1,0 +1,20 @@
+[package]
+name = "gridcraft-server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Dexterity Sheets server: shared workbooks, accounts and edit history on the office LAN"
+publish = false
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "DexSheetsServer"
+path = "src/main.rs"
+
+[dependencies]
+gridcraft-collab = { workspace = true }
+log = { workspace = true }
+rpassword = "7"
+chrono = { workspace = true, features = ["clock"] }

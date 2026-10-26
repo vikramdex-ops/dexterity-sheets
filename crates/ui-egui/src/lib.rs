@@ -11,6 +11,7 @@ mod border_preview;
 mod cell_pictures;
 pub mod chartview;
 pub mod code_editor;
+pub mod collab_ui;
 pub mod control;
 mod craft_fonts_policy;
 pub mod credits;
@@ -281,6 +282,10 @@ impl Default for Chrome {
 
 pub struct SheetApp {
     pub session: Session,
+    /// LAN co-authoring: the server connection and the shared workbooks open here.
+    pub collab: collab_ui::Collab,
+    /// The egui context, kept so commands can start network work that wakes the window.
+    pub collab_ctx: Option<egui::Context>,
     pub ui: UiState,
     /// The window chrome to draw (see [`Chrome`]).
     pub chrome: Chrome,
@@ -386,6 +391,8 @@ impl SheetApp {
     pub fn new(session: Session, services: Services) -> SheetApp {
         SheetApp {
             session,
+            collab: Default::default(),
+            collab_ctx: None,
             ui: UiState::default(),
             chrome: Chrome::default(),
             views: HashMap::new(),
@@ -728,7 +735,7 @@ impl SheetApp {
         if e.contains("is not available right now") {
             self.toast = Some((e, now_ms()));
         } else {
-            self.message = Some(("GridCraft".into(), clean_error(&e)));
+            self.message = Some(("Dexterity Sheets".into(), clean_error(&e)));
         }
     }
 
@@ -762,6 +769,9 @@ impl SheetApp {
 
     /// UI-only commands (dialogs, view toggles that aren't saved in the file).
     fn run_ui_command(&mut self, id: &str, p: &Json) -> Option<Result<Json, String>> {
+        if let Some(r) = collab_ui::run_command(self, id, p) {
+            return Some(r);
+        }
         let r = match id {
             "app.checkForUpdates" | "help.checkForUpdates" => {
                 self.check_for_updates();
@@ -889,7 +899,7 @@ impl SheetApp {
         for req in self.session.take_ui_requests() {
             match req {
                 UiRequest::Dialog(name, params) => self.open_dialog(&name, params),
-                UiRequest::Message(m) => self.message = Some(("GridCraft".into(), m)),
+                UiRequest::Message(m) => self.message = Some(("Dexterity Sheets".into(), m)),
                 UiRequest::EditCell(text) => {
                     let text = text.map(|text| {
                         self.session
@@ -990,7 +1000,7 @@ impl SheetApp {
             Ok(r) => self.after_open(Some(path), &r),
             // A password-protected workbook: ask for the password; the dialog opens it.
             Err(e) if e.contains(gridcraft_engine::io::PASSWORD_REQUIRED) => self.open_dialog("openPassword", json!({"path": path})),
-            Err(e) => self.message = Some(("GridCraft".into(), clean_error(&e))),
+            Err(e) => self.message = Some(("Dexterity Sheets".into(), clean_error(&e))),
         }
         self.after_engine();
     }
@@ -1032,7 +1042,7 @@ impl SheetApp {
             let text = if dropped {
                 "This workbook's VBA macros could not be loaded and were dropped, so they will not be in the saved file. Keep the original file."
             } else {
-                "This workbook contains VBA macros. GridCraft keeps them when you save as .xlsm, but does not run them."
+                "This workbook contains VBA macros. Dexterity Sheets keeps them when you save as .xlsm, but does not run them."
             };
             self.notice = Some(Notice { text: text.into(), kind: NoticeKind::Warning, action: Some(("What this means".into(), "macros".into())) });
         } else {
@@ -1216,7 +1226,7 @@ impl SheetApp {
         let text = match self.session.active().map(|d| formula_locale::canonical(&text, ed.locale, &d.wb, ed.sheet, ed.cell)) {
             Some(Ok(text)) => text,
             Some(Err(error)) => {
-                self.message = Some(("GridCraft".into(), error.to_string()));
+                self.message = Some(("Dexterity Sheets".into(), error.to_string()));
                 self.editor = Some(ed);
                 self.session.mode = gridcraft_engine::Mode::Edit;
                 return false;
@@ -1228,7 +1238,7 @@ impl SheetApp {
             && let Some((dv, msg)) = gridcraft_engine::cmd::data::check_validation(&d.wb, ed.sheet, ed.cell, &text)
         {
             if dv.error_style == gridcraft_engine::model::ErrorStyle::Stop {
-                let title = if dv.error_title.is_empty() { "GridCraft".to_string() } else { dv.error_title.clone() };
+                let title = if dv.error_title.is_empty() { "Dexterity Sheets".to_string() } else { dv.error_title.clone() };
                 self.message = Some((title, msg));
                 self.editor = Some(ed);
                 self.session.mode = gridcraft_engine::Mode::Edit;
@@ -1240,7 +1250,7 @@ impl SheetApp {
         if self.session.active().is_some_and(|d| d.wb.active_sheet() != ed.sheet)
             && let Err(e) = self.session.run("sheet.activate", json!({"sheet": ed.sheet}))
         {
-            self.message = Some(("GridCraft".into(), clean_error(&e)));
+            self.message = Some(("Dexterity Sheets".into(), clean_error(&e)));
             self.editor = Some(ed);
             self.session.mode = gridcraft_engine::Mode::Edit;
             return false;
@@ -1271,7 +1281,7 @@ impl SheetApp {
                 true
             }
             Err(e) => {
-                self.message = Some(("GridCraft".into(), clean_error(&e)));
+                self.message = Some(("Dexterity Sheets".into(), clean_error(&e)));
                 self.editor = Some(ed);
                 self.session.mode = gridcraft_engine::Mode::Edit;
                 false
@@ -1462,6 +1472,10 @@ impl SheetApp {
         // issues the capture command (after every widget, so a command cannot be missed).
         control::drain_screenshots(self, ctx);
         control::poll(self, ctx);
+        if self.collab_ctx.is_none() {
+            self.collab_ctx = Some(ctx.clone());
+        }
+        collab_ui::tick(self, ctx);
         // Printing feedback is polled once per frame, here, so hidden windows and logic-only
         // frames still see worker completion. `ui` and the desktop app no longer poll it.
         self.poll_printing(ctx);
@@ -1609,7 +1623,7 @@ impl SheetApp {
                     self.backstage = None;
                     self.open_dialog("openPassword", json!({"name": name, "base64": b64}));
                 }
-                Err(e) => self.message = Some(("GridCraft".into(), clean_error(&e))),
+                Err(e) => self.message = Some(("Dexterity Sheets".into(), clean_error(&e))),
             }
             self.after_engine();
         }
@@ -1633,20 +1647,18 @@ impl SheetApp {
         }
     }
 
-    /// Look for a newer release once, in the background, as the desktop app starts (a no-op on the
-    /// web). A found release opens the update prompt; nothing is shown when GridCraft is current.
-    pub fn start_update_check(&mut self) {
-        #[cfg(not(target_arch = "wasm32"))]
-        updates_ui::start(self, false);
-    }
+    /// Dexterity Sheets never checks the internet for updates (an internal LAN tool): this is a
+    /// no-op, kept so hosts that call it still build.
+    pub fn start_update_check(&mut self) {}
 
-    /// Help ▸ Check for Updates…: look now, and say so when GridCraft is up to date or the check fails.
+    /// The `app.checkForUpdates` command: no check is made; it only says that new versions come
+    /// from IT (`updates_ui::UPDATES_DISABLED`).
     pub fn check_for_updates(&mut self) {
         #[cfg(not(target_arch = "wasm32"))]
         updates_ui::start(self, true);
         #[cfg(target_arch = "wasm32")]
         {
-            self.message = Some(("GridCraft".into(), "The web version is always the latest release.".into()));
+            self.message = Some(("Dexterity Sheets".into(), "The web version is always the latest release.".into()));
         }
     }
 

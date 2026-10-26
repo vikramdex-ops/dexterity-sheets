@@ -368,6 +368,7 @@ pub fn status_bar(app: &mut SheetApp, ui: &mut Ui) {
                         );
                     }
                 }
+                crate::collab_ui::status(app, ui, &t);
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     // Zoom percentage and slider.
                     let zoom = app.session.active().and_then(|d| d.wb.active().map(|s| s.zoom)).unwrap_or(100);

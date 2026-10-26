@@ -9,6 +9,8 @@ description = "GridCraft egui frontend (Excel-style UI); swappable — nothing b
 workspace = true
 
 [dependencies]
+gridcraft-collab = { workspace = true }
+chrono = { workspace = true, features = ["clock"] }
 # The shared capture slot (`craft_ui::capture`) comes from the one craft-libs revision every
 # craft-libs dependency uses (see the root Cargo.toml).
 craft-ui = { git = "https://github.com/storytold/craft-libs", rev = "b926b5c03e256c86ca10934f58d03f628810b5b7" }
@@ -36,7 +38,7 @@ epaint_default_fonts = { workspace = true }
 gridcraft-xlsx = { workspace = true, features = ["test-support"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-craft-update = { workspace = true }
+# Dexterity Sheets: no craft-update (no update checker; the app never contacts the internet).
 # The desktop's preferred language for the first-run interface language.
 sys-locale = { workspace = true }
 craft-window = { workspace = true }

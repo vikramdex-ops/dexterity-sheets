@@ -31,6 +31,7 @@ pub enum Page {
     Home,
     New,
     Open,
+    Shared,
     Info,
     SaveAs,
     Print,
@@ -40,7 +41,7 @@ pub enum Page {
 }
 
 impl Page {
-    pub const ALL: [Page; 9] = [Page::Home, Page::New, Page::Open, Page::Info, Page::SaveAs, Page::Print, Page::Export, Page::Options, Page::Account];
+    pub const ALL: [Page; 10] = [Page::Home, Page::New, Page::Open, Page::Shared, Page::Info, Page::SaveAs, Page::Print, Page::Export, Page::Options, Page::Account];
 
     /// The id `ui.backstage` and `ui.dialog {"name": "backstage", "page": …}` take.
     pub fn id(self) -> &'static str {
@@ -48,6 +49,7 @@ impl Page {
             Page::Home => "home",
             Page::New => "new",
             Page::Open => "open",
+            Page::Shared => "shared",
             Page::Info => "info",
             Page::SaveAs => "saveAs",
             Page::Print => "print",
@@ -68,6 +70,7 @@ impl Page {
             Page::Home => "Home",
             Page::New => "New",
             Page::Open => "Open",
+            Page::Shared => "Shared",
             Page::Info => "Info",
             Page::SaveAs => "Save As",
             Page::Print => "Print",
@@ -82,6 +85,7 @@ impl Page {
             Page::Home => Icon::Home,
             Page::New => Icon::NewFile,
             Page::Open => Icon::OpenFolder,
+            Page::Shared => Icon::Share,
             Page::Info => Icon::Info,
             Page::SaveAs => Icon::Save,
             Page::Print => Icon::Print,
@@ -170,7 +174,7 @@ pub fn show(app: &mut SheetApp, ui: &mut Ui) {
                 out.close = true;
             }
             ui.add_space(10.0);
-            for page in [Page::Home, Page::New, Page::Open] {
+            for page in [Page::Home, Page::New, Page::Open, Page::Shared] {
                 if nav_item(ui, page.icon(), lang.tr(page.label()), bs.page == page, nav_text, nav_sel).clicked() {
                     out.page = Some(page);
                 }
@@ -213,6 +217,7 @@ pub fn show(app: &mut SheetApp, ui: &mut Ui) {
                     Page::Home => home(app, ui, &mut bs, &mut out),
                     Page::New => new_page(app, ui, &mut out),
                     Page::Open => open_page(app, ui, &mut bs, &mut out),
+                    Page::Shared => crate::collab_ui::shared_page(app, ui, &mut out.close),
                     Page::Info => info(app, ui, &mut bs),
                     Page::SaveAs => save_as(app, ui, &mut bs, &mut out),
                     Page::Print => print(app, ui, &mut bs, &mut out),
@@ -910,13 +915,13 @@ pub fn export_as(app: &mut SheetApp, fmt: &str) -> bool {
         return match app.run(id, json!({"path": path})) {
             Ok(_) => true,
             Err(e) => {
-                app.message = Some(("GridCraft".into(), crate::clean_error(&e)));
+                app.message = Some(("Dexterity Sheets".into(), crate::clean_error(&e)));
                 false
             }
         };
     }
     if app.services.download.is_none() {
-        app.message = Some(("GridCraft".into(), "Exporting needs a file picker, which this window doesn't have.".into()));
+        app.message = Some(("Dexterity Sheets".into(), "Exporting needs a file picker, which this window doesn't have.".into()));
         return false;
     }
     if fmt == "pdf" {
@@ -924,7 +929,7 @@ pub fn export_as(app: &mut SheetApp, fmt: &str) -> bool {
         return match app.run(id, json!({})) {
             Ok(_) => true,
             Err(e) => {
-                app.message = Some(("GridCraft".into(), crate::clean_error(&e)));
+                app.message = Some(("Dexterity Sheets".into(), crate::clean_error(&e)));
                 false
             }
         };
@@ -943,7 +948,7 @@ pub fn export_as(app: &mut SheetApp, fmt: &str) -> bool {
             }
         }
         Err(e) => {
-            app.message = Some(("GridCraft".into(), crate::clean_error(&e)));
+            app.message = Some(("Dexterity Sheets".into(), crate::clean_error(&e)));
             false
         }
     }
@@ -1080,7 +1085,7 @@ fn options(app: &mut SheetApp, ui: &mut Ui) {
 /// committed the field is consumed so it doesn't also dismiss the message box in this frame.
 fn refuse(app: &mut SheetApp, ui: &mut Ui, text: &str) {
     ui.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Enter));
-    app.message = Some(("GridCraft".into(), app.ui.language.tr(text).into()));
+    app.message = Some(("Dexterity Sheets".into(), app.ui.language.tr(text).into()));
 }
 
 /// Maximum Iterations as typed: a whole number from 1 to 32767, or `None` (Excel refuses others).
@@ -1116,12 +1121,16 @@ fn account(app: &mut SheetApp, ui: &mut Ui) {
     let t = Tokens::get(ui.ctx());
     let lang = app.ui.language;
     section(ui, lang, "Product Information");
-    ui.label(RichText::new("GridCraft").font(theme::ui_bold(16.0)).color(t.text));
+    ui.label(RichText::new("Dexterity Sheets").font(theme::ui_bold(16.0)).color(t.text));
     ui.add_space(8.0);
     egui::Grid::new("backstage_account").num_columns(2).spacing(vec2(18.0, 8.0)).show(ui, |ui| {
-        for (label, value) in
-            [("Version", env!("CARGO_PKG_VERSION").to_string()), ("Platform", platform()), ("Licence", env!("CARGO_PKG_LICENSE").to_string())]
-        {
+        for (label, value) in [
+            ("Version", env!("CARGO_PKG_VERSION").to_string()),
+            ("Publisher", "Dexterity Design Services Pvt. Ltd.".to_string()),
+            ("Platform", platform()),
+            ("Licence", env!("CARGO_PKG_LICENSE").to_string()),
+            ("Based on", "GridCraft by the ArtCraft team (MIT/Apache-2.0)".to_string()),
+        ] {
             ui.label(RichText::new(lang.tr(label)).color(t.text_dim));
             ui.label(value);
             ui.end_row();
@@ -1129,13 +1138,13 @@ fn account(app: &mut SheetApp, ui: &mut Ui) {
     });
     ui.add_space(18.0);
     ui.horizontal(|ui| {
-        if square_button(ui, Icon::Info, lang.tr("About GridCraft")).clicked() {
+        if square_button(ui, Icon::Info, lang.tr("About Dexterity Sheets")).clicked() {
             app.open_dialog("about", json!({}));
         }
         ui.add_space(12.0);
         ui.vertical(|ui| {
             ui.add_space(14.0);
-            ui.label(RichText::new(lang.tr("About GridCraft")).font(theme::ui_bold(13.5)).color(t.text));
+            ui.label(RichText::new(lang.tr("About Dexterity Sheets")).font(theme::ui_bold(13.5)).color(t.text));
             dim(ui, lang.tr("Version, contributors and the AI models that helped"));
         });
     });
