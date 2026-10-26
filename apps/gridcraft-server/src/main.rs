@@ -7,6 +7,8 @@
 //! DexSheetsServer user role NAME ROLE
 //! DexSheetsServer user disable NAME | user enable NAME
 //! DexSheetsServer user list
+//! Updates: drop DexteritySheets-<version>-x64.msi into <data>\updates, or configure
+//! <data>\update-source.json {"repo": "owner/name", "token": "…"} to fetch GitHub releases.
 //! options: --data DIR (default %ProgramData%\Dexterity Sheets\Server), --port N, --name "Server name"
 //! ```
 
@@ -16,6 +18,8 @@ use std::sync::Mutex;
 
 use gridcraft_collab::proto::{DEFAULT_PORT, Role};
 use gridcraft_collab::server;
+
+mod github;
 
 struct Logger {
     file: Option<Mutex<std::fs::File>>,
@@ -93,7 +97,13 @@ fn user_command(dir: &std::path::Path, args: &[String]) -> Result<(), String> {
         "list" => {
             println!("{:<20} {:<28} {:<8} status", "user", "name", "role");
             for u in &users {
-                println!("{:<20} {:<28} {:<8} {}", u.user, u.display, format!("{:?}", u.role).to_lowercase(), if u.disabled { "disabled" } else { "active" });
+                println!(
+                    "{:<20} {:<28} {:<8} {}",
+                    u.user,
+                    u.display,
+                    format!("{:?}", u.role).to_lowercase(),
+                    if u.disabled { "disabled" } else { "active" }
+                );
             }
             Ok(())
         }
@@ -159,7 +169,15 @@ fn main() {
         return;
     }
     if matches!(args.first().map(String::as_str), Some("-h" | "--help" | "help")) {
-        println!("{}", include_str!("main.rs").lines().take_while(|l| l.starts_with("//!")).map(|l| l.trim_start_matches("//!").trim_start_matches(' ')).collect::<Vec<_>>().join("\n"));
+        println!(
+            "{}",
+            include_str!("main.rs")
+                .lines()
+                .take_while(|l| l.starts_with("//!"))
+                .map(|l| l.trim_start_matches("//!").trim_start_matches(' '))
+                .collect::<Vec<_>>()
+                .join("\n")
+        );
         return;
     }
     let file = std::fs::OpenOptions::new().create(true).append(true).open(dir.join("server.log")).ok().map(Mutex::new);
@@ -186,8 +204,14 @@ fn main() {
         }
     }
     match server::start(dir.clone(), name.clone(), port) {
-        Ok(_server) => {
+        Ok(srv) => {
             log::info!("{name} listening on TCP port {port}; data in {}", dir.display());
+            match github::load(&dir) {
+                Some(src) => log::info!("app updates: checking GitHub releases of {} (and the updates folder)", src.repo),
+                None => log::info!("app updates: put new installers (.msi) in {}", srv.updates_dir().display()),
+            }
+            let watch_dir = dir.clone();
+            let _ = std::thread::Builder::new().name("github-updates".into()).spawn(move || github::watch(watch_dir, srv));
             log::info!("Teammates: open Dexterity Sheets, choose File > Shared, and pick this server.");
             loop {
                 std::thread::park();

@@ -67,6 +67,10 @@ impl From<gridcraft_engine::EngineError> for Error {
 
 pub type Result<T> = std::result::Result<T, Error>;
 
+/// The Dexterity Sheets version (`packaging/dexterity/VERSION`), separate from the upstream
+/// GridCraft version in Cargo.toml so merging upstream never touches it. Updates compare this.
+pub const APP_VERSION: &str = include_str!("../../../packaging/dexterity/VERSION");
+
 /// Milliseconds since the Unix epoch.
 pub fn now_ms() -> i64 {
     chrono::Utc::now().timestamp_millis()

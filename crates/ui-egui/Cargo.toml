@@ -10,6 +10,7 @@ workspace = true
 
 [dependencies]
 gridcraft-collab = { workspace = true }
+sha2 = { workspace = true }
 chrono = { workspace = true, features = ["clock"] }
 # The shared capture slot (`craft_ui::capture`) comes from the one craft-libs revision every
 # craft-libs dependency uses (see the root Cargo.toml).

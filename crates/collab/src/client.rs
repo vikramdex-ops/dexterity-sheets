@@ -25,7 +25,11 @@ pub struct Config {
 #[derive(Debug)]
 pub enum Event {
     /// Logged in (again, after a reconnect: reopen shared workbooks).
-    Connected { me: UserInfo, users: Vec<UserInfo>, server: String },
+    Connected {
+        me: UserInfo,
+        users: Vec<UserInfo>,
+        server: String,
+    },
     Message(ServerMsg),
     /// The connection dropped; the client keeps trying.
     Disconnected(String),
@@ -82,7 +86,16 @@ fn login(cfg: &Config, instance: &str) -> Result<(TcpStream, UserInfo, Vec<UserI
     let mut s = TcpStream::connect_timeout(&sock, Duration::from_secs(4))?;
     s.set_nodelay(true)?;
     s.set_read_timeout(Some(Duration::from_secs(20)))?;
-    proto::write_frame(&mut s, &ClientMsg::Hello { protocol: proto::PROTOCOL, user: cfg.user.clone(), app: cfg.app.clone(), machine: cfg.machine.clone(), instance: instance.to_string() })?;
+    proto::write_frame(
+        &mut s,
+        &ClientMsg::Hello {
+            protocol: proto::PROTOCOL,
+            user: cfg.user.clone(),
+            app: cfg.app.clone(),
+            machine: cfg.machine.clone(),
+            instance: instance.to_string(),
+        },
+    )?;
     let (salt, iterations, nonce, server) = match proto::read_frame::<_, ServerMsg>(&mut s)? {
         ServerMsg::Challenge { salt, iterations, nonce, server } => (salt, iterations, nonce, server),
         ServerMsg::Error { message } => return Err(Error::Denied(message)),
@@ -99,7 +112,15 @@ fn login(cfg: &Config, instance: &str) -> Result<(TcpStream, UserInfo, Vec<UserI
     }
 }
 
-fn supervise(cfg: Config, instance: String, out_rx: Receiver<ClientMsg>, ev: Sender<Event>, waker: Waker, stop: Arc<AtomicBool>, online: Arc<AtomicBool>) {
+fn supervise(
+    cfg: Config,
+    instance: String,
+    out_rx: Receiver<ClientMsg>,
+    ev: Sender<Event>,
+    waker: Waker,
+    stop: Arc<AtomicBool>,
+    online: Arc<AtomicBool>,
+) {
     let mut backoff = 1u64;
     let mut ever_connected = false;
     while !stop.load(Ordering::Relaxed) {

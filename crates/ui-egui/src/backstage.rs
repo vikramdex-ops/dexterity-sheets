@@ -41,7 +41,8 @@ pub enum Page {
 }
 
 impl Page {
-    pub const ALL: [Page; 10] = [Page::Home, Page::New, Page::Open, Page::Shared, Page::Info, Page::SaveAs, Page::Print, Page::Export, Page::Options, Page::Account];
+    pub const ALL: [Page; 10] =
+        [Page::Home, Page::New, Page::Open, Page::Shared, Page::Info, Page::SaveAs, Page::Print, Page::Export, Page::Options, Page::Account];
 
     /// The id `ui.backstage` and `ui.dialog {"name": "backstage", "page": …}` take.
     pub fn id(self) -> &'static str {

@@ -11,7 +11,7 @@ use std::sync::mpsc::Receiver;
 use egui::{Color32, FontId, Painter, RichText, Stroke, StrokeKind, Ui, pos2, vec2};
 use gridcraft_collab::client::{Client, Config, Event};
 use gridcraft_collab::discovery::{self, Found};
-use gridcraft_collab::proto::{self, BookInfo, Change, ClientMsg, Peer, Role, ServerMsg, UserInfo, VersionInfo};
+use gridcraft_collab::proto::{self, BookInfo, Change, ClientMsg, Peer, Role, ServerMsg, UpdateInfo, UserInfo, VersionInfo};
 use gridcraft_collab::sync::SharedDoc;
 use gridcraft_engine::core::{CellRef, RangeRef};
 use gridcraft_engine::model::Sheet;
@@ -76,6 +76,13 @@ pub struct Collab {
     /// A version asked for to open as a copy: (book, version) → title.
     want_copy: Option<String>,
     confirm_restore: Option<String>,
+    /// A newer Dexterity Sheets the server offers.
+    pub update: Option<UpdateInfo>,
+    /// The update dialog is open.
+    update_dialog: bool,
+    /// Downloading or installing: what the dialog says.
+    update_state: Option<String>,
+    last_update_check: f64,
 }
 
 fn remembered_path() -> Option<std::path::PathBuf> {
@@ -147,7 +154,13 @@ fn sign_in(c: &mut Collab, ctx: &egui::Context) {
     let ctx = ctx.clone();
     let waker: gridcraft_collab::client::Waker = Arc::new(move || ctx.request_repaint());
     let machine = std::env::var("COMPUTERNAME").unwrap_or_default();
-    let cfg = Config { server, user, password: std::mem::take(&mut c.form_password), app: format!("Dexterity Sheets {}", env!("CARGO_PKG_VERSION")), machine };
+    let cfg = Config {
+        server,
+        user,
+        password: std::mem::take(&mut c.form_password),
+        app: format!("Dexterity Sheets {}", gridcraft_collab::APP_VERSION.trim()),
+        machine,
+    };
     c.client = Some(Client::connect(cfg, waker));
     c.status = Status::Connecting;
     c.error = None;
@@ -197,6 +210,11 @@ pub fn tick(app: &mut SheetApp, ctx: &egui::Context) {
         }
     }
     send_presence(app);
+    // Ask again every four hours, so a long-running window still hears of new versions.
+    if app.collab.client.as_ref().is_some_and(Client::online) && crate::now_ms() - app.collab.last_update_check > 4.0 * 3600.0 * 1000.0 {
+        app.collab.last_update_check = crate::now_ms();
+        app.collab.send(ClientMsg::CheckUpdate { version: gridcraft_collab::APP_VERSION.trim().into() });
+    }
     if let Some(rx) = &app.collab.finding
         && let Ok(found) = rx.try_recv()
     {
@@ -262,6 +280,8 @@ fn handle(app: &mut SheetApp, e: Event) {
             app.collab.error = None;
             app.collab.presence = None;
             app.collab.send(ClientMsg::ListBooks);
+            app.collab.send(ClientMsg::CheckUpdate { version: gridcraft_collab::APP_VERSION.trim().into() });
+            app.collab.last_update_check = crate::now_ms();
             // After a reconnect: fetch every open shared workbook again and resend what the
             // server never ordered.
             let ids: Vec<String> = app.collab.docs.iter().map(|d| d.book.id.clone()).collect();
@@ -320,7 +340,9 @@ fn message(app: &mut SheetApp, m: ServerMsg) {
                     // Replace an untouched blank Book1, as opening a file does.
                     if app.session.documents().len() == 1
                         && app.collab.docs.is_empty()
-                        && app.session.active().is_some_and(|d| d.path.is_none() && !d.is_dirty() && d.undo.is_empty() && d.wb.sheets.iter().all(|sh| sh.cells.is_empty()))
+                        && app.session.active().is_some_and(|d| {
+                            d.path.is_none() && !d.is_dirty() && d.undo.is_empty() && d.wb.sheets.iter().all(|sh| sh.cells.is_empty())
+                        })
                     {
                         app.session.close_document(0);
                     }
@@ -370,7 +392,10 @@ fn message(app: &mut SheetApp, m: ServerMsg) {
         ServerMsg::Versions { versions, .. } => app.collab.versions = versions,
         ServerMsg::Version { xlsx, .. } => {
             let title = app.collab.want_copy.take().unwrap_or_else(|| "Earlier version".into());
-            match proto::unb64(&xlsx).map_err(|e| e.to_string()).and_then(|b| gridcraft_engine::io::open_bytes("version.xlsx", &b).map_err(|e| e.to_string())) {
+            match proto::unb64(&xlsx)
+                .map_err(|e| e.to_string())
+                .and_then(|b| gridcraft_engine::io::open_bytes("version.xlsx", &b).map_err(|e| e.to_string()))
+            {
                 Ok((wb, _)) => {
                     let doc = gridcraft_engine::DocState::new(wb, None, title, gridcraft_engine::Trust::FromFile);
                     app.session.add_document(doc);
@@ -391,9 +416,25 @@ fn message(app: &mut SheetApp, m: ServerMsg) {
                     doc.title = format!("{} (deleted on server)", sd.book.name);
                     doc.saved = Arc::new(gridcraft_engine::model::Workbook::new());
                 }
-                app.message = Some(("Dexterity Sheets".into(), format!("\"{}\" was deleted on the server. Your window keeps a copy: save it with Save As if you need it.", sd.book.name)));
+                app.message = Some((
+                    "Dexterity Sheets".into(),
+                    format!("\"{}\" was deleted on the server. Your window keeps a copy: save it with Save As if you need it.", sd.book.name),
+                ));
             }
         }
+        ServerMsg::Update { update } => {
+            let update = update.filter(|u| proto::version_newer(&u.version, gridcraft_collab::APP_VERSION.trim()));
+            if let Some(u) = &update
+                && app.collab.update.as_ref().map(|o| &o.version) != Some(&u.version)
+            {
+                app.toast = Some((
+                    format!("Dexterity Sheets {} is available. Click \"Update\" in the status bar to install it.", u.version),
+                    crate::now_ms(),
+                ));
+            }
+            app.collab.update = update;
+        }
+        ServerMsg::UpdateFile { info, data } => install_update(app, &info, &data),
         ServerMsg::Ok { what } => app.toast = Some((what, crate::now_ms())),
         ServerMsg::Error { message } => app.message = Some(("Dexterity Sheets".into(), message)),
         ServerMsg::Challenge { .. } | ServerMsg::Welcome { .. } | ServerMsg::Pong => {}
@@ -427,6 +468,25 @@ pub fn run_command(app: &mut SheetApp, id: &str, p: &Json) -> Option<Result<Json
             Ok(Json::Null)
         }
         "collab.share" => share_active(app, p.get("name").and_then(Json::as_str)),
+        // Help > Check for Updates asks the office server.
+        "collab.checkUpdate" | "app.checkForUpdates" | "help.checkForUpdates" => {
+            if !app.collab.signed_in() {
+                app.open_backstage(crate::backstage::Page::Shared);
+                return Some(Err("Updates come from the office server: sign in first (File > Shared).".into()));
+            }
+            app.collab.send(ClientMsg::CheckUpdate { version: gridcraft_collab::APP_VERSION.trim().into() });
+            app.collab.last_update_check = crate::now_ms();
+            app.collab.update_dialog = true;
+            Ok(json!({"current": gridcraft_collab::APP_VERSION.trim(), "available": app.collab.update.as_ref().map(|u| u.version.clone())}))
+        }
+        "collab.installUpdate" => match app.collab.update.clone() {
+            Some(u) => {
+                app.collab.update_state = Some(format!("Downloading {}...", u.version));
+                app.collab.send(ClientMsg::GetUpdate { version: u.version });
+                Ok(Json::Null)
+            }
+            None => Err("No update is available.".into()),
+        },
         // Scriptable sign-in, for tests and the control channel.
         "collab.signIn" => {
             let s = |k: &str| p.get(k).and_then(Json::as_str).unwrap_or("").to_string();
@@ -494,7 +554,8 @@ pub fn run_command(app: &mut SheetApp, id: &str, p: &Json) -> Option<Result<Json
         "collab.lastEdit" => {
             let Some(d) = app.session.active() else { return Some(Err("no workbook".into())) };
             let Some(sd) = app.collab.shared(d.uid) else { return Some(Err("not a shared workbook".into())) };
-            let sheet = p.get("sheet").and_then(Json::as_str).map(str::to_string).or_else(|| d.wb.active().map(|s| s.name.clone())).unwrap_or_default();
+            let sheet =
+                p.get("sheet").and_then(Json::as_str).map(str::to_string).or_else(|| d.wb.active().map(|s| s.name.clone())).unwrap_or_default();
             let at = p.get("cell").and_then(Json::as_str).and_then(CellRef::parse).unwrap_or(d.selection.active);
             Ok(match sd.last_edit(&sheet, at) {
                 Some((u, t)) => json!({"user": u, "time": t}),
@@ -654,7 +715,11 @@ fn books_list(app: &mut SheetApp, ui: &mut Ui, t: &Tokens, me: &UserInfo, close:
                 app.collab.send(ClientMsg::CreateBook { name, xlsx: None });
             }
             let can_share = app.session.active().is_some_and(|d| app.collab.shared(d.uid).is_none());
-            if ui.add_enabled(can_share, egui::Button::new("Share the current workbook")).on_hover_text("Uploads the workbook in the active window as a new shared workbook").clicked() {
+            if ui
+                .add_enabled(can_share, egui::Button::new("Share the current workbook"))
+                .on_hover_text("Uploads the workbook in the active window as a new shared workbook")
+                .clicked()
+            {
                 let name = (!app.collab.new_name.trim().is_empty()).then(|| std::mem::take(&mut app.collab.new_name));
                 let r = share_active(app, name.as_deref());
                 if let Err(e) = r {
@@ -734,7 +799,12 @@ fn books_list(app: &mut SheetApp, ui: &mut Ui, t: &Tokens, me: &UserInfo, close:
     ui.add_space(22.0);
     ui.collapsing("Change my password", |ui| {
         ui.horizontal(|ui| {
-            ui.add(egui::TextEdit::singleline(&mut app.collab.new_password).password(true).hint_text("new password (6+ characters)").desired_width(220.0));
+            ui.add(
+                egui::TextEdit::singleline(&mut app.collab.new_password)
+                    .password(true)
+                    .hint_text("new password (6+ characters)")
+                    .desired_width(220.0),
+            );
             if ui.button("Change").clicked() && app.collab.new_password.chars().count() >= 6 {
                 let p = std::mem::take(&mut app.collab.new_password);
                 app.collab.send(ClientMsg::ChangePassword { old_proof: String::new(), new_password: p });
@@ -815,7 +885,8 @@ pub fn status(app: &mut SheetApp, ui: &mut Ui, t: &Tokens) {
     if let Some((user, time)) = sd.last_edit(&sheet, d.selection.active) {
         ui.add_space(12.0);
         let txt = format!("{}: last changed by {}, {}", d.selection.active.a1(), app.collab.display_of(user), when(*time));
-        let r = ui.add(egui::Label::new(small(txt, t.text_dim)).selectable(false).sense(egui::Sense::click())).on_hover_text("Show this cell's history");
+        let r =
+            ui.add(egui::Label::new(small(txt, t.text_dim)).selectable(false).sense(egui::Sense::click())).on_hover_text("Show this cell's history");
         if r.clicked() {
             app.collab.history.this_cell = true;
             app.collab.history.asked = None;
@@ -851,12 +922,14 @@ pub fn history_pane(app: &mut SheetApp, ui: &mut Ui) {
         ui.selectable_value(&mut app.collab.history.this_cell, false, "Whole workbook");
     });
     let mut user = app.collab.history.user.clone();
-    egui::ComboBox::from_id_salt("collab_history_user").selected_text(user.as_deref().map(|u| app.collab.display_of(u)).unwrap_or_else(|| "Everyone".into())).show_ui(ui, |ui| {
-        ui.selectable_value(&mut user, None, "Everyone");
-        for u in &app.collab.users {
-            ui.selectable_value(&mut user, Some(u.user.clone()), &u.display);
-        }
-    });
+    egui::ComboBox::from_id_salt("collab_history_user")
+        .selected_text(user.as_deref().map(|u| app.collab.display_of(u)).unwrap_or_else(|| "Everyone".into()))
+        .show_ui(ui, |ui| {
+            ui.selectable_value(&mut user, None, "Everyone");
+            for u in &app.collab.users {
+                ui.selectable_value(&mut user, Some(u.user.clone()), &u.display);
+            }
+        });
     app.collab.history.user = user;
     let want = (
         book.clone(),
@@ -910,7 +983,11 @@ pub fn versions_pane(app: &mut SheetApp, ui: &mut Ui) {
     };
     let (book, name) = (sd.book.id.clone(), sd.book.name.clone());
     let can_edit = !sd.read_only;
-    ui.label(RichText::new("The server keeps a version every hour while people edit, whenever someone presses Save, and before any restore.").color(t.text_dim).small());
+    ui.label(
+        RichText::new("The server keeps a version every hour while people edit, whenever someone presses Save, and before any restore.")
+            .color(t.text_dim)
+            .small(),
+    );
     ui.horizontal(|ui| {
         ui.add(egui::TextEdit::singleline(&mut app.collab.version_label).hint_text("label, e.g. Issued for review Rev B").desired_width(180.0));
         if ui.button("Keep version").clicked() {
@@ -950,5 +1027,114 @@ pub fn versions_pane(app: &mut SheetApp, ui: &mut Ui) {
             }
         });
         ui.separator();
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Updates
+
+/// Saves the installer the server sent, checks it, starts it and closes the app; the installer
+/// replaces this version and opens the new one.
+fn install_update(app: &mut SheetApp, info: &UpdateInfo, data: &str) {
+    use sha2::Digest;
+    let fail = |app: &mut SheetApp, why: String| {
+        app.collab.update_state = None;
+        app.message = Some(("Dexterity Sheets".into(), format!("The update could not be installed: {why}")));
+    };
+    let bytes = match proto::unb64(data) {
+        Ok(b) => b,
+        Err(e) => return fail(app, e.to_string()),
+    };
+    let got = gridcraft_collab::auth::hex(&sha2::Sha256::digest(&bytes));
+    if got != info.sha256 {
+        return fail(app, "the download is damaged (checksum mismatch). Try again.".into());
+    }
+    let dir = std::env::temp_dir().join("DexteritySheets-update");
+    let _ = std::fs::create_dir_all(&dir);
+    let name: String = info.file.chars().filter(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_')).collect();
+    let path = dir.join(if name.to_ascii_lowercase().ends_with(".msi") { name } else { format!("DexteritySheets-{}.msi", info.version) });
+    if let Err(e) = std::fs::write(&path, &bytes) {
+        return fail(app, e.to_string());
+    }
+    let exe = std::env::current_exe().map(|p| p.display().to_string()).unwrap_or_default();
+    // msiexec replaces the installed version; afterwards the app opens again.
+    let script = format!("start \"\" /wait msiexec /i \"{}\" /passive /norestart & start \"\" \"{}\"", path.display(), exe);
+    #[cfg(windows)]
+    let started = std::process::Command::new("cmd").args(["/C", &script]).spawn();
+    #[cfg(not(windows))]
+    let started: std::io::Result<std::process::Child> =
+        Err(std::io::Error::other(format!("automatic install runs on Windows; the installer is at {} ({script})", path.display())));
+    match started {
+        Ok(_) => {
+            app.collab.update_state = Some(format!("Installing {}... the app closes now and reopens when done.", info.version));
+            if let Some(ctx) = app.collab_ctx.clone() {
+                app.request_quit(&ctx);
+            }
+        }
+        Err(e) => fail(app, format!("{e} (installer saved at {})", path.display())),
+    }
+}
+
+/// The status-bar badge and the update dialog. Drawn whatever workbook is open.
+pub fn update_badge(app: &mut SheetApp, ui: &mut Ui, t: &Tokens) {
+    if let Some(u) = app.collab.update.clone() {
+        ui.add_space(12.0);
+        let r = ui
+            .add(
+                egui::Label::new(RichText::new(format!("Update to {}", u.version)).font(theme::ui_bold(12.5)).color(t.accent))
+                    .selectable(false)
+                    .sense(egui::Sense::click()),
+            )
+            .on_hover_text("A newer Dexterity Sheets is available from the office server");
+        if r.clicked() {
+            app.collab.update_dialog = true;
+        }
+    }
+    if !app.collab.update_dialog {
+        return;
+    }
+    let mut open = true;
+    let mut install = false;
+    egui::Window::new("Dexterity Sheets updates").collapsible(false).resizable(false).open(&mut open).anchor(egui::Align2::CENTER_CENTER, vec2(0.0, 0.0)).show(ui.ctx(), |ui| {
+        ui.set_max_width(420.0);
+        ui.label(format!("You have version {}.", gridcraft_collab::APP_VERSION.trim()));
+        match &app.collab.update {
+            Some(u) => {
+                ui.label(RichText::new(format!("Version {} is available ({:.1} MB).", u.version, u.size as f64 / 1_048_576.0)).strong());
+                if !u.notes.trim().is_empty() {
+                    ui.add_space(6.0);
+                    egui::ScrollArea::vertical().max_height(180.0).show(ui, |ui| {
+                        ui.label(u.notes.trim());
+                    });
+                }
+                ui.add_space(8.0);
+                match &app.collab.update_state {
+                    Some(state) => {
+                        ui.horizontal(|ui| {
+                            ui.spinner();
+                            ui.label(state);
+                        });
+                    }
+                    None => {
+                        ui.label(RichText::new("Shared workbooks are saved on the server, so nothing is lost. Other unsaved workbooks will ask to be saved first.").color(t.text_dim).small());
+                        if ui.button("Update now").clicked() {
+                            install = true;
+                        }
+                    }
+                }
+            }
+            None if app.collab.signed_in() => {
+                ui.label("You have the latest version.");
+            }
+            None => {
+                ui.label("Sign in to the office server (File > Shared) to check for updates.");
+            }
+        }
+    });
+    if install {
+        let _ = run_command(app, "collab.installUpdate", &json!({}));
+    }
+    if !open {
+        app.collab.update_dialog = false;
     }
 }

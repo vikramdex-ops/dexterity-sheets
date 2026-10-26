@@ -42,25 +42,98 @@ impl Role {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "t")]
 pub enum ClientMsg {
-    Hello { protocol: u32, user: String, app: String, machine: String, instance: String },
-    Login { proof: String },
-    ChangePassword { old_proof: String, new_password: String },
+    Hello {
+        protocol: u32,
+        user: String,
+        app: String,
+        machine: String,
+        instance: String,
+    },
+    Login {
+        proof: String,
+    },
+    ChangePassword {
+        old_proof: String,
+        new_password: String,
+    },
     ListBooks,
     /// A new shared workbook, from an .xlsx (base64) or empty.
-    CreateBook { name: String, #[serde(default)] xlsx: Option<String> },
-    OpenBook { book: String },
-    CloseBook { book: String },
-    RenameBook { book: String, name: String },
-    DeleteBook { book: String },
-    Patch { book: String, cseq: u64, patch: WbPatch },
-    Presence { book: String, sheet: String, range: String, #[serde(default)] editing: bool },
+    CreateBook {
+        name: String,
+        #[serde(default)]
+        xlsx: Option<String>,
+    },
+    OpenBook {
+        book: String,
+    },
+    CloseBook {
+        book: String,
+    },
+    RenameBook {
+        book: String,
+        name: String,
+    },
+    DeleteBook {
+        book: String,
+    },
+    Patch {
+        book: String,
+        cseq: u64,
+        patch: WbPatch,
+    },
+    Presence {
+        book: String,
+        sheet: String,
+        range: String,
+        #[serde(default)]
+        editing: bool,
+    },
     /// Edits of one cell (`cell` given) or of the workbook, newest first.
-    History { book: String, #[serde(default)] sheet: Option<String>, #[serde(default)] cell: Option<String>, #[serde(default)] user: Option<String>, limit: usize },
-    Versions { book: String },
-    SaveVersion { book: String, label: String },
-    GetVersion { book: String, version: String },
-    RestoreVersion { book: String, version: String },
+    History {
+        book: String,
+        #[serde(default)]
+        sheet: Option<String>,
+        #[serde(default)]
+        cell: Option<String>,
+        #[serde(default)]
+        user: Option<String>,
+        limit: usize,
+    },
+    Versions {
+        book: String,
+    },
+    SaveVersion {
+        book: String,
+        label: String,
+    },
+    GetVersion {
+        book: String,
+        version: String,
+    },
+    RestoreVersion {
+        book: String,
+        version: String,
+    },
+    /// Is there a newer Dexterity Sheets than `version`?
+    CheckUpdate {
+        version: String,
+    },
+    /// The installer for `version`.
+    GetUpdate {
+        version: String,
+    },
     Ping,
+}
+
+/// A newer app version the server can hand out.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct UpdateInfo {
+    pub version: String,
+    /// What changed (Markdown or plain text).
+    pub notes: String,
+    pub file: String,
+    pub size: u64,
+    pub sha256: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -145,24 +218,89 @@ pub struct UserInfo {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "t")]
 pub enum ServerMsg {
-    Challenge { salt: String, iterations: u32, nonce: String, server: String },
-    Welcome { me: UserInfo, conn: u64, users: Vec<UserInfo> },
-    Books { books: Vec<BookInfo> },
+    Challenge {
+        salt: String,
+        iterations: u32,
+        nonce: String,
+        server: String,
+    },
+    Welcome {
+        me: UserInfo,
+        conn: u64,
+        users: Vec<UserInfo>,
+    },
+    Books {
+        books: Vec<BookInfo>,
+    },
     /// A workbook as of `snapshot_seq` (an .xlsx, base64) plus the edits since, up to `seq`.
-    Opened { book: BookInfo, snapshot_seq: u64, xlsx: String, log: Vec<Logged>, last_edits: Vec<LastEdit>, peers: Vec<Peer> },
-    Patched { book: String, seq: u64, time: i64, user: String, #[serde(default)] origin: Option<String>, patch: WbPatch },
+    Opened {
+        book: BookInfo,
+        snapshot_seq: u64,
+        xlsx: String,
+        log: Vec<Logged>,
+        last_edits: Vec<LastEdit>,
+        peers: Vec<Peer>,
+    },
+    Patched {
+        book: String,
+        seq: u64,
+        time: i64,
+        user: String,
+        #[serde(default)]
+        origin: Option<String>,
+        patch: WbPatch,
+    },
     /// The server could not take a patch; the client reloads the workbook.
-    Rejected { book: String, cseq: u64, reason: String },
-    PeerMoved { book: String, peer: Peer },
-    PeerLeft { book: String, conn: u64 },
-    History { book: String, changes: Vec<Change> },
-    Versions { book: String, versions: Vec<VersionInfo> },
-    Version { book: String, version: String, xlsx: String },
+    Rejected {
+        book: String,
+        cseq: u64,
+        reason: String,
+    },
+    PeerMoved {
+        book: String,
+        peer: Peer,
+    },
+    PeerLeft {
+        book: String,
+        conn: u64,
+    },
+    History {
+        book: String,
+        changes: Vec<Change>,
+    },
+    Versions {
+        book: String,
+        versions: Vec<VersionInfo>,
+    },
+    Version {
+        book: String,
+        version: String,
+        xlsx: String,
+    },
     /// The workbook was replaced (a version restored): reopen it.
-    Reload { book: String, reason: String },
-    BookGone { book: String },
-    Ok { what: String },
-    Error { message: String },
+    Reload {
+        book: String,
+        reason: String,
+    },
+    BookGone {
+        book: String,
+    },
+    /// Sent after `CheckUpdate`, and to everyone when the server gets a newer version. `None`:
+    /// the app is up to date.
+    Update {
+        update: Option<UpdateInfo>,
+    },
+    /// The installer, base64.
+    UpdateFile {
+        info: UpdateInfo,
+        data: String,
+    },
+    Ok {
+        what: String,
+    },
+    Error {
+        message: String,
+    },
     Pong,
 }
 
@@ -235,4 +373,26 @@ pub const PALETTE: [[u8; 3]; 12] = [
 pub fn own_cseq(origin: Option<&str>, instance: &str) -> Option<u64> {
     let (inst, c) = origin?.rsplit_once(':')?;
     (inst == instance).then(|| c.parse().ok()).flatten()
+}
+
+/// Compares dotted version numbers ("0.12.10" > "0.12.9"); a pre-release tag sorts before the release.
+pub fn version_newer(candidate: &str, current: &str) -> bool {
+    fn parts(v: &str) -> (Vec<u64>, bool) {
+        let v = v.trim().trim_start_matches(['v', 'V']);
+        let (core, pre) = match v.split_once('-') {
+            Some((c, _)) => (c, true),
+            None => (v, false),
+        };
+        (core.split('.').map(|p| p.parse().unwrap_or(0)).collect(), pre)
+    }
+    let (a, apre) = parts(candidate);
+    let (b, bpre) = parts(current);
+    let n = a.len().max(b.len());
+    for i in 0..n {
+        let (x, y) = (a.get(i).copied().unwrap_or(0), b.get(i).copied().unwrap_or(0));
+        if x != y {
+            return x > y;
+        }
+    }
+    bpre && !apre
 }

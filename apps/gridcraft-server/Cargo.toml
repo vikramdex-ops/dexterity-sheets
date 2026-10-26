@@ -17,4 +17,8 @@ path = "src/main.rs"
 gridcraft-collab = { workspace = true }
 log = { workspace = true }
 rpassword = "7"
+reqwest = { version = "0.13", features = ["blocking"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
 chrono = { workspace = true, features = ["clock"] }

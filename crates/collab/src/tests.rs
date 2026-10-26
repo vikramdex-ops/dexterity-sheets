@@ -1,3 +1,6 @@
+// Test-only: the clock and unreachable! are fine here.
+#![allow(clippy::disallowed_methods, clippy::unreachable)]
+
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -21,7 +24,19 @@ fn assert_same(a: &Workbook, b: &Workbook) {
     for (sa, sb) in a.sheets.iter().zip(&b.sheets) {
         assert_eq!(patch::sheet_fields(sa).expect("a"), patch::sheet_fields(sb).expect("b"), "fields of {} differ", sa.name);
         let cells = |w: &Workbook, s: &gridcraft_engine::model::Sheet| {
-            s.cells.iter().map(|(at, c)| (at, CellData { v: c.value.clone(), f: c.formula.as_ref().map(|f| crate::patch::FormulaData { text: f.text.clone(), array: f.array, dynamic: f.dynamic }), s: (c.style != gridcraft_engine::model::StyleId::DEFAULT).then(|| w.styles.get(c.style).clone()) })).collect::<Vec<_>>()
+            s.cells
+                .iter()
+                .map(|(at, c)| {
+                    (
+                        at,
+                        CellData {
+                            v: c.value.clone(),
+                            f: c.formula.as_ref().map(|f| crate::patch::FormulaData { text: f.text.clone(), array: f.array, dynamic: f.dynamic }),
+                            s: (c.style != gridcraft_engine::model::StyleId::DEFAULT).then(|| w.styles.get(c.style).clone()),
+                        },
+                    )
+                })
+                .collect::<Vec<_>>()
         };
         assert_eq!(cells(a, sa), cells(b, sb), "cells of {} differ", sa.name);
     }
@@ -63,7 +78,16 @@ fn every_kind_of_edit_replays_on_a_replica() {
 }
 
 fn book() -> BookInfo {
-    BookInfo { id: "b".into(), name: "Line list".into(), created: 0, created_by: "a".into(), modified: 0, modified_by: "a".into(), seq: 0, open_by: vec![] }
+    BookInfo {
+        id: "b".into(),
+        name: "Line list".into(),
+        created: 0,
+        created_by: "a".into(),
+        modified: 0,
+        modified_by: "a".into(),
+        seq: 0,
+        open_by: vec![],
+    }
 }
 
 #[test]
@@ -122,7 +146,11 @@ fn undo_takes_back_only_your_own_edit() {
     sa.execute("edit.undo", json!({})).expect("undo");
     let sheet = sa.active().expect("a").wb.sheet(0).expect("s").clone();
     assert!(sheet.cell(gridcraft_engine::core::CellRef::new(0, 0)).is_none(), "own edit undone");
-    assert_eq!(sheet.cell(gridcraft_engine::core::CellRef::new(1, 0)).map(|c| c.value.clone()), Some(gridcraft_engine::core::Value::Text("theirs".into())), "the other person's edit stays");
+    assert_eq!(
+        sheet.cell(gridcraft_engine::core::CellRef::new(1, 0)).map(|c| c.value.clone()),
+        Some(gridcraft_engine::core::Value::Text("theirs".into())),
+        "the other person's edit stays"
+    );
 }
 
 fn recv(c: &crate::client::Client, want: impl Fn(&crate::client::Event) -> bool) -> crate::client::Event {
@@ -143,7 +171,13 @@ fn two_people_edit_through_a_real_server() {
     crate::server::set_user(&dir, "anita", "Anita", "pipe-456", crate::proto::Role::Editor).expect("user");
     crate::server::set_user(&dir, "guest", "Guest", "view-789", crate::proto::Role::Viewer).expect("user");
     let (server, port) = crate::server::start_on(dir.clone(), "Test".into(), 0).expect("server");
-    let cfg = |u: &str, p: &str| crate::client::Config { server: format!("127.0.0.1:{port}"), user: u.into(), password: p.into(), app: "test".into(), machine: "test".into() };
+    let cfg = |u: &str, p: &str| crate::client::Config {
+        server: format!("127.0.0.1:{port}"),
+        user: u.into(),
+        password: p.into(),
+        app: "test".into(),
+        machine: "test".into(),
+    };
     let wake: crate::client::Waker = Arc::new(|| {});
 
     // A wrong password is refused, and nothing is anonymous.
@@ -158,7 +192,9 @@ fn two_people_edit_through_a_real_server() {
     }
     v.send(ClientMsg::CreateBook { name: "Line List".into(), xlsx: None });
     let opened = |c: &crate::client::Client| match recv(c, |e| matches!(e, crate::client::Event::Message(ServerMsg::Opened { .. }))) {
-        crate::client::Event::Message(ServerMsg::Opened { book, snapshot_seq, xlsx, log, last_edits, peers }) => (book, snapshot_seq, crate::proto::unb64(&xlsx).expect("b64"), log, last_edits, peers),
+        crate::client::Event::Message(ServerMsg::Opened { book, snapshot_seq, xlsx, log, last_edits, peers }) => {
+            (book, snapshot_seq, crate::proto::unb64(&xlsx).expect("b64"), log, last_edits, peers)
+        }
         _ => unreachable!(),
     };
     let (bv, sv, xv, lv, ev, pv) = opened(&v);
@@ -191,7 +227,10 @@ fn two_people_edit_through_a_real_server() {
 
     // A viewer's edit is refused by the server.
     g.send(ClientMsg::Patch { book: id.clone(), cseq: 1, patch: WbPatch::default() });
-    assert!(matches!(recv(&g, |e| matches!(e, crate::client::Event::Message(ServerMsg::Rejected { .. }))), crate::client::Event::Message(ServerMsg::Rejected { .. })));
+    assert!(matches!(
+        recv(&g, |e| matches!(e, crate::client::Event::Message(ServerMsg::Rejected { .. }))),
+        crate::client::Event::Message(ServerMsg::Rejected { .. })
+    ));
 
     // The audit trail says who changed the cell.
     a.send(ClientMsg::History { book: id.clone(), sheet: Some("Sheet1".into()), cell: Some("B3".into()), user: None, limit: 10 });

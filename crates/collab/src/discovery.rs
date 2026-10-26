@@ -1,6 +1,9 @@
 //! Finding Dexterity Sheets servers on the LAN: a UDP broadcast question, answered by each
 //! server with its name and port.
 
+// Native only (UDP); the wasm clock rule doesn't apply.
+#![allow(clippy::disallowed_methods)]
+
 use std::net::UdpSocket;
 use std::time::{Duration, Instant};
 

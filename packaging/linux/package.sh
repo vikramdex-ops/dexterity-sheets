@@ -56,7 +56,9 @@ STAGE="$WORK/root"
 rm -rf "$WORK"
 
 # ---- stage an FHS tree (shared by every format) -------------------------------------------------
-install -Dm755 "$BIN/gridcraft" "$STAGE/usr/bin/gridcraft"
+# Dexterity Sheets: cargo builds the desktop app as DexteritySheets; the installed name stays gridcraft
+# (the .desktop file, AppRun and metainfo use it).
+install -Dm755 "$BIN/DexteritySheets" "$STAGE/usr/bin/gridcraft"
 install -Dm755 "$BIN/gridcraft-cli" "$STAGE/usr/bin/gridcraft-cli"
 "${CROSS_COMPILE:-}strip" "$STAGE/usr/bin/gridcraft" "$STAGE/usr/bin/gridcraft-cli" 2>/dev/null || true
 install -Dm644 "$HERE/$APP_ID.desktop" "$STAGE/usr/share/applications/$APP_ID.desktop"

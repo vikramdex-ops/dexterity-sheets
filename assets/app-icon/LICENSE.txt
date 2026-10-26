@@ -1,13 +1,11 @@
-GridCraft app icon (gridcraft.svg and every file derived from it in this directory:
-gridcraft-1024.png, gridcraft-macos-512.png, gridcraft.icns, gridcraft.ico, hicolor/).
+Dexterity Sheets app icon (dexterity-sheets.svg and every file derived from it in this directory:
+dexterity-sheets-1024.png, dexterity-sheets-macos-512.png, dexterity-sheets.icns,
+dexterity-sheets.ico, hicolor/).
 
-PLACEHOLDER artwork: original work written for this project by GridCraft contributors (simple
-hand-written SVG geometry). No third-party material. Licensed like the rest of GridCraft, under
-either of
+Original artwork by Dexterity Design Services Pvt. Ltd., generated in code by
+packaging/dexterity/make_icon.py (plain geometry; no font, no third-party material).
 
-  * Apache License, Version 2.0 (https://www.apache.org/licenses/LICENSE-2.0)
-  * MIT license (https://opensource.org/licenses/MIT)
+Copyright (c) 2026 Dexterity Design Services Pvt. Ltd. All rights reserved. For use with
+Dexterity Sheets, the company's internal spreadsheet application.
 
-at your option.
-
-Regenerate the derived files with packaging/icons.sh.
+Regenerate the files with packaging/dexterity/make_icon.py (or packaging/icons.sh).

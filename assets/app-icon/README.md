@@ -1,52 +1,39 @@
-# GridCraft app icon (PLACEHOLDER)
+# Dexterity Sheets app icon
 
-**This icon is temporary.** Every Crafting App's icon is an engraved creature portrait that the
-product owner makes (craftrules `standards/icon-design.md`); GridCraft's hasn't been made yet.
-Until it is, this placeholder stands in: a simple ledger page with a header row, a row-number
-column, a selected cell with its fill handle and a double rule under a total, on a full-bleed
-GridCraft-green tile. It is original geometry written by hand for this repository, deliberately
-not modelled on any vendor's spreadsheet logo (no letters, no "X", no overlapping panels).
-
-When the owner's art arrives, replace `gridcraft.svg`, run `packaging/icons.sh`, update this
-README (provenance, creature) and the rows in `ATTRIBUTION.md`, and drop the word placeholder.
+Original artwork by Dexterity Design Services Pvt. Ltd., drawn entirely in code by
+[`packaging/dexterity/make_icon.py`](../../packaging/dexterity/make_icon.py): a deep-blue rounded
+tile, a faint white spreadsheet grid and a bold white "D" made of plain geometry (a stem and a
+half-ellipse bowl; no font, no third-party art). It replaces the upstream GridCraft placeholder
+icon.
 
 ## Palette
 
-Exactly three colours:
-
 | Colour | Hex | Used for |
 |---|---|---|
-| Ink | `#0b0b0c` | Line work and contour |
-| Paper | `#efe9dc` | The page |
-| GridCraft green (app colour, **proposed**) | `#1f9d55` | The full-bleed field and the header cells |
-
-The app colour is a proposal pending the owner's approval: GridCraft green `#1f9d55`, with ink
-(darker) variant `#147a40` for text and accents on light backgrounds. It differs from
-DesignCraft's `#7bb51c`.
+| Deep blue | `#0d3b8c` → `#082866` | The tile (vertical gradient) |
+| White | `#ffffff` | The "D"; the grid at 36 % opacity |
 
 ## Geometry
 
-A 512 × 512 viewBox, clipped to a rounded square with `rx=112`. Windows and Linux use the full
-tile. The macOS icons (`.icns`, `gridcraft-macos-512.png`) sit on Apple's grid: an 824/1024
-body with a transparent margin.
+A 512 × 512 design space, clipped to a rounded square with `rx=112`. Windows and Linux use the
+full tile; sizes below 32 px drop the grid so the "D" stays legible. The macOS icons (`.icns`,
+`dexterity-sheets-macos-512.png`) sit on Apple's grid: an 824/1024 body with a transparent margin.
 
 ## Files
 
 | File | Use |
 |---|---|
-| `gridcraft.svg` | Canonical artwork; also `hicolor/scalable` |
-| `gridcraft-1024.png` | 1024 px render of the full tile |
-| `gridcraft-macos-512.png` | Runtime Dock icon on macOS (for `apps/gridcraft` to embed) |
-| `gridcraft.icns` | macOS bundle icon (`CFBundleIconFile`) |
-| `gridcraft.ico` | Windows exe icon, 16–256 px (embedded by `apps/gridcraft/build.rs`) |
-| `hicolor/<size>/apps/ai.storyteller.gridcraft.png` | Linux icon theme, 16–512 px; the 256 px one is also the runtime window icon on Windows and Linux |
+| `dexterity-sheets.svg` | Canonical vector artwork; also `hicolor/scalable` |
+| `dexterity-sheets-1024.png` | 1024 px render of the full tile |
+| `dexterity-sheets-macos-512.png` | Runtime Dock icon on macOS (embedded by `apps/gridcraft`) |
+| `dexterity-sheets.icns` | macOS bundle icon |
+| `dexterity-sheets.ico` | Windows exe and installer icon, 16–256 px (embedded by `apps/gridcraft/build.rs`, used by `packaging/windows/package.ps1`) |
+| `hicolor/<size>/apps/ai.storyteller.gridcraft.png` | Linux icon theme, 16–512 px; the 256 px one is also the runtime window/taskbar icon on Windows and Linux |
 | `hicolor/scalable/apps/ai.storyteller.gridcraft.svg` | Linux scalable icon |
-| `LICENSE.txt` | MIT OR Apache-2.0 |
 
-The app ID is `ai.storyteller.gridcraft`. It's used for the hicolor icon names, the Wayland app
-ID and `packaging/linux/ai.storyteller.gridcraft.desktop`.
+The hicolor names keep the internal app id `ai.storyteller.gridcraft` (Wayland app id, `.desktop`
+file); only the artwork changed.
 
 ## Regenerate
 
-Edit `gridcraft.svg`, then run `packaging/icons.sh`. It needs `resvg`, and `iconutil` for the
-`.icns` (macOS only). It packs the `.ico` with `cargo xtask ico`.
+`python packaging/dexterity/make_icon.py` (or `packaging/icons.sh`). Needs Pillow.

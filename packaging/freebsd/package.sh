@@ -44,7 +44,10 @@ rm -rf "$WORK"
 
 install -d "$TREE/bin" "$TREE/share/applications" "$TREE/share/metainfo" "$TREE/share/mime/packages" \
   "$TREE/share/icons" "$TREE/share/doc/gridcraft"
-install -m 755 "$BIN/gridcraft" "$BIN/gridcraft-cli" "$TREE/bin/"
+# Dexterity Sheets: cargo builds the desktop app as DexteritySheets; the installed name stays gridcraft
+# (the .desktop file, AppRun and metainfo use it).
+install -m 755 "$BIN/DexteritySheets" "$TREE/bin/gridcraft"
+install -m 755 "$BIN/gridcraft-cli" "$TREE/bin/"
 strip "$TREE/bin/gridcraft" "$TREE/bin/gridcraft-cli" 2>/dev/null || true
 install -m 644 "$LINUX/$APP_ID.desktop" "$TREE/share/applications/$APP_ID.desktop"
 install -m 644 "$LINUX/$APP_ID.mime.xml" "$TREE/share/mime/packages/$APP_ID.xml"

@@ -27,7 +27,7 @@ use gridcraft_engine::model::Workbook;
 use serde::{Deserialize, Serialize};
 
 use crate::patch::{self, CellData, WbPatch};
-use crate::proto::{self, BookInfo, Change, ClientMsg, LastEdit, Logged, Peer, Role, ServerMsg, UserInfo, VersionInfo};
+use crate::proto::{self, BookInfo, Change, ClientMsg, LastEdit, Logged, Peer, Role, ServerMsg, UpdateInfo, UserInfo, VersionInfo};
 use crate::{Error, Result, auth, now_ms};
 
 /// Write a fresh snapshot after this many edits.
@@ -95,6 +95,10 @@ pub struct State {
     metas: BTreeMap<String, BookMeta>,
     books: HashMap<String, Book>,
     conns: HashMap<u64, Conn>,
+    /// The newest installer in `updates/` as last announced, and its file.
+    update: Option<(UpdateInfo, PathBuf)>,
+    /// sha256 of installers already hashed: (path, size, modified) → hash.
+    hashes: HashMap<(PathBuf, u64, std::time::SystemTime), String>,
 }
 
 pub struct Server {
@@ -197,7 +201,10 @@ impl Server {
                 metas.insert(m.id.clone(), m);
             }
         }
-        Ok(Server { state: Mutex::new(State { dir, name, users, metas, books: HashMap::new(), conns: HashMap::new() }), next_conn: AtomicU64::new(1) })
+        fs::create_dir_all(dir.join("updates"))?;
+        let mut state = State { dir, name, users, metas, books: HashMap::new(), conns: HashMap::new(), update: None, hashes: HashMap::new() };
+        state.update = state.scan_updates();
+        Ok(Server { state: Mutex::new(state), next_conn: AtomicU64::new(1) })
     }
 
     pub fn serve(self: Arc<Self>, listener: TcpListener) {
@@ -272,7 +279,10 @@ impl Server {
         let (user, instance, machine) = match proto::read_frame::<_, ClientMsg>(s)? {
             ClientMsg::Hello { protocol, user, instance, machine, .. } => {
                 if protocol != proto::PROTOCOL {
-                    return Err(Error::Denied(format!("this server speaks protocol {}, the app speaks {protocol}: install the same version", proto::PROTOCOL)));
+                    return Err(Error::Denied(format!(
+                        "this server speaks protocol {}, the app speaks {protocol}: install the same version",
+                        proto::PROTOCOL
+                    )));
                 }
                 (user.trim().to_ascii_lowercase(), instance, machine)
             }
@@ -363,6 +373,43 @@ impl State {
         }
     }
 
+    /// The newest installer in `updates/`. Files are named with their version as a `-`-separated
+    /// part (`DexteritySheets-0.13.0-x64.msi`, `dexterity-sheets-0.13.0-windows-x64.msi`); notes
+    /// sit next to them as `<same name>.md` or `.txt`.
+    fn scan_updates(&mut self) -> Option<(UpdateInfo, PathBuf)> {
+        let dir = self.dir.join("updates");
+        let mut best: Option<(String, PathBuf, u64, std::time::SystemTime)> = None;
+        for e in fs::read_dir(&dir).ok()?.flatten() {
+            let path = e.path();
+            if !path.extension().is_some_and(|x| x.eq_ignore_ascii_case("msi")) {
+                continue;
+            }
+            let stem = path.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
+            let Some(version) = stem.split('-').find(|p| p.starts_with(|c: char| c.is_ascii_digit()) && p.contains('.')).map(str::to_string) else {
+                continue;
+            };
+            let Ok(meta) = e.metadata() else { continue };
+            let modified = meta.modified().unwrap_or(std::time::UNIX_EPOCH);
+            if best.as_ref().is_none_or(|(v, ..)| proto::version_newer(&version, v)) {
+                best = Some((version, path, meta.len(), modified));
+            }
+        }
+        let (version, path, size, modified) = best?;
+        let key = (path.clone(), size, modified);
+        let sha256 = match self.hashes.get(&key) {
+            Some(h) => h.clone(),
+            None => {
+                use sha2::Digest;
+                let h = auth::hex(&sha2::Sha256::digest(fs::read(&path).ok()?));
+                self.hashes.insert(key, h.clone());
+                h
+            }
+        };
+        let notes = ["md", "txt"].iter().find_map(|x| fs::read_to_string(path.with_extension(x)).ok()).unwrap_or_default();
+        let file = path.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default();
+        Some((UpdateInfo { version, notes, file, size, sha256 }, path))
+    }
+
     fn book_dir(&self, id: &str) -> PathBuf {
         self.dir.join("books").join(id)
     }
@@ -371,13 +418,22 @@ impl State {
         let mut open_by: Vec<String> = self
             .conns
             .values()
-            .filter(|c| c.open.iter().any(|b| *b == m.id))
+            .filter(|c| c.open.contains(&m.id))
             .filter_map(|c| self.users.iter().find(|u| u.user == c.user).map(|u| u.display.clone()))
             .collect();
         open_by.sort();
         open_by.dedup();
         let seq = self.books.get(&m.id).map_or(m.seq, |b| b.meta.seq);
-        BookInfo { id: m.id.clone(), name: m.name.clone(), created: m.created, created_by: m.created_by.clone(), modified: m.modified, modified_by: m.modified_by.clone(), seq, open_by }
+        BookInfo {
+            id: m.id.clone(),
+            name: m.name.clone(),
+            created: m.created,
+            created_by: m.created_by.clone(),
+            modified: m.modified,
+            modified_by: m.modified_by.clone(),
+            seq,
+            open_by,
+        }
     }
 
     fn load_book(&mut self, id: &str) -> Result<()> {
@@ -398,7 +454,10 @@ impl State {
         snaps.sort_by_key(|s| std::cmp::Reverse(s.0));
         let mut loaded = None;
         for (seq, p) in &snaps {
-            match fs::read(p).map_err(Error::from).and_then(|b| gridcraft_engine::io::open_bytes("book.xlsx", &b).map(|(wb, _)| (wb, b)).map_err(Error::from)) {
+            match fs::read(p)
+                .map_err(Error::from)
+                .and_then(|b| gridcraft_engine::io::open_bytes("book.xlsx", &b).map(|(wb, _)| (wb, b)).map_err(Error::from))
+            {
                 Ok((wb, bytes)) => {
                     loaded = Some((*seq, wb, bytes));
                     break;
@@ -441,7 +500,8 @@ impl State {
         let audit = OpenOptions::new().create(true).append(true).open(dir.join("audit.jsonl"))?;
         let mut meta = meta;
         meta.seq = seq;
-        self.books.insert(id.to_string(), Book { meta, wb, snapshot_seq, snapshot: Arc::new(bytes), tail, log, audit, last_edits, last_version: now_ms() });
+        self.books
+            .insert(id.to_string(), Book { meta, wb, snapshot_seq, snapshot: Arc::new(bytes), tail, log, audit, last_edits, last_version: now_ms() });
         Ok(())
     }
 
@@ -473,7 +533,15 @@ impl State {
         fs::create_dir_all(dir.join("versions"))?;
         write_atomic(&dir.join("snapshot-0.xlsx"), &bytes)?;
         let now = now_ms();
-        let meta = BookMeta { id: id.clone(), name: name.to_string(), created: now, created_by: user.to_string(), modified: now, modified_by: user.to_string(), seq: 0 };
+        let meta = BookMeta {
+            id: id.clone(),
+            name: name.to_string(),
+            created: now,
+            created_by: user.to_string(),
+            modified: now,
+            modified_by: user.to_string(),
+            seq: 0,
+        };
         self.save_meta(&meta)?;
         self.metas.insert(id, meta.clone());
         Ok(meta)
@@ -516,7 +584,14 @@ impl State {
         let clean: String = label.chars().map(|c| if c.is_alphanumeric() || c == ' ' || c == '-' { c } else { '_' }).take(60).collect();
         let vid = format!("{time}-{}-{}", b.meta.seq, user);
         write_atomic(&dir.join(format!("{vid}.xlsx")), &b.snapshot)?;
-        let info = VersionInfo { id: vid.clone(), seq: b.meta.seq, time, user: user.to_string(), label: clean.trim().to_string(), size: b.snapshot.len() as u64 };
+        let info = VersionInfo {
+            id: vid.clone(),
+            seq: b.meta.seq,
+            time,
+            user: user.to_string(),
+            label: clean.trim().to_string(),
+            size: b.snapshot.len() as u64,
+        };
         write_atomic(&dir.join(format!("{vid}.json")), &serde_json::to_vec(&info)?)?;
         Ok(info)
     }
@@ -548,6 +623,18 @@ impl State {
         };
         match msg {
             ClientMsg::Ping => self.reply(conn, &ServerMsg::Pong),
+            ClientMsg::CheckUpdate { version } => {
+                let update = self.update.as_ref().filter(|(u, _)| proto::version_newer(&u.version, &version)).map(|(u, _)| u.clone());
+                self.reply(conn, &ServerMsg::Update { update });
+            }
+            ClientMsg::GetUpdate { version } => {
+                let Some((info, path)) = self.update.clone().filter(|(u, _)| u.version == version) else {
+                    return Err(Error::Denied(format!("version {version} is not available on this server")));
+                };
+                let data = fs::read(&path)?;
+                log::info!("{user} downloads update {}", info.version);
+                self.reply(conn, &ServerMsg::UpdateFile { info, data: proto::b64(&data) });
+            }
             ClientMsg::Hello { .. } | ClientMsg::Login { .. } => {}
             ClientMsg::ChangePassword { old_proof: _, new_password } => {
                 // The connection already proved the old password at login.
@@ -581,8 +668,19 @@ impl State {
                 }
                 let peers: Vec<Peer> = self.conns.iter().filter(|(id, _)| **id != conn).filter_map(|(_, c)| c.peer.get(&book).cloned()).collect();
                 let b = self.books.get(&book).ok_or_else(|| Error::Denied("no such workbook".into()))?;
-                let last_edits = b.last_edits.iter().map(|((sheet, at), (user, time))| LastEdit { sheet: sheet.clone(), r: at.row, c: at.col, user: user.clone(), time: *time }).collect();
-                let msg = ServerMsg::Opened { book: self.info(&b.meta), snapshot_seq: b.snapshot_seq, xlsx: proto::b64(&b.snapshot), log: b.tail.clone(), last_edits, peers };
+                let last_edits = b
+                    .last_edits
+                    .iter()
+                    .map(|((sheet, at), (user, time))| LastEdit { sheet: sheet.clone(), r: at.row, c: at.col, user: user.clone(), time: *time })
+                    .collect();
+                let msg = ServerMsg::Opened {
+                    book: self.info(&b.meta),
+                    snapshot_seq: b.snapshot_seq,
+                    xlsx: proto::b64(&b.snapshot),
+                    log: b.tail.clone(),
+                    last_edits,
+                    peers,
+                };
                 self.reply(conn, &msg);
                 log::info!("{user} opened \"{}\"", b.meta.name);
                 self.broadcast_books();
@@ -647,7 +745,10 @@ impl State {
                 if let Ok(f) = File::open(path) {
                     for line in BufReader::new(f).lines().map_while(std::result::Result::ok) {
                         let Ok(c) = serde_json::from_str::<Change>(&line) else { continue };
-                        if sheet.as_ref().is_some_and(|s| *s != c.sheet) || cell.as_ref().is_some_and(|x| !x.eq_ignore_ascii_case(&c.cell)) || who.as_ref().is_some_and(|w| *w != c.user) {
+                        if sheet.as_ref().is_some_and(|s| *s != c.sheet)
+                            || cell.as_ref().is_some_and(|x| !x.eq_ignore_ascii_case(&c.cell))
+                            || who.as_ref().is_some_and(|w| *w != c.user)
+                        {
                             continue;
                         }
                         changes.push(c);
@@ -684,7 +785,13 @@ impl State {
                 let dir = self.book_dir(&book);
                 let Some(b) = self.books.get_mut(&book) else { return Ok(()) };
                 b.meta.seq += 1;
-                let entry = Logged { seq: b.meta.seq, time: now_ms(), user: user.clone(), origin: Some(format!("restore:{version}")), patch: WbPatch::default() };
+                let entry = Logged {
+                    seq: b.meta.seq,
+                    time: now_ms(),
+                    user: user.clone(),
+                    origin: Some(format!("restore:{version}")),
+                    patch: WbPatch::default(),
+                };
                 writeln!(b.log, "{}", serde_json::to_string(&entry)?)?;
                 b.log.sync_data()?;
                 b.wb = wb;
@@ -771,13 +878,43 @@ impl Server {
     pub fn flush_all(&self) {
         lock(&self.state).flush_all();
     }
+
+    /// Looks for a new installer in `updates/` and tells everyone connected about it.
+    pub fn poll_updates(&self) {
+        let mut st = lock(&self.state);
+        let found = st.scan_updates();
+        let changed = found.as_ref().map(|(u, _)| &u.version) != st.update.as_ref().map(|(u, _)| &u.version);
+        st.update = found;
+        if changed && let Some((u, _)) = &st.update {
+            log::info!("update {} is available to clients", u.version);
+            if let Some(frame) = encode(&ServerMsg::Update { update: Some(u.clone()) }) {
+                for c in st.conns.values() {
+                    let _ = c.tx.send(frame.clone());
+                }
+            }
+        }
+    }
+
+    /// The folder new installers go in.
+    pub fn updates_dir(&self) -> PathBuf {
+        lock(&self.state).dir.join("updates")
+    }
 }
 
 /// The audit lines for a patch: one per cell whose content a person changed (values that were
 /// only recalculated are not anyone's edit), plus one per sheet-level change.
 fn describe(wb: &Workbook, p: &WbPatch, seq: u64, time: i64, user: &str, display: &str) -> Vec<Change> {
     let mut out = Vec::new();
-    let mk = |sheet: &str, cell: String, old: String, new: String| Change { seq, time, user: user.to_string(), display: display.to_string(), sheet: sheet.to_string(), cell, old, new };
+    let mk = |sheet: &str, cell: String, old: String, new: String| Change {
+        seq,
+        time,
+        user: user.to_string(),
+        display: display.to_string(),
+        sheet: sheet.to_string(),
+        cell,
+        old,
+        new,
+    };
     if let Some(st) = &p.structure {
         let after: Vec<String> = st
             .slots
@@ -809,13 +946,12 @@ fn describe(wb: &Workbook, p: &WbPatch, seq: u64, time: i64, user: &str, display
             let old_in = old.as_ref().map(CellData::input).unwrap_or_default();
             let new_in = ch.cell.as_ref().map(CellData::input).unwrap_or_default();
             if old_in == new_in {
-
                 out.push(mk(&sp.name, a1(at), old_in, format!("{new_in} (format)")));
             } else {
                 out.push(mk(&sp.name, a1(at), old_in, new_in));
             }
         }
-        
+
         let mut fields: Vec<String> = sp.fields.keys().cloned().collect();
         fields.extend(sp.keyed.keys().cloned());
         if !fields.is_empty() {
@@ -839,5 +975,12 @@ pub fn start_on(dir: PathBuf, name: String, port: u16) -> Result<(Arc<Server>, u
     std::thread::Builder::new().name("dexsheets-accept".into()).spawn(move || s.serve(listener))?;
     let version = env!("CARGO_PKG_VERSION").to_string();
     std::thread::Builder::new().name("dexsheets-discovery".into()).spawn(move || crate::discovery::answer(name, port, version))?;
+    let s = server.clone();
+    std::thread::Builder::new().name("dexsheets-updates".into()).spawn(move || {
+        loop {
+            std::thread::sleep(Duration::from_secs(30));
+            s.poll_updates();
+        }
+    })?;
     Ok((server, port))
 }

@@ -1,69 +1,34 @@
-//! One background check at startup (and on Help ▸ Check for Updates…) and the modal prompt that
-//! offers the new release: Update and Restart (direct self-update), Download or Later. The flow
-//! itself is `craft_update::updater::Updater`.
-
-use craft_update::suite::GRIDCRAFT;
-use craft_update::updater::{Action, Status, Updater};
+//! Update checking is disabled in Dexterity Sheets.
+//!
+//! Dexterity Sheets is an internal LAN tool of Dexterity Design Services Pvt. Ltd. and must never
+//! contact the internet. Upstream GridCraft checked GitHub for releases here (through
+//! `craft-update`) and offered a self-update; that code is gone. New builds are distributed by the
+//! company's IT. The functions below keep the shape the rest of the UI calls into, and do nothing
+//! (a manual check only says how updates arrive).
 
 use crate::SheetApp;
 
-const VERSION: &str = env!("CARGO_PKG_VERSION");
+/// What a manual Check for Updates (the `app.checkForUpdates` command) reports.
+pub(crate) const UPDATES_DISABLED: &str =
+    "Dexterity Sheets does not check the internet for updates. New versions are distributed by Dexterity Design Services IT.";
 
-pub(crate) struct Runtime {
-    updater: Updater,
-    /// The check at start was asked for; `tick` starts it with the context.
-    startup: bool,
-    /// Help ▸ Check for Updates… was chosen; the next `tick` starts it.
-    manual: bool,
-}
+/// No state: there is no updater.
+#[derive(Default, Clone, Copy)]
+pub(crate) struct Runtime;
 
-impl Default for Runtime {
-    fn default() -> Self {
-        Self { updater: Updater::new(&GRIDCRAFT, VERSION), startup: false, manual: false }
-    }
-}
-
-/// Ask for a check; the next frame's `tick` starts it. A manual one reports every outcome.
+/// Never starts a check. A manual request is answered with a message; nothing is fetched.
 pub(crate) fn start(app: &mut SheetApp, manual: bool) {
     if manual {
-        app.updates_rt.manual = true;
-    } else {
-        app.updates_rt.startup = true;
+        let message = app.ui.language.tr(UPDATES_DISABLED).to_string();
+        app.message = Some(("Dexterity Sheets".into(), message));
     }
 }
 
-pub(crate) fn tick(app: &mut SheetApp, ctx: &egui::Context) {
-    let rt = &mut app.updates_rt;
-    if std::mem::take(&mut rt.manual) {
-        rt.updater.check_now(ctx);
-    } else if rt.startup {
-        rt.updater.check_at_start(ctx);
-    }
-    rt.updater.tick(ctx);
-    let lang = app.ui.language;
-    let outcome = match rt.updater.status() {
-        Status::UpToDate => Some(lang.tr("GridCraft {version} is up to date.").replace("{version}", VERSION)),
-        Status::Failed(e) => Some(lang.tr("Could not check for updates: {error}").replace("{error}", e)),
-        Status::Idle | Status::Checking => None,
-    };
-    if let Some(message) = outcome {
-        rt.updater.dismiss_status();
-        app.message = Some(("GridCraft".into(), message));
-    }
-}
+/// Nothing to poll.
+pub(crate) fn tick(_app: &mut SheetApp, _ctx: &egui::Context) {}
 
-pub(crate) fn show(app: &mut SheetApp, ctx: &egui::Context) {
-    // The restart helper is scheduled before the app closes, so no update starts over unsaved work.
-    let clean = !app.session.documents().iter().any(|d| d.is_dirty());
-    match app.updates_rt.updater.show_if(ctx, clean) {
-        Action::OpenUrl(url) => {
-            if let Some(open) = &app.services.open_url {
-                open(&url);
-            }
-        }
-        // The guarded close path asks about unsaved work; the restart helper relaunches once the
-        // process has exited.
-        Action::Close => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
-        Action::None => {}
-    }
+/// Nothing to show. (`SheetApp::updates_rt` stays in place; reading it here keeps the field used
+/// without touching `lib.rs`.)
+pub(crate) fn show(app: &mut SheetApp, _ctx: &egui::Context) {
+    let Runtime = app.updates_rt;
 }

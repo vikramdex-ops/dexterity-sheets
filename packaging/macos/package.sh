@@ -63,7 +63,7 @@ fi
 
 rm -rf "$WORK"
 mkdir -p "$WORK/bin"
-for bin in gridcraft gridcraft-cli; do
+for bin in DexteritySheets gridcraft-cli; do
   inputs=()
   for t in "${TARGETS[@]}"; do inputs+=("$CARGO_TARGET_DIR/$t/release/$bin"); done
   lipo -create -output "$WORK/bin/$bin" "${inputs[@]}"
@@ -115,8 +115,9 @@ notarize() {
 echo "==> assembling $APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 # Executable and icon carry the display name (CFBundleExecutable / CFBundleIconFile).
-cp "$WORK/bin/gridcraft" "$APP/Contents/MacOS/GridCraft"
-cp "$ROOT/assets/app-icon/gridcraft.icns" "$APP/Contents/Resources/GridCraft.icns"
+# Dexterity Sheets: cargo builds DexteritySheets; the bundle's executable name is unchanged.
+cp "$WORK/bin/DexteritySheets" "$APP/Contents/MacOS/GridCraft"
+cp "$ROOT/assets/app-icon/dexterity-sheets.icns" "$APP/Contents/Resources/GridCraft.icns"
 # Bundled dependency font notices are installed before the app is signed.
 cp "$ROOT/NOTICE" "$ROOT/ATTRIBUTION.md" "$APP/Contents/Resources/"
 # Licences of the embedded craft-fonts fonts (only when built with CRAFT_FONTS_DIR).

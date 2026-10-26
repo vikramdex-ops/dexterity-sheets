@@ -50,7 +50,15 @@ pub struct RemoteEffect {
 
 impl SharedDoc {
     /// A shared workbook as the server sent it: its snapshot (an .xlsx) and the edits since.
-    pub fn open(book: BookInfo, snapshot_seq: u64, xlsx: &[u8], log: &[Logged], last_edits: Vec<LastEdit>, peers: Vec<Peer>, read_only: bool) -> Result<(SharedDoc, DocState)> {
+    pub fn open(
+        book: BookInfo,
+        snapshot_seq: u64,
+        xlsx: &[u8],
+        log: &[Logged],
+        last_edits: Vec<LastEdit>,
+        peers: Vec<Peer>,
+        read_only: bool,
+    ) -> Result<(SharedDoc, DocState)> {
         let (mut wb, _warnings) = gridcraft_engine::io::open_bytes("shared.xlsx", xlsx)?;
         let mut seq = snapshot_seq;
         let mut le = HashMap::new();
@@ -194,7 +202,15 @@ impl SharedDoc {
     /// After a reconnect: the server's current state replaces `confirmed`, and our edits it never
     /// ordered are applied on top and returned to be sent again. Patches the log shows as
     /// already ordered (`origin`) are dropped.
-    pub fn resync(&mut self, d: &mut DocState, snapshot_seq: u64, xlsx: &[u8], log: &[Logged], book: BookInfo, applied_cseqs: &[u64]) -> Result<Vec<(u64, WbPatch)>> {
+    pub fn resync(
+        &mut self,
+        d: &mut DocState,
+        snapshot_seq: u64,
+        xlsx: &[u8],
+        log: &[Logged],
+        book: BookInfo,
+        applied_cseqs: &[u64],
+    ) -> Result<Vec<(u64, WbPatch)>> {
         let (mut wb, _) = gridcraft_engine::io::open_bytes("shared.xlsx", xlsx)?;
         let mut seq = snapshot_seq;
         for entry in log {

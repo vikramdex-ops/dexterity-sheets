@@ -133,6 +133,18 @@ pub fn title_bar(app: &mut SheetApp, ui: &mut Ui) {
                 }
                 let share = small_button(ui, Icon::Share, "Share", "Share: export or save a copy", true);
                 egui::Popup::menu(&share).show(|ui| {
+                    let shared = crate::collab_ui::active_shared(app).is_some();
+                    if !shared && ui.button("Share with the team (office server)…").clicked() {
+                        if app.collab.signed_in() {
+                            app.run_or_alert("collab.share", json!({}));
+                        } else {
+                            act(app, "collab.shared", json!({}));
+                        }
+                    }
+                    if ui.button("Shared workbooks…").clicked() {
+                        act(app, "collab.shared", json!({}));
+                    }
+                    ui.separator();
                     if ui.button("Export as PDF…").clicked() {
                         app.run_or_alert("file.exportPdf", json!({}));
                     }
@@ -2366,12 +2378,28 @@ fn data(app: &mut SheetApp, ui: &mut Ui) {
 
 fn review(app: &mut SheetApp, ui: &mut Ui) {
     // Shared workbooks (Dexterity Sheets LAN co-authoring).
-    if big_button(ui, Icon::Share, "Shared
-Workbooks", "Sign in and open shared workbooks (File > Shared)", false).clicked() {
+    if big_button(
+        ui,
+        Icon::Share,
+        "Shared
+Workbooks",
+        "Sign in and open shared workbooks (File > Shared)",
+        false,
+    )
+    .clicked()
+    {
         act(app, "collab.shared", json!({}));
     }
-    if big_button(ui, Icon::Clock, "Edit
-History", "Who changed what, and when", false).clicked() {
+    if big_button(
+        ui,
+        Icon::Clock,
+        "Edit
+History",
+        "Who changed what, and when",
+        false,
+    )
+    .clicked()
+    {
         act(app, "collab.history", json!({}));
     }
     if big_button(ui, Icon::Book, "Versions", "Versions kept on the server", false).clicked() {

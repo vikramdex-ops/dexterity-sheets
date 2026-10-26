@@ -44,7 +44,7 @@ modules:
         CARGO_NET_OFFLINE: 'true'
     build-commands:
       - cargo --offline build --release --locked -p gridcraft -p gridcraft-cli
-      - install -Dm755 target/release/gridcraft /app/bin/gridcraft
+      - install -Dm755 target/release/DexteritySheets /app/bin/gridcraft
       - install -Dm755 target/release/gridcraft-cli /app/bin/gridcraft-cli
       - install -Dm644 packaging/linux/ai.storyteller.gridcraft.desktop /app/share/applications/ai.storyteller.gridcraft.desktop
       - install -Dm644 packaging/linux/ai.storyteller.gridcraft.mime.xml /app/share/mime/packages/ai.storyteller.gridcraft.xml
