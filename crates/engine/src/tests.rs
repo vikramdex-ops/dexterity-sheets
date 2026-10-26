@@ -55,7 +55,9 @@ fn en_in_entry_and_display() {
     };
     let _l = scoped(Locale::en_in());
     let mut s = s();
-    for (cell, input) in [("A1", "15-03-2026"), ("A2", "03/04/2026"), ("A3", "1,23,456"), ("A4", "1.2.3"), ("A5", "001-002"), ("A6", "9:05"), ("A7", "123456789")] {
+    for (cell, input) in
+        [("A1", "15-03-2026"), ("A2", "03/04/2026"), ("A3", "1,23,456"), ("A4", "1.2.3"), ("A5", "001-002"), ("A6", "9:05"), ("A7", "123456789")]
+    {
         s.execute("cell.set", json!({"cell": cell, "input": input})).unwrap();
     }
     s.execute("cell.set", json!({"cell": "B1", "input": "=DATEVALUE(\"03/04/2026\")"})).unwrap();

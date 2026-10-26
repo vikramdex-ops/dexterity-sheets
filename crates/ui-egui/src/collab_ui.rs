@@ -1059,7 +1059,8 @@ fn install_update(app: &mut SheetApp, info: &UpdateInfo, data: &str) {
     let exe = std::env::current_exe().map(|p| p.display().to_string()).unwrap_or_default();
     // msiexec replaces the installed version; afterwards the app opens again.
     let log = path.with_extension("log");
-    let script = format!("start \"\" /wait msiexec /i \"{}\" /passive /norestart /l*v \"{}\" & start \"\" \"{}\"", path.display(), log.display(), exe);
+    let script =
+        format!("start \"\" /wait msiexec /i \"{}\" /passive /norestart /l*v \"{}\" & start \"\" \"{}\"", path.display(), log.display(), exe);
     // cmd.exe doesn't understand the backslash-escaped quotes `arg` would add: pass the line raw.
     // No console window (CREATE_NO_WINDOW); msiexec shows its own progress bar.
     #[cfg(windows)]

@@ -59,10 +59,7 @@ pub fn builtin_format(id: u32) -> Option<&'static str> {
 /// shows the reader's version instead (en-IN Excel shows id 20 `h:mm` as `hh:mm` and id 43
 /// without parentheses).
 pub fn builtin_id(code: &str) -> Option<u32> {
-    BUILTIN_FORMATS
-        .iter()
-        .find(|(i, c)| *c == code && !gridcraft_core::locale::is_locale_dependent_builtin(*i))
-        .map(|(i, _)| *i)
+    BUILTIN_FORMATS.iter().find(|(i, c)| *c == code && !gridcraft_core::locale::is_locale_dependent_builtin(*i)).map(|(i, _)| *i)
 }
 
 pub use gridcraft_core::color::INDEXED;

@@ -252,7 +252,10 @@ mod tests {
         let mut zip = zip::ZipArchive::new(std::io::Cursor::new(&bytes)).unwrap();
         let mut xml = String::new();
         std::io::Read::read_to_string(&mut zip.by_name("xl/worksheets/sheet1.xml").unwrap(), &mut xml).unwrap();
-        assert!(xml.contains("<f>VLOOKUP(&quot;Tee eq&quot;,MTO[],4,FALSE)</f>") || xml.contains("<f>VLOOKUP(\"Tee eq\",MTO[],4,FALSE)</f>"), "{xml}");
+        assert!(
+            xml.contains("<f>VLOOKUP(&quot;Tee eq&quot;,MTO[],4,FALSE)</f>") || xml.contains("<f>VLOOKUP(\"Tee eq\",MTO[],4,FALSE)</f>"),
+            "{xml}"
+        );
         let (back, _) = crate::read_xlsx(&bytes).unwrap();
         let f = back.sheet(0).unwrap().cell(CellRef::new(4, 0)).unwrap().formula.clone().unwrap();
         assert_eq!(f.text, "VLOOKUP(\"Tee eq\",MTO[],4,FALSE)");
