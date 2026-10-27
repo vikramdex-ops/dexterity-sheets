@@ -46,9 +46,7 @@ jobs:
       - name: Build app, CLI and server
         run: cargo build --release --locked -p gridcraft -p gridcraft-cli -p gridcraft-server
       - name: Three windows editing one shared workbook (end to end)
-        # Real app windows on the runner's desktop (software rendering). Reported, not yet gating:
-        # hosted runners' GPUs vary.
-        continue-on-error: true
+        # Real app windows on the runner's desktop (software rendering): 19 checks.
         run: python packaging/dexterity/tests/lan_e2e.py target/release
       - uses: actions/upload-artifact@v4
         if: always()
