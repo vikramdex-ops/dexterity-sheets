@@ -69,7 +69,9 @@ jobs:
           Compress-Archive -Path $s -DestinationPath "$s.zip"
           Remove-Item -Recurse $s
           Push-Location dist
-          Get-ChildItem -File | Where-Object Name -ne 'SHA256SUMS' | ForEach-Object { "{0}  {1}" -f (Get-FileHash $_.Name -Algorithm SHA256).Hash.ToLower(), $_.Name } | Set-Content -Encoding ascii SHA256SUMS
+          $sums = Get-ChildItem -File | Where-Object Name -ne 'SHA256SUMS' | ForEach-Object { "{0}  {1}" -f (Get-FileHash $_.Name -Algorithm SHA256).Hash.ToLower(), $_.Name }
+          # LF line endings, so `sha256sum -c SHA256SUMS` works as well as Get-FileHash.
+          [IO.File]::WriteAllText("$PWD/SHA256SUMS", (($sums -join "`n") + "`n"))
           Get-Content SHA256SUMS
           Pop-Location
       - name: Release notes
