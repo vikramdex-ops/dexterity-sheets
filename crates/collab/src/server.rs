@@ -926,7 +926,9 @@ fn describe(wb: &Workbook, p: &WbPatch, seq: u64, time: i64, user: &str, display
         out.push(mk("", String::new(), format!("sheets: {}", st.base.join(", ")), format!("sheets: {}", after.join(", "))));
     }
     if !p.fields.is_empty() {
-        out.push(mk("", String::new(), String::new(), format!("workbook settings: {}", p.fields.keys().cloned().collect::<Vec<_>>().join(", "))));
+        let mut fields: Vec<&str> = p.fields.keys().map(|k| friendly_field(k)).collect();
+        fields.dedup();
+        out.push(mk("", String::new(), String::new(), format!("changed {}", fields.join(", "))));
     }
     for sp in &p.sheets {
         let sheet = wb.sheets.iter().find(|s| s.name == sp.name);
@@ -952,13 +954,48 @@ fn describe(wb: &Workbook, p: &WbPatch, seq: u64, time: i64, user: &str, display
             }
         }
 
-        let mut fields: Vec<String> = sp.fields.keys().cloned().collect();
-        fields.extend(sp.keyed.keys().cloned());
+        let mut fields: Vec<&str> = sp.fields.keys().chain(sp.keyed.keys()).map(|k| friendly_field(k)).collect();
+        fields.sort_unstable();
+        fields.dedup();
         if !fields.is_empty() {
-            out.push(mk(&sp.name, String::new(), String::new(), format!("sheet settings: {}", fields.join(", "))));
+            out.push(mk(&sp.name, String::new(), String::new(), format!("changed {}", fields.join(", "))));
         }
     }
     out
+}
+
+/// What a sheet or workbook field is called in the Edit History.
+fn friendly_field(k: &str) -> &str {
+    match k {
+        "cols" => "column widths",
+        "rows" => "row heights",
+        "default_col_width" | "default_row_height" => "default sizes",
+        "merges" => "merged cells",
+        "freeze" => "freeze panes",
+        "tab_color" => "tab colour",
+        "visibility" => "sheet visibility",
+        "show_gridlines" | "show_headings" | "show_formulas" | "show_zeros" => "display options",
+        "cond_formats" => "conditional formatting",
+        "validations" => "data validation",
+        "tables" => "tables",
+        "autofilter" => "filter",
+        "comments" => "comments and notes",
+        "hyperlinks" => "links",
+        "charts" => "charts",
+        "images" | "cell_pictures" => "pictures",
+        "shapes" => "shapes",
+        "sparklines" => "sparklines",
+        "pivots" => "pivot tables",
+        "slicers" => "slicers",
+        "protection" | "edit_ranges" => "protection",
+        "print" => "page setup",
+        "names" => "named ranges",
+        "theme" => "theme",
+        "calc" => "calculation options",
+        "props" => "document properties",
+        "cell_styles" => "cell styles",
+        other => other,
+    }
 }
 
 /// Starts the server: TCP on `port` and LAN discovery. Returns once listening.

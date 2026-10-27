@@ -40,6 +40,8 @@ OURS = [
     "NOTICE",
     "assets/app-icon/*",
     "crates/ui-egui/src/updates_ui.rs",
+    "docs/images/*",
+    ".gitattributes",
 ]
 DELETED_BY_US = [
     ".github/workflows/*",

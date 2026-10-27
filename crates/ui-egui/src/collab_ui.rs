@@ -454,7 +454,11 @@ pub fn run_command(app: &mut SheetApp, id: &str, p: &Json) -> Option<Result<Json
             app.open_backstage(crate::backstage::Page::Shared);
             Ok(Json::Null)
         }
+        // {cell?: true} shows the active cell's history, otherwise the whole workbook's.
         "collab.history" => {
+            if let Some(c) = p.get("cell").and_then(Json::as_bool) {
+                app.collab.history.this_cell = c;
+            }
             app.grid.pane = Some("history".into());
             app.collab.history.asked = None;
             Ok(Json::Null)
@@ -961,9 +965,14 @@ pub fn history_pane(app: &mut SheetApp, ui: &mut Ui) {
             } else if !place.is_empty() {
                 ui.label(&place);
             }
-            let old = if c.old.is_empty() { "(empty)".to_string() } else { c.old.clone() };
-            let new = if c.new.is_empty() { "(empty)".to_string() } else { c.new.clone() };
-            ui.label(RichText::new(format!("{old}  →  {new}")).monospace().size(11.5));
+            if c.cell.is_empty() {
+                // A sheet- or workbook-level change: there is no old value to show.
+                ui.label(RichText::new(&c.new).italics().size(11.5));
+            } else {
+                let old = if c.old.is_empty() { "(empty)".to_string() } else { c.old.clone() };
+                let new = if c.new.is_empty() { "(empty)".to_string() } else { c.new.clone() };
+                ui.label(RichText::new(format!("{old}  →  {new}")).monospace().size(11.5));
+            }
         });
         ui.separator();
     }
