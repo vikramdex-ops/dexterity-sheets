@@ -72,6 +72,8 @@ jobs:
           $skip = ($LASTEXITCODE -eq 0 -and $draft -eq 'false')
           "skip=$($skip.ToString().ToLower())" >> $env:GITHUB_OUTPUT
           if ($skip) { "Dexterity Sheets $v is already published: nothing to build." >> $env:GITHUB_STEP_SUMMARY }
+          # "release not found" is the normal case; don't let its exit code fail the step.
+          exit 0
       - uses: dtolnay/rust-toolchain@stable
         if: steps.v.outputs.skip != 'true'
         with:
