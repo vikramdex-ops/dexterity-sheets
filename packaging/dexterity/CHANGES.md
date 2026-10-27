@@ -8,6 +8,8 @@ automatically and don't go here.
 
 ## Unreleased
 
+## 1.2.0 · 27 October 2026
+
 - The office server installs from **DexSheetsServer-Setup.exe** (or the .msi): a Windows service that starts with Windows and restarts itself, the firewall opened for the office network only, the data folder locked to administrators.
 - New **Server Manager** for IT: start and stop the server, see how teammates reach it, add people one by one or many at once (type them, paste from Excel, or import a filled-in template), reset passwords, change roles, disable or remove people, manage app updates, back up and restore. No commands to type.
 - The office server never offers its own installer to office PCs as an app update.

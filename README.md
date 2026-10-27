@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <sub><!-- dex:release -->Version <b>1.1.0</b> · 27 October 2026 · based on GridCraft 0.12.1<!-- /dex:release --> · Windows 10 and 11 · no administrator rights needed · updates itself</sub>
+  <sub><!-- dex:release -->Version <b>1.2.0</b> · 27 October 2026 · based on GridCraft 0.12.1<!-- /dex:release --> · Windows 10 and 11 · no administrator rights needed · updates itself</sub>
 </p>
 
 <p align="center">
@@ -94,7 +94,14 @@
 ## What's new
 
 <!-- dex:whatsnew -->
-[Everything in 1.1.0](https://github.com/vikramdex-ops/dexterity-sheets/releases/tag/v1.1.0)
+- The office server installs from **DexSheetsServer-Setup.exe** (or the .msi): a Windows service that starts with Windows and restarts itself, the firewall opened for the office network only, the data folder locked to administrators.
+- New **Server Manager** for IT: start and stop the server, see how teammates reach it, add people one by one or many at once (type them, paste from Excel, or import a filled-in template), reset passwords, change roles, disable or remove people, manage app updates, back up and restore. No commands to type.
+- The office server never offers its own installer to office PCs as an app update.
+- Deleting a shared workbook on the server now works on Windows even after someone has opened it.
+- Fixed: if the server PC lost power in the middle of saving an edit, the next edit could be lost at the following restart. It is now kept.
+- A damaged snapshot on the server is now recognised and the previous good one is used, instead of showing a near-empty workbook.
+
+[Everything in 1.2.0](https://github.com/vikramdex-ops/dexterity-sheets/releases/tag/v1.2.0) and 1 more.
 <!-- /dex:whatsnew -->
 
 Dexterity Sheets is built on the open-source [GridCraft](https://github.com/storytold/gridcraft)
