@@ -132,7 +132,11 @@ def main():
         for app, user, pw in [(v, "vikram", "shots-pass-1"), (an, "anita", "shots-pass-2"), (ra, "rahul", "shots-pass-3")]:
             app.run("collab.signIn", server=server, user=user, password=pw)
             wait(lambda app=app: app.run("collab.status")["status"] == "Online")
-        v.run("collab.create", name="Line List - Unit 100")
+        # Vikram shares the line list from his project folder; the file keeps everyone's edits.
+        job = os.path.join(data, "Projects", "Unit 100")
+        os.makedirs(job, exist_ok=True)
+        v.run("file.saveAs", path=os.path.join(job, "Line List - Unit 100.xlsx"))
+        v.run("collab.share")
         wait(lambda: any(d["active"] for d in v.run("collab.status")["docs"]))
         for app in (an, ra):
             wait(lambda app=app: any(b["name"].startswith("Line List") for b in app.run("collab.status")["books"]))

@@ -57,11 +57,14 @@ pub enum ClientMsg {
         new_password: String,
     },
     ListBooks,
-    /// A new shared workbook, from an .xlsx (base64) or empty.
+    /// A new shared workbook, from an .xlsx (base64) or empty. `source`: the file on someone's
+    /// PC or network drive it was shared from, which that person's app keeps saving to.
     CreateBook {
         name: String,
         #[serde(default)]
         xlsx: Option<String>,
+        #[serde(default)]
+        source: Option<FileSource>,
     },
     OpenBook {
         book: String,
@@ -73,8 +76,12 @@ pub enum ClientMsg {
         book: String,
         name: String,
     },
+    /// Deletes a shared workbook (kept in the server's trash folder). `stopped`: its file was
+    /// shared and the person stops sharing it; the file stays where it is.
     DeleteBook {
         book: String,
+        #[serde(default)]
+        stopped: bool,
     },
     Patch {
         book: String,
@@ -136,6 +143,35 @@ pub struct UpdateInfo {
     pub sha256: String,
 }
 
+/// Where a shared workbook lives as a file: shared from a folder on someone's PC or a network
+/// drive, it stays that file. The person who shared it keeps it saved there.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FileSource {
+    /// The path as the person who shared it sees it (`D:\Projects\Line list.xlsx`).
+    pub path: String,
+    /// Identifies the file across PCs: the network (UNC) path for a file on a network drive,
+    /// otherwise the PC's name and the path. Lower case. See [`file_key`].
+    pub key: String,
+    /// The account that shared it; that person's app writes the file.
+    pub user: String,
+    pub machine: String,
+}
+
+/// [`FileSource::key`] of a file: `\\server\share\dir\file.xlsx` for a network file (a mapped
+/// drive letter resolved to its network path, so every PC agrees), `machine|d:\dir\file.xlsx`
+/// for a file on this PC's own disk. `canonical` is the path as `std::fs::canonicalize` gives it.
+pub fn file_key(machine: &str, canonical: &str) -> String {
+    let p = canonical.replace('/', "\\");
+    let p = if let Some(rest) = p.strip_prefix(r"\\?\UNC\") {
+        format!(r"\\{rest}")
+    } else if let Some(rest) = p.strip_prefix(r"\\?\") {
+        rest.to_string()
+    } else {
+        p
+    };
+    if p.starts_with(r"\\") { p.to_lowercase() } else { format!("{}|{}", machine.to_lowercase(), p.to_lowercase()) }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct BookInfo {
     pub id: String,
@@ -147,6 +183,9 @@ pub struct BookInfo {
     pub seq: u64,
     /// Display names of the people who have it open.
     pub open_by: Vec<String>,
+    /// The file it was shared from, if any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<Box<FileSource>>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -282,8 +321,13 @@ pub enum ServerMsg {
         book: String,
         reason: String,
     },
+    /// The workbook was deleted, or its sharing stopped (`by`: who, as a display name).
     BookGone {
         book: String,
+        #[serde(default)]
+        by: Option<String>,
+        #[serde(default)]
+        stopped: bool,
     },
     /// Sent after `CheckUpdate`, and to everyone when the server gets a newer version. `None`:
     /// the app is up to date.

@@ -128,17 +128,7 @@ pub fn title_bar(app: &mut SheetApp, ui: &mut Ui) {
                 }
                 let share = small_button(ui, Icon::Share, "Share", "Share: export or save a copy", true);
                 egui::Popup::menu(&share).show(|ui| {
-                    let shared = crate::collab_ui::active_shared(app).is_some();
-                    if !shared && ui.button("Share with the team (office server)…").clicked() {
-                        if app.collab.signed_in() {
-                            app.run_or_alert("collab.share", json!({}));
-                        } else {
-                            app.run_or_alert("collab.shared", json!({}));
-                        }
-                    }
-                    if ui.button("Shared workbooks…").clicked() {
-                        app.run_or_alert("collab.shared", json!({}));
-                    }
+                    crate::collab_ui::share_menu(app, ui);
                     ui.separator();
                     if ui.button("Export as PDF…").clicked() {
                         app.run_or_alert("file.exportPdf", json!({}));

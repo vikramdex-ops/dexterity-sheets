@@ -1,10 +1,12 @@
-//! Dexterity Sheets LAN co-authoring in the window: signing in to the office server, the shared
-//! workbook list (File › Shared), other people's selections on the grid, who last changed the
-//! active cell (status bar), and the Edit History and Versions panes.
+//! Dexterity Sheets LAN co-authoring in the window: signing in to the office server, sharing any
+//! workbook wherever it is saved (its file keeps everyone's edits), the shared workbook list
+//! (File › Shared), other people's selections on the grid, who last changed the active cell
+//! (status bar), and the Edit History and Versions panes.
 //!
 //! The engine knows nothing of sharing: each frame [`tick`] sends what the person changed in a
 //! shared workbook and applies what others changed, through `gridcraft_collab::sync`.
 
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::mpsc::Receiver;
 
@@ -14,7 +16,7 @@ use gridcraft_collab::discovery::{self, Found};
 use gridcraft_collab::proto::{self, BookInfo, Change, ClientMsg, Peer, Role, ServerMsg, UpdateInfo, UserInfo, VersionInfo};
 use gridcraft_collab::sync::SharedDoc;
 use gridcraft_engine::core::{CellRef, RangeRef};
-use gridcraft_engine::model::Sheet;
+use gridcraft_engine::model::{Sheet, Workbook};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value as Json, json};
 
@@ -83,6 +85,15 @@ pub struct Collab {
     /// Downloading or installing: what the dialog says.
     update_state: Option<String>,
     last_update_check: f64,
+    /// Shared workbooks that are files on this PC, kept saved with everyone's edits.
+    pub links: Vec<LinkedFile>,
+    joining: Vec<Joining>,
+    /// Share this window's workbook once signed in.
+    share_after_sign_in: Option<u64>,
+    /// Open files' keys (window uid → key; `None`: not a file that exists).
+    keys: HashMap<u64, Option<String>>,
+    /// Windows already compared with the shared files: not joined or told again.
+    told: HashSet<u64>,
 }
 
 fn remembered_path() -> Option<std::path::PathBuf> {
@@ -167,6 +178,17 @@ fn sign_in(c: &mut Collab, ctx: &egui::Context) {
 }
 
 fn sign_out(app: &mut SheetApp) {
+    // A shared file gets its last edits and its window is the file again.
+    let linked: Vec<(String, u64)> =
+        app.collab.links.iter().filter_map(|l| app.collab.docs.iter().find(|d| d.book.id == l.book).map(|d| (l.book.clone(), d.doc_uid))).collect();
+    for (book, uid) in linked {
+        if let Some((path, None)) = unlink(app, &book) {
+            app.collab.docs.retain(|d| d.book.id != book);
+            back_to_file(app, uid, &path);
+        }
+    }
+    app.collab.links.clear();
+    app.collab.joining.clear();
     let c = &mut app.collab;
     // Shared workbooks stay open as unsaved local copies.
     for d in c.docs.drain(..) {
@@ -201,6 +223,7 @@ pub fn tick(app: &mut SheetApp, ctx: &egui::Context) {
     for e in events {
         handle(app, e);
     }
+    keep_files(app);
     // Workbooks that need to be fetched again (a missed edit, a restored version).
     let reload: Vec<String> = app.collab.docs.iter().filter(|d| d.needs_reload.is_some()).map(|d| d.book.id.clone()).collect();
     for id in reload {
@@ -221,7 +244,11 @@ pub fn tick(app: &mut SheetApp, ctx: &egui::Context) {
         app.collab.found = found;
         app.collab.finding = None;
     }
-    if app.collab.client.as_ref().is_some_and(|c| !c.online()) || !app.collab.opening.is_empty() {
+    // A shared file waiting to be written needs a frame even when nobody touches the window.
+    if app.collab.client.as_ref().is_some_and(|c| !c.online())
+        || !app.collab.opening.is_empty()
+        || app.collab.links.iter().any(|l| !l.up_to_date() && !l.blocked)
+    {
         ctx.request_repaint_after(std::time::Duration::from_millis(250));
     }
 }
@@ -230,6 +257,8 @@ fn send_local(app: &mut SheetApp) {
     let open: Vec<u64> = app.session.documents().iter().map(|d| d.uid).collect();
     let closed: Vec<String> = app.collab.docs.iter().filter(|d| !open.contains(&d.doc_uid)).map(|d| d.book.id.clone()).collect();
     for id in closed {
+        // A shared file's window closed: the file gets the last edits.
+        let _ = unlink(app, &id);
         app.collab.send(ClientMsg::CloseBook { book: id.clone() });
         app.collab.docs.retain(|d| d.book.id != id);
     }
@@ -309,7 +338,14 @@ fn handle(app: &mut SheetApp, e: Event) {
 fn message(app: &mut SheetApp, m: ServerMsg) {
     let instance = app.collab.client.as_ref().map(|c| c.instance.clone()).unwrap_or_default();
     match m {
-        ServerMsg::Books { books } => app.collab.books = books,
+        ServerMsg::Books { books } => {
+            app.collab.books = books;
+            if let Some(uid) = app.collab.share_after_sign_in.take()
+                && let Err(e) = share_doc(app, uid, None)
+            {
+                app.message = Some(("Dexterity Sheets".into(), e));
+            }
+        }
         ServerMsg::Opened { book, snapshot_seq, xlsx, log, last_edits, peers } => {
             app.collab.opening.retain(|b| *b != book.id);
             let Ok(bytes) = proto::unb64(&xlsx) else { return };
@@ -337,6 +373,8 @@ fn message(app: &mut SheetApp, m: ServerMsg) {
             match SharedDoc::open(book, snapshot_seq, &bytes, &log, last_edits, peers, read_only) {
                 Ok((sd, mut doc)) => {
                     doc.title = sd.book.name.clone();
+                    let book = sd.book.clone();
+                    arrived(app, &book, &doc);
                     // Replace an untouched blank Book1, as opening a file does.
                     if app.session.documents().len() == 1
                         && app.collab.docs.is_empty()
@@ -409,18 +447,37 @@ fn message(app: &mut SheetApp, m: ServerMsg) {
                 sd.needs_reload = Some("reload".into());
             }
         }
-        ServerMsg::BookGone { book } => {
+        ServerMsg::BookGone { book, by, stopped } => {
+            let file = unlink(app, &book);
             if let Some(i) = app.collab.docs.iter().position(|d| d.book.id == book) {
                 let sd = app.collab.docs.remove(i);
-                if let Some(doc) = app.session.document_mut(sd.doc_uid) {
-                    doc.title = format!("{} (deleted on server)", sd.book.name);
-                    doc.saved = Arc::new(gridcraft_engine::model::Workbook::new());
+                let by = by.unwrap_or_else(|| "Someone".into());
+                if let Some((path, None)) = &file {
+                    // This PC's file has every edit: the window is that file again.
+                    back_to_file(app, sd.doc_uid, path);
+                    app.message = Some((
+                        "Dexterity Sheets".into(),
+                        format!("{by} stopped sharing \"{}\". {} has everyone's edits up to now.", sd.book.name, file_name(path)),
+                    ));
+                } else {
+                    if let Some(doc) = app.session.document_mut(sd.doc_uid) {
+                        doc.title = format!("{} ({})", sd.book.name, if stopped { "no longer shared" } else { "deleted on server" });
+                        doc.saved = Arc::new(gridcraft_engine::model::Workbook::new());
+                    }
+                    app.message = Some((
+                        "Dexterity Sheets".into(),
+                        if stopped {
+                            format!(
+                                "{by} stopped sharing \"{}\"; their file has everyone's edits. Your window keeps a copy: save it with Save As if you need it.",
+                                sd.book.name
+                            )
+                        } else {
+                            format!("{by} deleted \"{}\" on the server. Your window keeps a copy: save it with Save As if you need it.", sd.book.name)
+                        },
+                    ));
                 }
-                app.message = Some((
-                    "Dexterity Sheets".into(),
-                    format!("\"{}\" was deleted on the server. Your window keeps a copy: save it with Save As if you need it.", sd.book.name),
-                ));
             }
+            save_record(&book, None);
         }
         ServerMsg::Update { update } => {
             let update = update.filter(|u| proto::version_newer(&u.version, gridcraft_collab::APP_VERSION.trim()));
@@ -472,6 +529,7 @@ pub fn run_command(app: &mut SheetApp, id: &str, p: &Json) -> Option<Result<Json
             Ok(Json::Null)
         }
         "collab.share" => share_active(app, p.get("name").and_then(Json::as_str)),
+        "collab.stopSharing" => stop_sharing(app),
         // Help > Check for Updates asks the office server.
         "collab.checkUpdate" | "app.checkForUpdates" | "help.checkForUpdates" => {
             if !app.collab.signed_in() {
@@ -530,7 +588,7 @@ pub fn run_command(app: &mut SheetApp, id: &str, p: &Json) -> Option<Result<Json
         }
         "collab.create" => {
             let name = p.get("name").and_then(Json::as_str).unwrap_or("").to_string();
-            app.collab.send(ClientMsg::CreateBook { name, xlsx: None });
+            app.collab.send(ClientMsg::CreateBook { name, xlsx: None, source: None });
             Ok(Json::Null)
         }
         "collab.status" => {
@@ -543,13 +601,17 @@ pub fn run_command(app: &mut SheetApp, id: &str, p: &Json) -> Option<Result<Json
                         "book": d.book.name, "id": d.book.id, "seq": d.seq, "pending": d.pending_len(),
                         "peers": d.peers.iter().map(|p| json!({"user": p.user, "sheet": p.sheet, "range": p.range, "editing": p.editing})).collect::<Vec<_>>(),
                         "active": app.session.active().is_some_and(|a| a.uid == d.doc_uid),
+                        "source": d.book.source.as_ref().map(|s| json!({"path": s.path, "user": s.user, "machine": s.machine})),
+                        "file": c.links.iter().find(|l| l.book == d.book.id).map(|l| json!({
+                            "path": l.path, "saved": l.up_to_date() && l.error.is_none(), "error": l.error,
+                        })),
                     })
                 })
                 .collect();
             Ok(json!({
                 "status": format!("{:?}", c.status),
                 "me": c.me.as_ref().map(|m| m.user.clone()),
-                "books": c.books.iter().map(|b| json!({"name": b.name, "id": b.id, "openBy": b.open_by})).collect::<Vec<_>>(),
+                "books": c.books.iter().map(|b| json!({"name": b.name, "id": b.id, "openBy": b.open_by, "file": b.source.as_ref().map(|s| s.path.clone())})).collect::<Vec<_>>(),
                 "docs": docs,
                 "error": c.error,
             }))
@@ -567,11 +629,24 @@ pub fn run_command(app: &mut SheetApp, id: &str, p: &Json) -> Option<Result<Json
             })
         }
         // Save on a shared workbook keeps a version on the server: every edit is already saved.
-        "file.save" if active_shared(app).is_some() => {
+        // A shared file is also written to its file now.
+        "file.save" if active_shared(app).is_some() && p.get("path").is_none() => {
             let book = active_shared(app).map(|s| s.book.id.clone()).unwrap_or_default();
             let who = app.collab.me.as_ref().map(|m| m.display.clone()).unwrap_or_default();
-            app.collab.send(ClientMsg::SaveVersion { book, label: format!("Saved by {who}") });
-            app.toast = Some(("Every change is saved on the server as you work. A version was kept as well.".into(), crate::now_ms()));
+            app.collab.send(ClientMsg::SaveVersion { book: book.clone(), label: format!("Saved by {who}") });
+            let wb = app.session.active().map(|d| d.wb.clone());
+            let mut note = "Every change is saved on the server as you work. A version was kept as well.".to_string();
+            if let Some(l) = app.collab.links.iter_mut().find(|l| l.book == book)
+                && let Some(wb) = wb
+            {
+                l.step(&wb);
+                l.flush();
+                note = match &l.error {
+                    Some(e) => e.clone(),
+                    None => format!("Saved to {} and kept a version on the server.", l.path),
+                };
+            }
+            app.toast = Some((note, crate::now_ms()));
             Ok(Json::Null)
         }
         _ => return None,
@@ -580,19 +655,496 @@ pub fn run_command(app: &mut SheetApp, id: &str, p: &Json) -> Option<Result<Json
 }
 
 fn share_active(app: &mut SheetApp, name: Option<&str>) -> Result<Json, String> {
+    let uid = app.session.active().ok_or("no workbook open")?.uid;
     if !app.collab.signed_in() {
+        // Sign in first; the workbook is shared right after.
+        app.collab.share_after_sign_in = Some(uid);
         app.open_backstage(crate::backstage::Page::Shared);
-        return Err("Sign in to the office server first (File › Shared).".into());
+        app.toast = Some(("Sign in to the office server: the workbook is shared as soon as you are in.".into(), crate::now_ms()));
+        return Ok(json!({"after": "signIn"}));
     }
-    let d = app.session.active().ok_or("no workbook open")?;
-    if app.collab.shared(d.uid).is_some() {
+    share_doc(app, uid, name)
+}
+
+/// Shares the workbook in window `uid`. A saved file stays linked: this app keeps writing
+/// everyone's edits to it, wherever it is (a project folder, a network drive).
+fn share_doc(app: &mut SheetApp, uid: u64, name: Option<&str>) -> Result<Json, String> {
+    let d = app.session.documents().iter().find(|d| d.uid == uid).ok_or("that workbook is no longer open")?;
+    if app.collab.shared(uid).is_some() {
         return Err("This workbook is already shared.".into());
     }
-    let name = name.map(str::to_string).unwrap_or_else(|| d.title.trim_end_matches(".xlsx").to_string());
+    if app.collab.me.as_ref().is_some_and(|m| !m.role.can_edit()) {
+        return Err("Your account is view-only: ask your administrator to share it, or for edit access.".into());
+    }
+    let path = d.path.clone().filter(|p| std::path::Path::new(p).is_file());
+    let key = path.as_deref().and_then(key_of);
+    // The file is already shared (by someone else, or before): join it.
+    if let Some(k) = &key
+        && let Some(book) = app.collab.books.iter().find(|b| b.source.as_ref().is_some_and(|s| &s.key == k)).cloned()
+    {
+        join_file(app, uid, &book, true);
+        return Ok(json!({"joined": book.name}));
+    }
+    let title = d.title.clone();
+    let stem = path
+        .as_deref()
+        .and_then(|p| std::path::Path::new(p).file_stem().map(|s| s.to_string_lossy().into_owned()))
+        .unwrap_or_else(|| title.trim_end_matches(".xlsx").to_string());
+    let name = name.map(str::to_string).filter(|n| !n.trim().is_empty()).unwrap_or(stem);
     let bytes = gridcraft_engine::io::save_bytes(&d.wb, "share.xlsx").map_err(|e| e.to_string())?;
-    app.collab.send(ClientMsg::CreateBook { name, xlsx: Some(proto::b64(&bytes)) });
-    app.toast = Some(("Sharing… the shared copy opens in its own window.".into(), crate::now_ms()));
+    let wb = d.wb.clone();
+    let me = app.collab.me.as_ref().map(|m| m.user.clone()).unwrap_or_default();
+    let (source, link, note) = match (&path, &key) {
+        (Some(p), Some(k)) if can_write_back(p) => (
+            Some(proto::FileSource { path: p.clone(), key: k.clone(), user: me, machine: machine() }),
+            Some((p.clone(), stamp_of(p))),
+            format!("Sharing {}… your file keeps everyone's edits.", file_name(p)),
+        ),
+        (Some(p), Some(k)) => (
+            // A format this app can't write (.xls, .ods): shared, and the file is left alone.
+            Some(proto::FileSource { path: p.clone(), key: k.clone(), user: me, machine: machine() }),
+            None,
+            format!("Sharing {}… it can't be written back in its format: use Save As .xlsx to keep the team's edits as a file.", file_name(p)),
+        ),
+        _ => (None, None, "Sharing… tip: save the workbook in a folder first, and that file keeps everyone's edits.".to_string()),
+    };
+    app.collab.joining.push(Joining { key: source.as_ref().map(|s| s.key.clone()), name: name.clone(), doc_uid: uid, wb, link });
+    app.collab.send(ClientMsg::CreateBook { name, xlsx: Some(proto::b64(&bytes)), source });
+    app.toast = Some((note, crate::now_ms()));
     Ok(Json::Null)
+}
+
+// ---------------------------------------------------------------------------------------------
+// Files: a workbook shared from a folder stays that file
+//
+// Sharing a saved workbook links the shared workbook to its file: the app of the person who
+// shared it keeps the file saved with everyone's edits, so the file in their folder (or on the
+// network drive) is always the team's latest. Opening a file that is being shared joins it
+// instead of starting a second copy. Stop sharing hands the file back with every edit in it.
+
+/// The file as it was last written here: (size, modified in ms since 1970).
+type Stamp = (u64, i64);
+
+/// A shared workbook that is a file this app keeps saved.
+pub struct LinkedFile {
+    pub book: String,
+    pub path: String,
+    /// The workbook as last written to the file.
+    written: Arc<Workbook>,
+    /// The newest content, and when it last changed.
+    latest: Arc<Workbook>,
+    changed_at: f64,
+    /// What the file looked like after our last write: a different file means another program
+    /// changed it, and it is then never overwritten.
+    stamp: Option<Stamp>,
+    writing: Option<(Arc<Workbook>, Receiver<Result<Stamp, String>>)>,
+    retry_at: f64,
+    /// The file was changed outside: writes stopped.
+    blocked: bool,
+    pub saved_at: Option<i64>,
+    pub error: Option<String>,
+}
+
+/// A workbook on its way to being shared or joined; when it arrives it takes this window's place.
+struct Joining {
+    /// The file's key, or for a workbook that is no file, its name.
+    key: Option<String>,
+    name: String,
+    doc_uid: u64,
+    /// The window's content when asked: if the person typed in it meanwhile, it is kept.
+    wb: Arc<Workbook>,
+    /// This app keeps the file saved: (path, the file's stamp now).
+    link: Option<(String, Option<Stamp>)>,
+}
+
+/// Files this PC wrote for shared workbooks (book id → key and stamp), kept across restarts so
+/// that reopening a file can tell whether something else changed it meanwhile.
+#[derive(Default, Serialize, Deserialize)]
+struct LinkRecords {
+    books: std::collections::BTreeMap<String, LinkRecord>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+struct LinkRecord {
+    key: String,
+    path: String,
+    size: u64,
+    modified: i64,
+}
+
+fn records_path() -> Option<std::path::PathBuf> {
+    remembered_path().map(|p| p.with_file_name("linked-files.json"))
+}
+
+fn load_records() -> LinkRecords {
+    records_path().and_then(|p| std::fs::read(p).ok()).and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()
+}
+
+fn save_record(book: &str, rec: Option<LinkRecord>) {
+    let Some(p) = records_path() else { return };
+    let mut all = load_records();
+    match rec {
+        Some(r) => all.books.insert(book.to_string(), r),
+        None => all.books.remove(book),
+    };
+    if let Some(dir) = p.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    if let Ok(b) = serde_json::to_vec_pretty(&all) {
+        let _ = gridcraft_engine::io::write_file(&p.display().to_string(), &b);
+    }
+}
+
+fn machine() -> String {
+    std::env::var("COMPUTERNAME").unwrap_or_default()
+}
+
+/// The key that identifies the file at `path` on every PC, if it exists.
+fn key_of(path: &str) -> Option<String> {
+    let canonical = std::fs::canonicalize(path).ok()?;
+    Some(proto::file_key(&machine(), &canonical.display().to_string()))
+}
+
+fn stamp_of(path: &str) -> Option<Stamp> {
+    let m = std::fs::metadata(path).ok()?;
+    let modified = m.modified().ok()?.duration_since(std::time::UNIX_EPOCH).ok()?.as_millis();
+    Some((m.len(), i64::try_from(modified).unwrap_or(i64::MAX)))
+}
+
+/// Formats this app can write back to the file a workbook was shared from.
+fn can_write_back(path: &str) -> bool {
+    use gridcraft_engine::io::FileKind;
+    matches!(FileKind::from_path(path), Some(FileKind::Xlsx | FileKind::Csv | FileKind::Tsv))
+}
+
+fn file_name(path: &str) -> String {
+    std::path::Path::new(path).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| path.to_string())
+}
+
+/// Writes the workbook to its file (temporary file, then rename) and returns the new stamp.
+fn write_workbook(wb: &Workbook, path: &str) -> Result<Stamp, String> {
+    let bytes = gridcraft_engine::io::save_file_bytes(wb, path).map_err(|e| e.to_string())?;
+    gridcraft_engine::io::write_file(path, &bytes).map_err(|e| e.to_string())?;
+    stamp_of(path).ok_or_else(|| format!("{path}: written, but it can't be read back"))
+}
+
+impl LinkedFile {
+    fn new(book: &str, path: &str, wb: &Arc<Workbook>, stamp: Option<Stamp>) -> LinkedFile {
+        LinkedFile {
+            book: book.to_string(),
+            path: path.to_string(),
+            // Nothing written yet: the file is brought up to date at once.
+            written: Arc::new(Workbook::new()),
+            latest: wb.clone(),
+            changed_at: 0.0,
+            stamp,
+            writing: None,
+            retry_at: 0.0,
+            blocked: false,
+            saved_at: None,
+            error: None,
+        }
+    }
+
+    pub fn up_to_date(&self) -> bool {
+        Arc::ptr_eq(&self.written, &self.latest) && self.writing.is_none()
+    }
+
+    /// The file is still what this app last wrote (or is gone, which a write recreates).
+    fn unchanged_outside(&mut self) -> bool {
+        if self.blocked {
+            return false;
+        }
+        let now = stamp_of(&self.path);
+        if self.stamp.is_some() && now.is_some() && now != self.stamp {
+            self.blocked = true;
+            self.error = Some(format!(
+                "{} was changed by another program, so it is no longer overwritten. Everyone's edits are safe in the shared workbook: use Save As to keep them as a file.",
+                file_name(&self.path)
+            ));
+            return false;
+        }
+        true
+    }
+
+    fn wrote(&mut self, wb: Arc<Workbook>, r: Result<Stamp, String>) {
+        match r {
+            Ok(stamp) => {
+                self.written = wb;
+                self.stamp = Some(stamp);
+                self.saved_at = Some(crate::now_ms() as i64);
+                self.error = None;
+                if let Some(key) = key_of(&self.path) {
+                    save_record(&self.book, Some(LinkRecord { key, path: self.path.clone(), size: stamp.0, modified: stamp.1 }));
+                }
+            }
+            Err(e) => {
+                // Locked (open in another program), the drive offline: try again shortly.
+                self.error = Some(format!("{} could not be saved: {e}. Trying again…", file_name(&self.path)));
+                self.retry_at = crate::now_ms() + 10_000.0;
+            }
+        }
+    }
+
+    /// Writes now, waiting for it: for a window that closes and for the app quitting.
+    fn flush(&mut self) {
+        if let Some((wb, rx)) = self.writing.take()
+            && let Ok(r) = rx.recv()
+        {
+            self.wrote(wb, r);
+        }
+        if Arc::ptr_eq(&self.written, &self.latest) || !self.unchanged_outside() {
+            return;
+        }
+        let wb = self.latest.clone();
+        let r = write_workbook(&wb, &self.path);
+        self.wrote(wb, r);
+    }
+
+    /// Each frame: notices new content and writes it a moment after the last change, in the
+    /// background so a large workbook never stalls typing.
+    fn step(&mut self, wb: &Arc<Workbook>) {
+        let now = crate::now_ms();
+        if !Arc::ptr_eq(wb, &self.latest) {
+            self.latest = wb.clone();
+            self.changed_at = now;
+        }
+        if let Some((_, rx)) = &self.writing
+            && let Ok(r) = rx.try_recv()
+            && let Some((done, _)) = self.writing.take()
+        {
+            self.wrote(done, r);
+        }
+        if self.writing.is_some() || Arc::ptr_eq(&self.written, &self.latest) || now < self.retry_at || now - self.changed_at < 1000.0 {
+            return;
+        }
+        if !self.unchanged_outside() {
+            return;
+        }
+        let wb = self.latest.clone();
+        let path = self.path.clone();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let job = wb.clone();
+        match std::thread::Builder::new().name("dexsheets-save-file".into()).spawn(move || {
+            let _ = tx.send(write_workbook(&job, &path));
+        }) {
+            Ok(_) => self.writing = Some((wb, rx)),
+            Err(_) => {
+                let r = write_workbook(&wb, &self.path);
+                self.wrote(wb, r);
+            }
+        }
+    }
+}
+
+impl Drop for Collab {
+    /// Quitting: every shared file gets its last edits.
+    fn drop(&mut self) {
+        for l in &mut self.links {
+            l.flush();
+        }
+    }
+}
+
+/// Keeps every linked file saved, and joins open files that are being shared.
+fn keep_files(app: &mut SheetApp) {
+    let mut told = None;
+    for l in app.collab.links.iter_mut() {
+        let Some(sd) = app.collab.docs.iter().find(|d| d.book.id == l.book) else { continue };
+        let Some(doc) = app.session.documents().iter().find(|d| d.uid == sd.doc_uid) else { continue };
+        let was_blocked = l.blocked;
+        l.step(&doc.wb);
+        if l.blocked && !was_blocked {
+            told = l.error.clone();
+        }
+    }
+    if let Some(m) = told {
+        app.message = Some(("Dexterity Sheets".into(), m));
+    }
+    if matches!(app.collab.status, Status::Online) && app.collab.me.is_some() {
+        join_open_files(app);
+    }
+}
+
+/// An open file that is also a shared workbook joins it, so nobody edits a copy of their own.
+fn join_open_files(app: &mut SheetApp) {
+    let mut found = Vec::new();
+    for d in app.session.documents() {
+        if app.collab.shared(d.uid).is_some() || app.collab.told.contains(&d.uid) || app.collab.joining.iter().any(|j| j.doc_uid == d.uid) {
+            continue;
+        }
+        let Some(path) = d.path.clone() else { continue };
+        let key = app.collab.keys.entry(d.uid).or_insert_with(|| key_of(&path)).clone();
+        let Some(key) = key else { continue };
+        if let Some(b) = app.collab.books.iter().find(|b| b.source.as_ref().is_some_and(|s| s.key == key)) {
+            found.push((d.uid, b.clone()));
+        }
+    }
+    for (uid, book) in found {
+        app.collab.told.insert(uid);
+        join_file(app, uid, &book, false);
+    }
+}
+
+/// Joins `book`, the shared workbook of the file open in window `uid`.
+fn join_file(app: &mut SheetApp, uid: u64, book: &BookInfo, asked: bool) {
+    let Some(d) = app.session.documents().iter().find(|d| d.uid == uid) else { return };
+    let Some(src) = book.source.clone() else { return };
+    let path = d.path.clone().unwrap_or_default();
+    let by = app.collab.display_of(&src.user);
+    let me = app.collab.me.as_ref().map(|m| m.user.clone()).unwrap_or_default();
+    let mine = src.user == me && src.machine.eq_ignore_ascii_case(&machine());
+    if d.is_dirty() {
+        app.message = Some((
+            "Dexterity Sheets".into(),
+            format!(
+                "{} is shared with the team as \"{}\" (shared by {by}). This window has changes that are not in it, so it was left as it is.\n\nSave your changes under another name (Save As), then open the file again to work with the team.",
+                file_name(&path),
+                book.name
+            ),
+        ));
+        return;
+    }
+    // Only the person who shared the file saves it, and only if nothing else changed it since.
+    let link = if mine {
+        let rec = load_records().books.get(&book.id).cloned();
+        let now = stamp_of(&path);
+        match rec {
+            Some(r) if now == Some((r.size, r.modified)) => Some((path.clone(), now)),
+            _ => {
+                app.message = Some((
+                    "Dexterity Sheets".into(),
+                    format!(
+                        "{} changed since it was last saved from the shared workbook \"{}\", so it was not replaced.\n\nBoth are open: your file in this window, the team's shared workbook in another. Copy what you need into the shared one; then Share › Stop sharing writes it to your file.",
+                        file_name(&path),
+                        book.name
+                    ),
+                ));
+                app.collab.opening.push(book.id.clone());
+                app.collab.send(ClientMsg::OpenBook { book: book.id.clone() });
+                return;
+            }
+        }
+    } else {
+        None
+    };
+    app.collab.joining.push(Joining { key: Some(src.key.clone()), name: book.name.clone(), doc_uid: uid, wb: d.wb.clone(), link });
+    app.collab.opening.push(book.id.clone());
+    app.collab.send(ClientMsg::OpenBook { book: book.id.clone() });
+    if !asked {
+        app.toast = Some((
+            if mine {
+                format!("{} is shared with your team: you are back in it, with everyone's edits.", file_name(&path))
+            } else {
+                format!("{} is being edited live by the team (shared by {by}): you joined them.", file_name(&path))
+            },
+            crate::now_ms(),
+        ));
+    }
+}
+
+/// A shared workbook arrived: if it is one this app asked to share or join from a window, it
+/// takes that window's place (and its file stays linked).
+fn arrived(app: &mut SheetApp, book: &BookInfo, doc: &gridcraft_engine::DocState) {
+    let me = app.collab.me.as_ref().map(|m| m.user.clone()).unwrap_or_default();
+    let Some(i) = app.collab.joining.iter().position(|j| match &j.key {
+        Some(k) => book.source.as_ref().is_some_and(|s| &s.key == k),
+        None => book.source.is_none() && book.created_by == me && book.name == j.name,
+    }) else {
+        return;
+    };
+    let j = app.collab.joining.remove(i);
+    if let Some((path, stamp)) = &j.link {
+        app.collab.links.retain(|l| l.book != book.id);
+        app.collab.links.push(LinkedFile::new(&book.id, path, &doc.wb, *stamp));
+    }
+    // The window it came from closes, unless the person typed in it meanwhile.
+    if let Some(at) = app.session.document_index(j.doc_uid)
+        && app.session.documents().get(at).is_some_and(|d| Arc::ptr_eq(&d.wb, &j.wb))
+    {
+        app.session.close_document(at);
+    }
+}
+
+/// The window's linked file (path), when this app keeps it saved.
+pub fn linked_file(app: &SheetApp, uid: u64) -> Option<&LinkedFile> {
+    let sd = app.collab.shared(uid)?;
+    app.collab.links.iter().find(|l| l.book == sd.book.id)
+}
+
+/// A shared workbook stops being shared here (closed, signed out, stopped, deleted): its file
+/// gets the last edits. Returns the file's path.
+fn unlink(app: &mut SheetApp, book: &str) -> Option<(String, Option<String>)> {
+    let i = app.collab.links.iter().position(|l| l.book == book)?;
+    let mut l = app.collab.links.remove(i);
+    if let Some(sd) = app.collab.docs.iter().find(|d| d.book.id == book)
+        && let Some(doc) = app.session.documents().iter().find(|d| d.uid == sd.doc_uid)
+    {
+        l.step(&doc.wb);
+    }
+    l.flush();
+    let ok = l.up_to_date() && !l.blocked;
+    Some((l.path.clone(), (!ok).then(|| l.error.clone().unwrap_or_else(|| "the file could not be saved".into()))))
+}
+
+/// Turns a shared window back into its file, after [`unlink`].
+fn back_to_file(app: &mut SheetApp, uid: u64, path: &str) {
+    if let Some(doc) = app.session.document_mut(uid) {
+        doc.path = Some(path.to_string());
+        doc.title = file_name(path);
+        doc.saved = doc.wb.clone();
+    }
+    app.collab.told.insert(uid);
+}
+
+/// The Share menu's sharing entries (title bar).
+pub fn share_menu(app: &mut SheetApp, ui: &mut Ui) {
+    let uid = app.session.active().map(|d| d.uid);
+    let shared = active_shared(app).is_some();
+    let linked = uid.and_then(|u| linked_file(app, u)).is_some();
+    if !shared && ui.button("Share with my team…").on_hover_text("Everyone edits it live; a saved file keeps everyone's edits").clicked() {
+        app.run_or_alert("collab.share", json!({}));
+    }
+    if linked && ui.button("Stop sharing (keep my file)").clicked() {
+        app.run_or_alert("collab.stopSharing", json!({}));
+    }
+    if ui.button("Shared workbooks…").clicked() {
+        app.run_or_alert("collab.shared", json!({}));
+    }
+}
+
+/// Stops sharing the active workbook: its file gets every edit, the server's copy goes to its
+/// trash folder, and everyone else keeps a copy in their window.
+fn stop_sharing(app: &mut SheetApp) -> Result<Json, String> {
+    let d = app.session.active().ok_or("no workbook open")?;
+    let uid = d.uid;
+    let sd = app.collab.shared(uid).ok_or("This workbook is not shared.")?;
+    let book = sd.book.clone();
+    if linked_file(app, uid).is_none() {
+        return Err("Only the person who shared this file can stop sharing it, from the PC it was shared from.".into());
+    }
+    if let Some(l) = app.collab.links.iter().find(|l| l.book == book.id)
+        && l.blocked
+    {
+        return Err(l.error.clone().unwrap_or_default());
+    }
+    let (path, err) = unlink(app, &book.id).ok_or("not linked")?;
+    if let Some(e) = err {
+        // Nothing is lost: the workbook stays shared until its file can be written.
+        if let Some(sd) = app.collab.docs.iter().find(|d| d.book.id == book.id)
+            && let Some(doc) = app.session.documents().iter().find(|d| d.uid == sd.doc_uid)
+        {
+            let stamp = stamp_of(&path);
+            app.collab.links.push(LinkedFile::new(&book.id, &path, &doc.wb, stamp));
+        }
+        return Err(format!("Still shared: {e}"));
+    }
+    app.collab.send(ClientMsg::DeleteBook { book: book.id.clone(), stopped: true });
+    app.collab.docs.retain(|d| d.book.id != book.id);
+    save_record(&book.id, None);
+    back_to_file(app, uid, &path);
+    app.toast = Some((format!("Stopped sharing. {} has everyone's edits.", file_name(&path)), crate::now_ms()));
+    Ok(json!({"file": path}))
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -639,7 +1191,7 @@ fn start_finding(c: &mut Collab) {
 }
 
 fn sign_in_form(app: &mut SheetApp, ui: &mut Ui, t: &Tokens) {
-    ui.label(RichText::new("Work on shared workbooks with your team. Every change is saved on the office server with your name and the time, so you can always see who changed what.").color(t.text_dim));
+    ui.label(RichText::new("Share any workbook with your team, wherever it is saved, and edit it together live. A file you share keeps everyone's edits; the office server also keeps every change with the name and time, so you can always see who changed what.").color(t.text_dim));
     ui.add_space(14.0);
     let c = &mut app.collab;
     ui.label(RichText::new("Servers on this network").font(theme::ui_bold(13.5)));
@@ -716,12 +1268,14 @@ fn books_list(app: &mut SheetApp, ui: &mut Ui, t: &Tokens, me: &UserInfo, close:
             ui.add(egui::TextEdit::singleline(&mut app.collab.new_name).hint_text("Name of a new shared workbook").desired_width(300.0));
             if ui.button("New shared workbook").clicked() && !app.collab.new_name.trim().is_empty() {
                 let name = std::mem::take(&mut app.collab.new_name);
-                app.collab.send(ClientMsg::CreateBook { name, xlsx: None });
+                app.collab.send(ClientMsg::CreateBook { name, xlsx: None, source: None });
             }
             let can_share = app.session.active().is_some_and(|d| app.collab.shared(d.uid).is_none());
             if ui
                 .add_enabled(can_share, egui::Button::new("Share the current workbook"))
-                .on_hover_text("Uploads the workbook in the active window as a new shared workbook")
+                .on_hover_text(
+                    "Shares the workbook in the active window. If it is a saved file, the file stays where it is and keeps everyone's edits.",
+                )
                 .clicked()
             {
                 let name = (!app.collab.new_name.trim().is_empty()).then(|| std::mem::take(&mut app.collab.new_name));
@@ -749,7 +1303,20 @@ fn books_list(app: &mut SheetApp, ui: &mut Ui, t: &Tokens, me: &UserInfo, close:
         let mut books = app.collab.books.clone();
         books.sort_by_key(|b| std::cmp::Reverse(b.modified));
         for b in books {
-            ui.label(RichText::new(&b.name).font(theme::ui_bold(13.5)));
+            ui.vertical(|ui| {
+                let one_line = |r: RichText| egui::Label::new(r).wrap_mode(egui::TextWrapMode::Extend);
+                ui.add(one_line(RichText::new(&b.name).font(theme::ui_bold(13.5))));
+                if let Some(src) = &b.source {
+                    // The folder and the file name; the whole path on hover.
+                    let p = std::path::Path::new(&src.path);
+                    let short = match p.parent().and_then(|f| f.file_name()) {
+                        Some(folder) => format!("{}\\{}", folder.to_string_lossy(), file_name(&src.path)),
+                        None => file_name(&src.path),
+                    };
+                    ui.add(one_line(RichText::new(format!("{}'s file · {short}", app.collab.display_of(&src.user))).color(t.text_dim).small()))
+                        .on_hover_text(format!("Shared from {} on {}. Opening that file joins this workbook.", src.path, src.machine));
+                }
+            });
             ui.label(format!("{} by {}", when(b.modified), app.collab.display_of(&b.modified_by)));
             ui.label(if b.open_by.is_empty() { "—".to_string() } else { b.open_by.join(", ") });
             ui.horizontal(|ui| {
@@ -785,7 +1352,7 @@ fn books_list(app: &mut SheetApp, ui: &mut Ui, t: &Tokens, me: &UserInfo, close:
         ui.horizontal(|ui| {
             ui.label(RichText::new(format!("Delete \"{name}\" for everyone? The server keeps it in its trash folder.")).color(t.danger));
             if ui.button("Delete").clicked() {
-                app.collab.send(ClientMsg::DeleteBook { book: id.to_string() });
+                app.collab.send(ClientMsg::DeleteBook { book: id.to_string(), stopped: false });
                 app.collab.confirm_restore = None;
             }
             if ui.button("Cancel").clicked() {
@@ -868,6 +1435,18 @@ pub fn status(app: &mut SheetApp, ui: &mut Ui, t: &Tokens) {
     ui.add(egui::Label::new(small(text, t.text_dim)).selectable(false));
     if sd.read_only {
         ui.add(egui::Label::new(small(" · view only".into(), t.danger)).selectable(false));
+    }
+    if let Some(l) = app.collab.links.iter().find(|l| l.book == sd.book.id) {
+        let (txt, c) = match &l.error {
+            Some(_) => (format!(" · {} not updated", file_name(&l.path)), t.danger),
+            None if l.up_to_date() => (format!(" · in {}", file_name(&l.path)), t.text_dim),
+            None => (format!(" · saving to {}…", file_name(&l.path)), t.text_dim),
+        };
+        let hover = l.error.clone().unwrap_or_else(|| format!("Everyone's edits are saved to your file: {}", l.path));
+        ui.add(egui::Label::new(small(txt, c)).selectable(false)).on_hover_text(hover);
+    } else if let Some(src) = &sd.book.source {
+        ui.add(egui::Label::new(small(format!(" · {}'s file", app.collab.display_of(&src.user)), t.text_dim)).selectable(false))
+            .on_hover_text(format!("Shared from {} on {}; it keeps everyone's edits.", src.path, src.machine));
     }
     // Who else is here.
     let mut seen: Vec<String> = Vec::new();
@@ -1082,6 +1661,9 @@ fn install_update(app: &mut SheetApp, info: &UpdateInfo, data: &str) {
         Err(std::io::Error::other(format!("automatic install runs on Windows; the installer is at {} ({script})", path.display())));
     match started {
         Ok(_) => {
+            for l in &mut app.collab.links {
+                l.flush();
+            }
             app.collab.update_state = Some(format!("Installing {}... the app closes now and reopens when done.", info.version));
             if let Some(ctx) = app.collab_ctx.clone() {
                 app.request_quit(&ctx);

@@ -112,7 +112,7 @@ def live():
         f'<polygon points="{shadow}" fill="#000" opacity=".45" filter="url(#bl)"/>'
         f'<g class="fl"><polygon points="{slab}" fill="#6f8fca"/><g transform="{M}">{"".join(plane)}</g>{"".join(screen)}</g>'
     )
-    card("feature-live.svg", "Edit together, live", "Changes show up on everyone's screen at once.",
+    card("feature-live.svg", "Share any file, live", "Your file stays put and keeps everyone's edits.",
          "Anita, Rahul and Vikram move around one shared sheet; each value they type appears for everyone.",
          art, "".join(css), '<filter id="bl" x="-20%" y="-20%" width="140%" height="140%"><feGaussianBlur stdDeviation="9"/></filter>')
 
@@ -301,7 +301,7 @@ def steps():
     cy, r = 112, 58
     steps_ = [("Install", "Run the setup. No admin rights needed."),
               ("Sign in", "Pick the office server, type your name."),
-              ("Edit together", "Open a shared workbook. That's it.")]
+              ("Share", "Open your file, click Share. That's it.")]
     css = [
         ".cn{stroke-dasharray:6 10;animation:cn 1.2s linear infinite}@keyframes cn{to{stroke-dashoffset:-16}}",
         f".tr{{opacity:0;animation:tr {T}s ease-in-out infinite}}",
@@ -343,8 +343,8 @@ def steps():
         art.append(f'<text x="{x}" y="222" text-anchor="middle" font-size="30" font-weight="700" fill="#fff">{title}</text>')
         art.append(f'<text x="{x}" y="256" text-anchor="middle" font-size="18" fill="#a9c6f7">{sub}</text>')
     svg = f"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 300" width="1200" height="300" role="img" aria-labelledby="t d">
-<title id="t">Three steps: Install, Sign in, Edit together</title>
-<desc id="d">1. Install: run the setup, no admin rights needed. 2. Sign in: pick the office server and type your name. 3. Edit together: open a shared workbook.</desc>
+<title id="t">Three steps: Install, Sign in, Share</title>
+<desc id="d">1. Install: run the setup, no admin rights needed. 2. Sign in: pick the office server and type your name. 3. Share: open your file from wherever it is saved and click Share; the team edits it with you live.</desc>
 <!-- Original artwork by Dexterity Design Services Pvt. Ltd. -->
 <defs>
 <style>text{{font-family:{FONT}}}{''.join(css)}{REDUCE}</style>

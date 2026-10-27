@@ -22,7 +22,7 @@ SHOT_W = 860  # screenshot width on the canvas when flat
 FPS_MS = 40
 TOP, BOTTOM = (5, 20, 54), (13, 59, 140)  # brand blues
 CAPTIONS = [
-    (0.0, "Vikram starts a shared line list on the office server"),
+    (0.0, "Vikram shares his line list from its project folder"),
     (0.25, "Anita and Rahul type into it at the same time: each one's cursor carries their name"),
     (0.8, "Every change is signed. Edit History shows who changed what, and when"),
 ]

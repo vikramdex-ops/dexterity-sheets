@@ -3,7 +3,8 @@
 Starts a DexSheetsServer with a throw-away data folder, three desktop app instances (each with
 its own control port), signs three different people in, and drives real editing through the
 control channel: live propagation, conflicting edits, formatting, row inserts, undo, who-edited
-attribution, a server crash with offline edits, and persistence after restart.
+attribution, a server crash with offline edits, persistence after restart, and sharing a file from
+a project folder (the file keeps everyone's edits; opening it joins; stop sharing hands it back).
 
 Run:  py -3 -I D:\\GridCraft\\tests\\lan_e2e.py [path\\to\\target\\release]
 """
@@ -15,6 +16,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import zipfile
 
 REL = os.path.abspath(sys.argv[1] if len(sys.argv) > 1 else os.path.join("target", "release"))
 APP = next((os.path.join(REL, n) for n in ("DexteritySheets.exe", "gridcraft.exe") if os.path.exists(os.path.join(REL, n))), None)
@@ -103,6 +105,97 @@ def wait(pred, timeout=15, step=0.05):
 
 def start_server(data):
     return subprocess.Popen([SERVER, "--data", data, "--port", str(PORT), "--name", "E2E test server"], stdout=subprocess.DEVNULL, stderr=open(os.path.join(data, "stderr.txt"), "a"))
+
+
+def file_text(path):
+    """Everything an .xlsx stores as text (cell strings and values), or "" while it can't be read."""
+    try:
+        with zipfile.ZipFile(path) as z:
+            return "".join(z.read(n).decode("utf-8", "replace") for n in z.namelist() if n.endswith(".xml"))
+    except (OSError, zipfile.BadZipFile, KeyError):
+        return ""
+
+
+def same_path(x, y):
+    return bool(x and y) and os.path.normcase(os.path.abspath(x)) == os.path.normcase(os.path.abspath(y))
+
+
+def shared_doc(app, path):
+    """The shared workbook open in `app` that is the file at `path`."""
+    return next((d for d in app.status()["docs"] if d.get("source") and same_path(d["source"]["path"], path)), None)
+
+
+def shared_files(a, b, c):
+    """Sharing a workbook from wherever it is saved: the file keeps everyone's edits."""
+    job = tempfile.mkdtemp(prefix="Job 12 ")
+    line = os.path.join(job, "Line list.xlsx")
+    a.run("file.new")
+    a.run("cell.set", cell="A1", input="Line No")
+    a.run("cell.set", cell="A2", input="150-P-3001")
+    a.run("file.saveAs", path=line)
+    windows = len(a.call("ui.inspect")["documents"])
+    a.run("collab.share")
+    d = wait(lambda: (lambda d: d if d and d["active"] and d["file"] and d["file"]["saved"] else None)(shared_doc(a, line)))
+    check("vikram shares a file from a project folder", d and same_path(d["file"]["path"], line), json.dumps(d and d["file"]))
+    check("the shared workbook takes the file's window", len(a.call("ui.inspect")["documents"]) == windows)
+
+    # Anita opens the same file: she joins the live workbook instead of editing her own copy.
+    b.call("app.open", {"path": line})
+    ok = wait(lambda: (lambda d: d and d["active"])(shared_doc(b, line)))
+    check("opening a file that is being shared joins it", ok)
+    b.run("cell.set", cell="B2", input="anita was here")
+    ok = wait(lambda: a.value("B2") == "anita was here")
+    ok = ok and wait(lambda: "anita was here" in file_text(line), timeout=20)
+    check("anita's edit is saved into vikram's file", ok)
+    # Rahul picks it from the shared list, where it shows as vikram's file.
+    book = next((x for x in c.status()["books"] if same_path(x.get("file"), line)), None)
+    check("the shared list says which file it is", book is not None, json.dumps(book))
+    if book:
+        c.run("collab.open", book=book["id"])
+        wait(lambda: shared_doc(c, line))
+    c.run("cell.set", cell="C2", input="4242.5")
+    wait(lambda: a.value("C2") in (4242.5, "4242.5"))
+    a.run("file.save")
+    check("Save writes the file at once", "4242.5" in file_text(line))
+
+    # Stop sharing: the file has every edit; the others are told and keep a copy.
+    b.run("cell.set", cell="D2", input="last edit by anita")
+    wait(lambda: a.value("D2") == "last edit by anita")
+    a.run("collab.stopSharing")
+    check("stop sharing leaves every edit in the file", "last edit by anita" in file_text(line) and "4242.5" in file_text(line))
+    insp = a.call("ui.inspect")
+    active = insp["documents"][insp["activeDocument"]]
+    check("vikram's window is his file again", active["title"].startswith("Line list") and not active["dirty"], json.dumps(active))
+    ok = wait(lambda: shared_doc(b, line) is None and "stopped sharing" in ((b.call("ui.inspect").get("message") or {}).get("text") or ""))
+    check("anita is told it is no longer shared", ok)
+
+    # Close and reopen: the file catches up with what the team did meanwhile.
+    spool = os.path.join(job, "Spool list.xlsx")
+    a.run("file.new")
+    a.run("cell.set", cell="A1", input="Spool")
+    a.run("file.saveAs", path=spool)
+    a.run("collab.share")
+    wait(lambda: (lambda d: d and d["file"] and d["file"]["saved"])(shared_doc(a, spool)))
+    wait(lambda: any(same_path(x.get("file"), spool) for x in c.status()["books"]))
+    c.run("collab.open", book=next(x["id"] for x in c.status()["books"] if same_path(x.get("file"), spool)))
+    wait(lambda: shared_doc(c, spool))
+    a.run("file.close", force=True, document=True)
+    c.run("cell.set", cell="A2", input="added while vikram was away")
+    time.sleep(1.0)
+    check("a closed file is not written by anyone else", "added while vikram was away" not in file_text(spool))
+    a.call("app.open", {"path": spool})
+    ok = wait(lambda: (lambda d: d and d["active"] and d["file"] and d["file"]["saved"])(shared_doc(a, spool)))
+    ok = ok and wait(lambda: "added while vikram was away" in file_text(spool), timeout=20)
+    check("reopening the file rejoins it and brings it up to date", ok)
+
+    # Another program changes the file: it is never overwritten.
+    before = open(spool, "rb").read()
+    later = time.time() + 120
+    os.utime(spool, (later, later))
+    a.run("cell.set", cell="A3", input="must not overwrite")
+    d = wait(lambda: (lambda d: d if d and d["file"] and d["file"]["error"] else None)(shared_doc(a, spool)))
+    check("a file changed by another program is not overwritten", d and open(spool, "rb").read() == before, d and d["file"]["error"])
+    a.shot(os.path.join(OUT, "vikram-shared-file.png"))
 
 
 def main():
@@ -225,6 +318,7 @@ def main():
         users = {json.loads(l)["user"] for l in lines}
         check("server audit trail names every editor", {"vikram", "anita", "rahul"} <= users, f"{len(lines)} audit lines, users={sorted(users)}")
         a.shot(os.path.join(OUT, "vikram-window.png"))
+        shared_files(a, b, c)
         time.sleep(1.5)
     finally:
         for x in apps:

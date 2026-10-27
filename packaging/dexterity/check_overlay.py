@@ -31,7 +31,7 @@ HOOKS = [
     ("crates/ui-egui/src/{tabs.rs,tabs/*.rs}", "crate::collab_ui::status(app, ui, &t);", "status bar: shared state and last editor"),
     ("crates/ui-egui/src/{tabs.rs,tabs/*.rs}", "crate::collab_ui::update_badge(app, ui, &t);", "status bar: update available"),
     ("crates/ui-egui/src/{ribbon.rs,ribbon/*.rs}", '"collab.history"', "Review tab: Edit History"),
-    ("crates/ui-egui/src/{ribbon.rs,ribbon/*.rs}", "Share with the team (office server)", "title-bar Share menu"),
+    ("crates/ui-egui/src/{ribbon.rs,ribbon/*.rs}", "collab_ui::share_menu(app, ui)", "title-bar Share menu"),
     ("apps/gridcraft/Cargo.toml", 'name = "DexteritySheets"', "executable name"),
     ("apps/gridcraft/src/main.rs", "regional::apply();", "Windows regional settings (dates, grouping) like Excel"),
     ("packaging/windows/gridcraft.wxs", 'UpgradeCode="FE2AD491-38E3-4E1B-8441-FDF652AB8443"', "installer identity (never change)"),

@@ -87,6 +87,7 @@ fn book() -> BookInfo {
         modified_by: "a".into(),
         seq: 0,
         open_by: vec![],
+        source: None,
     }
 }
 
@@ -190,7 +191,7 @@ fn two_people_edit_through_a_real_server() {
     for c in [&v, &a, &g] {
         recv(c, |e| matches!(e, crate::client::Event::Connected { .. }));
     }
-    v.send(ClientMsg::CreateBook { name: "Line List".into(), xlsx: None });
+    v.send(ClientMsg::CreateBook { name: "Line List".into(), xlsx: None, source: None });
     let opened = |c: &crate::client::Client| match recv(c, |e| matches!(e, crate::client::Event::Message(ServerMsg::Opened { .. }))) {
         crate::client::Event::Message(ServerMsg::Opened { book, snapshot_seq, xlsx, log, last_edits, peers }) => {
             (book, snapshot_seq, crate::proto::unb64(&xlsx).expect("b64"), log, last_edits, peers)
@@ -239,6 +240,37 @@ fn two_people_edit_through_a_real_server() {
             assert_eq!(changes.len(), 1);
             assert_eq!(changes[0].user, "vikram");
             assert_eq!(changes[0].new, "=6*7");
+        }
+        _ => unreachable!(),
+    }
+
+    // A file shared from a folder keeps where it came from; sharing the same file again joins
+    // it, and another file with the same name is shared beside it.
+    let src = |path: &str| crate::proto::FileSource {
+        path: path.into(),
+        key: crate::proto::file_key("PC-1", path),
+        user: "spoofed".into(),
+        machine: "PC-1".into(),
+    };
+    v.send(ClientMsg::CreateBook { name: "Line List".into(), xlsx: None, source: Some(src(r"D:\Job 12\Line List.xlsx")) });
+    let (linked, ..) = opened(&v);
+    assert_eq!(linked.name, "Line List (2)", "the name is free for a file from another folder");
+    let source = linked.source.clone().expect("source");
+    assert_eq!(source.user, "vikram", "the server records who shared it, whatever the client says");
+    assert_eq!(source.key, r"pc-1|d:\job 12\line list.xlsx");
+    a.send(ClientMsg::CreateBook { name: "Line List".into(), xlsx: None, source: Some(src(r"D:\JOB 12\line list.XLSX")) });
+    let (joined, ..) = opened(&a);
+    assert_eq!(joined.id, linked.id, "the same file is joined, not shared twice");
+    assert_eq!(crate::proto::file_key("PC-2", r"\\?\UNC\Files\Projects\a.xlsx"), r"\\files\projects\a.xlsx");
+    assert_eq!(crate::proto::file_key("PC-2", r"\\?\D:\a.xlsx"), r"pc-2|d:\a.xlsx");
+
+    // Stopping the sharing tells everyone who has it open.
+    v.send(ClientMsg::DeleteBook { book: linked.id.clone(), stopped: true });
+    match recv(&a, |e| matches!(e, crate::client::Event::Message(ServerMsg::BookGone { .. }))) {
+        crate::client::Event::Message(ServerMsg::BookGone { book, by, stopped }) => {
+            assert_eq!(book, linked.id);
+            assert!(stopped);
+            assert_eq!(by.as_deref(), Some("Vikram"));
         }
         _ => unreachable!(),
     }

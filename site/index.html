@@ -46,7 +46,7 @@
     <div class="hero-copy">
       <p class="eyebrow"><img src="icon.svg" alt="" width="22" height="22"> Dexterity Design Services · the office spreadsheet</p>
       <h1 id="hero-title">Your team's spreadsheet.<span>Live, together, on the office network.</span></h1>
-      <p class="lead">Open the line list, the MTO or the budget at the same time as everyone else. You see each other's changes as they happen, and every change carries the name of the person who made it.</p>
+      <p class="lead">Open the line list, the MTO or the budget from wherever it is saved and click Share. Your team edits it with you live, your file keeps everyone's changes, and every change carries the name of the person who made it.</p>
 
       <div class="cta">
         <a class="btn btn-hero btn-big" href="https://github.com/vikramdex-ops/dexterity-sheets/releases/latest/download/DexteritySheets-Setup.exe">
@@ -140,8 +140,8 @@
       <li class="step reveal">
         <span class="step-no" aria-hidden="true">3</span>
         <span class="step-ico" aria-hidden="true"><svg viewBox="0 0 48 48"><rect x="6" y="9" width="36" height="30" rx="3"/><path d="M6 19h36M6 29h36M18 9v30M30 9v30"/><rect class="sel-r" x="18" y="19" width="12" height="10"/><rect class="sel-g" x="30" y="29" width="12" height="10"/></svg></span>
-        <h3>Edit together</h3>
-        <p>Open a shared workbook, or share the one you have open. Everyone's edits appear live. There is nothing to save.</p>
+        <h3>Share and edit together</h3>
+        <p>Open any file from your folder or the network drive and click <b>Share › Share with my team</b>. Everyone's edits appear live, and your file keeps them.</p>
       </li>
     </ol>
   </div>
@@ -158,17 +158,19 @@
     <article class="story">
       <div class="story-text reveal">
         <p class="kicker">Live editing</p>
-        <h3>Work on the same file at the same time</h3>
-        <p>Everyone in the workbook sees each other's changes within a blink on the office network. Other people's selected cells are outlined in their colour with their name, and you can see when someone is typing.</p>
+        <h3>Share any file, from where it is saved</h3>
+        <p>Open a workbook from your D: drive, a project folder or the network drive and share it. It stays right where it is: your team edits it with you live, and the file is saved with everyone's changes as they happen. Other people's selected cells are outlined in their colour with their name.</p>
         <ul class="ticks">
-          <li>No waiting for someone to close the file</li>
+          <li>No waiting for someone to close the file, no emailed copies</li>
+          <li>Someone opens the same file? They join you, so it never splits into two versions</li>
+          <li><b>Stop sharing</b> hands the file back with every edit in it</li>
           <li>Network dropped? Keep typing. Your edits wait and go through when it comes back.</li>
           <li>Undo takes back <em>your</em> edits, never a colleague's</li>
         </ul>
       </div>
       <figure class="shot shot-zoom tilt-in">
-        <div class="device"><img src="images/shared-workbooks.png" width="1440" height="860" loading="lazy" alt="File › Shared in Dexterity Sheets: signed in to the office server, a list of shared workbooks with the last change and who has each one open right now."></div>
-        <figcaption>File › Shared: every shared workbook, who changed it last, and who has it open now.</figcaption>
+        <div class="device"><img src="images/shared-workbooks.png" width="1440" height="860" loading="lazy" alt="File › Shared in Dexterity Sheets: signed in to the office server, a list of the workbooks the team is sharing with the last change and who has each one open right now."></div>
+        <figcaption>File › Shared: everything your team is sharing, whose file it is, who changed it last, and who has it open now.</figcaption>
       </figure>
     </article>
 
@@ -304,7 +306,7 @@
         </div>
         <div class="dl-opt">
           <h3>For the IT person: the office server</h3>
-          <p>One always-on office PC holds the shared workbooks. Download the <b>office server bundle</b> (<code>DexSheetsServer</code> zip) from the same page, run its install script once, and add an account for each person.</p>
+          <p>One always-on office PC passes edits between PCs and keeps every change and version. Download the <b>office server bundle</b> (<code>DexSheetsServer</code> zip) from the same page, run its install script once, and add an account for each person.</p>
           <a class="link-arrow" href="https://github.com/vikramdex-ops/dexterity-sheets/blob/main/docs/collaboration.md">Server setup guide</a>
         </div>
       </div>
@@ -326,11 +328,11 @@
       </details>
       <details class="reveal">
         <summary>Can I open my existing Excel files?</summary>
-        <div class="answer"><p>Yes. Open any .xlsx as usual. To work on it with others, choose <b>File › Shared › Share the current workbook</b>. To send a file to a client, use <b>File › Save As</b> and pick .xlsx. Excel opens those files without complaint.</p></div>
+        <div class="answer"><p>Yes, from wherever they are saved. Open the file as usual and click <b>Share › Share with my team</b> to work on it with others: it stays in its folder and keeps everyone's edits. To send a file to a client, use <b>File › Save As</b> and pick .xlsx. Excel opens those files without complaint.</p></div>
       </details>
       <details class="reveal">
         <summary>Do I still need to press Save?</summary>
-        <div class="answer"><p>Not in a shared workbook. Every change is stored on the office server as you make it. Pressing Ctrl+S keeps a named version you can go back to later.</p></div>
+        <div class="answer"><p>Not in a shared workbook. Every change reaches the office server as you make it, and a file you shared is saved with everyone's edits a moment after each change. Ctrl+S saves the file at once and keeps a named version you can go back to later.</p></div>
       </details>
       <details class="reveal">
         <summary>What if two people change the same cell?</summary>
@@ -350,7 +352,7 @@
       </details>
       <details class="reveal">
         <summary>Is anything sent to the internet or the cloud?</summary>
-        <div class="answer"><p>No. Workbooks live on the office server, on your own network. There is no cloud service, no subscription and no tracking. Your PC does not even need internet access to get updates.</p></div>
+        <div class="answer"><p>No. Your files stay in your folders, and the office server on your own network passes edits between PCs and keeps the history. There is no cloud service, no subscription and no tracking. Your PC does not even need internet access to get updates.</p></div>
       </details>
       <details class="reveal">
         <summary>Does it work on a Mac or at home?</summary>

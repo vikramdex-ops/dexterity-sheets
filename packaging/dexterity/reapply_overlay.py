@@ -113,19 +113,9 @@ insert(
 title = f"{UI}/ribbon/title_bar.rs" if os.path.exists(os.path.join(ROOT, UI, "ribbon", "title_bar.rs")) else f"{UI}/ribbon.rs"
 insert(
     title,
-    "Share with the team (office server)",
+    "collab_ui::share_menu(app, ui)",
     "egui::Popup::menu(&share).show(|ui| {\n",
-    "                    let shared = crate::collab_ui::active_shared(app).is_some();\n"
-    '                    if !shared && ui.button("Share with the team (office server)…").clicked() {\n'
-    "                        if app.collab.signed_in() {\n"
-    '                            app.run_or_alert("collab.share", json!({}));\n'
-    "                        } else {\n"
-    '                            app.run_or_alert("collab.shared", json!({}));\n'
-    "                        }\n"
-    "                    }\n"
-    '                    if ui.button("Shared workbooks…").clicked() {\n'
-    '                        app.run_or_alert("collab.shared", json!({}));\n'
-    "                    }\n"
+    "                    crate::collab_ui::share_menu(app, ui);\n"
     "                    ui.separator();\n",
 )
 

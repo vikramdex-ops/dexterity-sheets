@@ -47,14 +47,15 @@
    click **More info → Run anyway** (the installer isn't code-signed yet).
 2. **Sign in.** Open Dexterity Sheets and go to **File › Shared**. The office server is found on
    its own; enter the user name and password IT gave you.
-3. **Edit together.** Open a shared workbook, or share one of yours. Everyone in it sees each
-   other's changes almost instantly.
+3. **Share and edit together.** Open any workbook from wherever you keep it (your `D:` drive, a
+   project folder, the network drive) and click **Share › Share with my team**. The file stays
+   where it is and keeps everyone's edits; your team sees each other's changes almost instantly.
 
 ## What it does for you
 
 <table>
 <tr>
-<td width="33%" valign="top"><img src="docs/readme/feature-live.svg" width="100%" alt="Several coloured cursors with names editing one grid"><p><b>Work in the same file at once.</b> No more "who has the line list open?", no emailed copies, no <code>_final_v3_RK.xlsx</code>.</p></td>
+<td width="33%" valign="top"><img src="docs/readme/feature-live.svg" width="100%" alt="Several coloured cursors with names editing one grid"><p><b>Share any file, from where it is.</b> Open it, click Share, and the team edits it with you live. Your file keeps everyone's edits. No emailed copies, no <code>_final_v3_RK.xlsx</code>.</p></td>
 <td width="33%" valign="top"><img src="docs/readme/feature-who.svg" width="100%" alt="A cell with a name tag showing who changed it"><p><b>Every change has a name on it.</b> No guests and no anonymous edits: the status bar tells you who last changed the cell you're on.</p></td>
 <td width="33%" valign="top"><img src="docs/readme/feature-history.svg" width="100%" alt="Edit History: old value, new value, who and when"><p><b>See every change.</b> Edit History lists each change, old → new, with the person and the time. Filter by cell or by person.</p></td>
 </tr>
@@ -69,7 +70,7 @@
 
 <table>
 <tr>
-<td width="50%" valign="top"><img src="docs/images/shared-workbooks.png" alt="File › Shared: signed in as Vikram (administrator) on the office server, a list of shared workbooks with the last change and who has each open"><p align="center"><sub><b>File › Shared.</b> Every shared workbook on the office server, who changed it last, and who has it open right now.</sub></p></td>
+<td width="50%" valign="top"><img src="docs/images/shared-workbooks.png" alt="File › Shared: signed in as Vikram (administrator) on the office server, a list of shared workbooks with the last change and who has each open"><p align="center"><sub><b>File › Shared.</b> Every workbook your team is sharing, whose file it is, who changed it last, and who has it open right now.</sub></p></td>
 <td width="50%" valign="top"><img src="docs/images/versions.png" alt="The Versions pane listing versions kept by the server with labels, authors and edit numbers, each with Open a copy and Restore"><p align="center"><sub><b>Versions.</b> Kept hourly, on Save, on request and before any restore. Open any of them as a copy, or restore it for everyone.</sub></p></td>
 </tr>
 <tr>
@@ -110,8 +111,9 @@ Dates and numbers follow your Windows settings (dd-mm-yyyy, 12,34,567) like Exce
 <details>
 <summary><b>Do I need the internet?</b></summary>
 
-No. Everything runs on the office network, and shared workbooks stay on the office server, not in
-anyone's cloud. Only the office server goes online, to fetch new versions.
+No. Everything runs on the office network: your files stay in your folders, and the office
+server passes edits between PCs and keeps the history. Nothing goes to anyone's cloud. Only the
+office server goes online, to fetch new versions.
 </details>
 
 <details>
@@ -131,10 +133,36 @@ lost: it writes every change to disk before anyone else sees it.
 </details>
 
 <details>
-<summary><b>Can I still work on files on my own PC?</b></summary>
+<summary><b>Can I share a file that's on my own PC or in a project folder?</b></summary>
 
-Yes. Open and save `.xlsx` and `.csv` files anywhere, like any spreadsheet. Sharing is only for
-the workbooks you put on the office server.
+Yes, and that's the normal way to work. Open the file from wherever it is saved (`D:\Projects\…`,
+your Desktop, the network drive), then click **Share › Share with my team**. Nothing is moved or
+copied anywhere for you to look after:
+
+- Your teammates find it in **File › Shared**, listed as your file, and edit it with you live.
+- Your file is saved with everyone's edits as they happen, so it is always the team's latest.
+  **Ctrl+S** saves it at once and also keeps a version.
+- When the work is done, **Share › Stop sharing** hands the file back to you with every edit
+  in it. Everyone else is told, and keeps a copy in their window.
+
+A file that isn't shared is just a file: open and save `.xlsx` and `.csv` anywhere, like any
+spreadsheet.
+</details>
+
+<details>
+<summary><b>Someone opens a file that's already being shared. What happens?</b></summary>
+
+They join the live workbook instead of editing a copy of their own, so a file on the network
+drive never splits into two versions. If you close a shared file and open it again later, it
+rejoins and catches up with what the team did meanwhile.
+</details>
+
+<details>
+<summary><b>What if the file is changed outside Dexterity Sheets while it's shared?</b></summary>
+
+It is never overwritten. If another program (Excel, a copy from email) saves over a shared file,
+Dexterity Sheets stops writing to it and says so. Everyone's edits are still in the shared
+workbook: use **Save As** to keep them as a file.
 </details>
 
 <details>
@@ -213,7 +241,9 @@ access. You can also drop an `.msi` into the server's `updates` folder by hand.
 
 | | |
 |---|---|
-| **Share** | *File › Shared › New shared workbook*, or *Share the current workbook* to upload an open `.xlsx`. The title-bar **Share** menu does the same. |
+| **Share** | Open the file from wherever it is saved and click **Share › Share with my team** (or *File › Shared › Share the current workbook*). The file stays where it is: the app of the person who shared it saves everyone's edits into it a second after each change, and on Ctrl+S. *File › Shared › New shared workbook* starts an empty one. |
+| **Opening a shared file** | Opening a file that is being shared joins the live workbook, so a file on the network drive never splits into two versions. Reopening your own shared file rejoins it and brings the file up to date. |
+| **Stop sharing** | *Share › Stop sharing (keep my file)*: the file gets every edit and is just a file again; everyone else is told and keeps a copy in their window. If another program changed the file while it was shared, it is never overwritten: the app says so and the edits stay in the shared workbook (Save As keeps them). |
 | **See each other** | Other people's selections are outlined in their colour with their name; "(typing)" while they edit a cell. Click a name in the status bar to jump to them. |
 | **Who changed it** | The status bar shows who last changed the active cell. Click it, or *Review › Edit History*, for that cell's history or the whole workbook's, filterable by person. |
 | **Versions** | *Review › Versions*: keep a labelled version ("Issued for review Rev B"), open any version as a separate copy, or restore one for everyone (the current state is kept first). Ctrl+S keeps a version too. |

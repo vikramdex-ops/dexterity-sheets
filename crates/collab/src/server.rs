@@ -27,7 +27,7 @@ use gridcraft_engine::model::Workbook;
 use serde::{Deserialize, Serialize};
 
 use crate::patch::{self, CellData, WbPatch};
-use crate::proto::{self, BookInfo, Change, ClientMsg, LastEdit, Logged, Peer, Role, ServerMsg, UpdateInfo, UserInfo, VersionInfo};
+use crate::proto::{self, BookInfo, Change, ClientMsg, FileSource, LastEdit, Logged, Peer, Role, ServerMsg, UpdateInfo, UserInfo, VersionInfo};
 use crate::{Error, Result, auth, now_ms};
 
 /// Write a fresh snapshot after this many edits.
@@ -66,6 +66,8 @@ struct BookMeta {
     modified_by: String,
     #[serde(default)]
     seq: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    source: Option<FileSource>,
 }
 
 struct Book {
@@ -433,6 +435,7 @@ impl State {
             modified_by: m.modified_by.clone(),
             seq,
             open_by,
+            source: m.source.clone().map(Box::new),
         }
     }
 
@@ -509,14 +512,21 @@ impl State {
         write_atomic(&self.book_dir(&m.id).join("book.json"), &serde_json::to_vec_pretty(m)?)
     }
 
-    fn create_book(&mut self, user: &str, name: &str, xlsx: Option<&[u8]>) -> Result<BookMeta> {
+    fn create_book(&mut self, user: &str, name: &str, xlsx: Option<&[u8]>, source: Option<FileSource>) -> Result<BookMeta> {
         let name = name.trim();
         if name.is_empty() {
             return Err(Error::Denied("give the workbook a name".into()));
         }
-        if self.metas.values().any(|m| m.name.eq_ignore_ascii_case(name)) {
+        let taken = |n: &str| self.metas.values().any(|m| m.name.eq_ignore_ascii_case(n));
+        let name = if !taken(name) {
+            name.to_string()
+        } else if source.is_some() {
+            // Two files called "Line list.xlsx" in different folders can both be shared.
+            (2..1000).map(|i| format!("{name} ({i})")).find(|n| !taken(n)).ok_or_else(|| Error::Denied("too many workbooks with that name".into()))?
+        } else {
             return Err(Error::Denied(format!("a shared workbook called \"{name}\" already exists")));
-        }
+        };
+        let name = name.as_str();
         let wb = match xlsx {
             Some(b) => gridcraft_engine::io::open_bytes("upload.xlsx", b)?.0,
             None => {
@@ -541,6 +551,7 @@ impl State {
             modified: now,
             modified_by: user.to_string(),
             seq: 0,
+            source,
         };
         self.save_meta(&meta)?;
         self.metas.insert(id, meta.clone());
@@ -646,15 +657,22 @@ impl State {
                 let books = self.metas.values().map(|m| self.info(m)).collect();
                 self.reply(conn, &ServerMsg::Books { books });
             }
-            ClientMsg::CreateBook { name, xlsx } => {
+            ClientMsg::CreateBook { name, xlsx, source } => {
                 if !role.can_edit() {
                     return Err(Error::Denied("view-only accounts can't create workbooks".into()));
                 }
+                // A file that is already shared is joined, never shared twice.
+                if let Some(src) = &source
+                    && let Some(id) = self.metas.values().find(|m| m.source.as_ref().is_some_and(|s| s.key == src.key)).map(|m| m.id.clone())
+                {
+                    return self.dispatch(conn, ClientMsg::OpenBook { book: id });
+                }
+                let source = source.map(|s| FileSource { user: user.clone(), ..s });
                 let bytes = match xlsx {
                     Some(s) => Some(proto::unb64(&s)?),
                     None => None,
                 };
-                let meta = self.create_book(&user, &name, bytes.as_deref())?;
+                let meta = self.create_book(&user, &name, bytes.as_deref(), source)?;
                 log::info!("{user} created \"{}\"", meta.name);
                 self.broadcast_books();
                 return self.dispatch(conn, ClientMsg::OpenBook { book: meta.id });
@@ -711,7 +729,7 @@ impl State {
                 self.metas.insert(book, m);
                 self.broadcast_books();
             }
-            ClientMsg::DeleteBook { book } => {
+            ClientMsg::DeleteBook { book, stopped } => {
                 let creator = self.metas.get(&book).map(|m| m.created_by.clone()).unwrap_or_default();
                 if role != Role::Admin && creator != user {
                     return Err(Error::Denied("only the workbook's creator or an administrator can delete it".into()));
@@ -719,11 +737,17 @@ impl State {
                 let from = self.book_dir(&book);
                 let trash = self.dir.join("trash");
                 fs::create_dir_all(&trash)?;
-                fs::rename(&from, trash.join(format!("{book}-{}", now_ms())))?;
+                // Close its log files first: Windows can't move a folder with open files in it.
+                // A failed move leaves it listed; it is loaded again when next opened.
                 self.books.remove(&book);
+                fs::rename(&from, trash.join(format!("{book}-{}", now_ms())))?;
                 self.metas.remove(&book);
-                log::info!("{user} deleted workbook {book} (kept in the trash folder)");
-                self.broadcast(&book, &ServerMsg::BookGone { book: book.clone() }, None);
+                if stopped {
+                    log::info!("{user} stopped sharing {book} (its server copy is kept in the trash folder)");
+                } else {
+                    log::info!("{user} deleted workbook {book} (kept in the trash folder)");
+                }
+                self.broadcast(&book, &ServerMsg::BookGone { book: book.clone(), by: Some(display.clone()), stopped }, None);
                 self.broadcast_books();
             }
             ClientMsg::Patch { book, cseq, patch } => {
