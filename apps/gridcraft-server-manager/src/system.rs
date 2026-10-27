@@ -339,7 +339,11 @@ pub fn set_update_source(dir: &Path, repo: &str, token: &str) -> Result<(), Stri
         return Err("Write the repository as owner/name (vikramdex-ops/dexterity-sheets).".into());
     }
     // Other settings in the file (a custom check interval) are kept.
-    let mut v: serde_json::Value = std::fs::read(&path).ok().and_then(|b| serde_json::from_slice(&b).ok()).filter(serde_json::Value::is_object).unwrap_or_else(|| serde_json::json!({}));
+    let mut v: serde_json::Value = std::fs::read(&path)
+        .ok()
+        .and_then(|b| serde_json::from_slice(&b).ok())
+        .filter(serde_json::Value::is_object)
+        .unwrap_or_else(|| serde_json::json!({}));
     v["repo"] = serde_json::Value::String(repo.to_string());
     if token.trim().is_empty() {
         if let Some(o) = v.as_object_mut() {
