@@ -12,3 +12,5 @@ plan/
 /tests/out/
 /dist/
 /sync-result.json
+/media/
+/notes/

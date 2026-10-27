@@ -1,24 +1,37 @@
 name: Upstream sync
 
-# Keeps Dexterity Sheets on top of official GridCraft (storytold/gridcraft).
+# Keeps Dexterity Sheets on top of official GridCraft (storytold/gridcraft), every 6 hours.
 #
-# Every 6 hours: merge upstream main into main with packaging/dexterity/sync_upstream.py.
-# - Nothing new: done.
-# - Merged cleanly (or only branding text conflicted): test it with the full CI, then push to
-#   main, tag v<version> and publish the release. Office servers then offer the update to every PC.
-# - Real conflicts, or CI fails: open a pull request (and an issue) for a person. If the
-#   ANTHROPIC_API_KEY secret is set, an AI attempt to resolve the conflicts is added to that PR.
-# The `upstream` branch always mirrors official GridCraft, so the pull request shows exactly
-# what upstream changed.
+#   merge     sync_upstream.py merges upstream main into a candidate (never into main directly).
+#             It refuses (status "blocked") if upstream rewrote its history, if main itself is
+#             broken, or if the checkout is dirty; it stops for a person on real conflicts.
+#   test      the full CI on the exact candidate commit.
+#   build     Setup.exe, MSI, portable zip and server bundle built from the candidate; the
+#             installer smoke test installs, starts and uninstalls both installers.
+#   promote   main is fast-forwarded to the tested candidate. If someone pushed to main in the
+#             meantime nothing is forced: the next run merges again on top of their work.
+#   release   draft → upload → verify → publish, then README/screenshots and the landing page.
+#   report    any failure opens (or updates) one "sync-failure" issue with the run link; the next
+#             successful sync closes it. Conflicts get a pull request (or an issue with a link).
+# Office servers with update-source.json pick up the release within 30 minutes and every open
+# Dexterity Sheets offers "Update to X.Y.Z". Run by hand with dry_run to test everything up to
+# (not including) promote.
 on:
   schedule:
     - cron: "17 */6 * * *"
   workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Merge, test and build, but don't touch main or publish
+        type: boolean
+        default: false
 
 permissions:
   contents: write
   pull-requests: write
   issues: write
+  pages: write
+  id-token: write
 
 concurrency:
   group: upstream-sync
@@ -31,11 +44,16 @@ jobs:
       status: ${{ steps.sync.outputs.status }}
       version: ${{ steps.sync.outputs.version }}
       upstream: ${{ steps.sync.outputs.upstream }}
+      main: ${{ steps.sync.outputs.main }}
+      candidate: ${{ steps.sync.outputs.candidate }}
     steps:
       - uses: actions/checkout@v4
         with:
           ref: main
           fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
       - name: Identity
         run: |
           git config user.name "dexterity-sync[bot]"
@@ -43,11 +61,22 @@ jobs:
       - name: Merge upstream GridCraft
         id: sync
         run: python packaging/dexterity/sync_upstream.py
-      - name: Mirror upstream into the `upstream` branch
-        run: git push --force origin "refs/remotes/upstream/main:refs/heads/upstream"
+      - name: Mirror upstream into the `upstream` branch (fast-forward only)
+        if: steps.sync.outputs.status != 'blocked'
+        run: git push origin "refs/remotes/upstream/main:refs/heads/upstream"
       - name: Push the merge candidate
         if: steps.sync.outputs.status == 'merged'
         run: git push --force origin HEAD:refs/heads/sync/candidate
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "### Upstream sync: ${{ steps.sync.outputs.status || 'failed' }}"
+            echo
+            echo '```json'
+            cat sync-result.json 2>/dev/null || echo "{}"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
       - name: Pull request for a person (conflicts)
         if: steps.sync.outputs.status == 'conflict'
         env:
@@ -62,11 +91,11 @@ jobs:
             echo "Official GridCraft has changes that could not be merged automatically."
             echo
             echo "Unresolved:"
-            python -c "import json;[print('- `'+u+'`') for u in json.load(open('sync-result.json'))['unresolved']]"
+            python -c "import json;[print('- \`'+u+'\`') for u in json.load(open('sync-result.json', encoding='utf-8'))['unresolved']]"
             echo
             echo "How to finish: see packaging/dexterity/UPSTREAM.md. Resolve so that"
             echo "\`python packaging/dexterity/check_overlay.py\` passes, bump packaging/dexterity/VERSION,"
-            echo "and merge: the release workflow then publishes the new version."
+            echo "and merge: the release workflow then tests, builds and publishes the new version."
           } > body.md
           gh label create upstream-sync --color 1f4e9c --description "Merging official GridCraft" --force || true
           if ! gh pr create --head upstream --base main --title "$title" --body-file body.md --label upstream-sync; then
@@ -78,46 +107,106 @@ jobs:
             echo "Open the pull request: ${{ github.server_url }}/${{ github.repository }}/compare/main...upstream?expand=1" >> body.md
             gh issue create --title "$title" --body-file body.md --label upstream-sync
           fi
+      - name: Branding review (new user-visible "GridCraft" text)
+        if: steps.sync.outputs.status == 'merged'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python - <<'EOF' > review.md
+          import json
+          items = json.load(open("sync-result.json", encoding="utf-8")).get("branding_review", [])
+          if items:
+              print("Official GridCraft added user-visible text that mentions GridCraft outside the files the sync rebrands automatically. Check each line and, if users see it, change it to Dexterity Sheets (and add the file to BRANDING_ONLY in packaging/dexterity/sync_upstream.py).\n")
+              print("\n".join(f"- `{i}`" for i in items))
+          EOF
+          if [ -s review.md ]; then
+            gh label create branding --color fbca04 --description "User-visible GridCraft text to review" --force || true
+            gh issue create --title "Branding review after GridCraft ${{ steps.sync.outputs.upstream }}" --body-file review.md --label branding
+          fi
 
   test:
     needs: merge
     if: needs.merge.outputs.status == 'merged'
     uses: ./.github/workflows/dexterity-ci.yml
     with:
-      ref: sync/candidate
+      ref: ${{ needs.merge.outputs.candidate }}
 
-  publish:
+  build:
     needs: [merge, test]
+    uses: ./.github/workflows/dexterity-release.yml
+    with:
+      ref: ${{ needs.merge.outputs.candidate }}
+      stage: build
+      tested: true
+
+  promote:
+    needs: [merge, build]
+    if: ${{ !inputs.dry_run }}
     runs-on: ubuntu-latest
+    outputs:
+      promoted: ${{ steps.ff.outputs.promoted }}
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: sync/candidate
+          ref: ${{ needs.merge.outputs.candidate }}
           fetch-depth: 0
-      - name: Fast-forward main and tag
+      - name: Fast-forward main to the tested candidate
+        id: ff
         run: |
-          git push origin HEAD:refs/heads/main
-          git tag "v${{ needs.merge.outputs.version }}"
-          git push origin "v${{ needs.merge.outputs.version }}"
+          git fetch origin main
+          now=$(git rev-parse origin/main)
+          if [ "$now" != "${{ needs.merge.outputs.main }}" ]; then
+            echo "::notice::main moved during the sync ($now). Nothing forced; the next run merges again on top of it."
+            echo "promoted=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          # A plain push: GitHub refuses it unless it is a fast-forward.
+          git push origin "${{ needs.merge.outputs.candidate }}:refs/heads/main"
+          echo "promoted=true" >> "$GITHUB_OUTPUT"
 
   release:
-    needs: [merge, publish]
+    needs: [merge, promote]
+    if: needs.promote.outputs.promoted == 'true'
     uses: ./.github/workflows/dexterity-release.yml
     with:
-      ref: v${{ needs.merge.outputs.version }}
+      ref: ${{ needs.merge.outputs.candidate }}
+      stage: publish
+      tested: true
 
-  report-failure:
-    needs: [merge, test]
-    if: failure() && needs.merge.outputs.status == 'merged'
+  report:
+    needs: [merge, test, build, promote, release]
+    if: always()
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ github.token }}
+      RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
     steps:
-      - uses: actions/checkout@v4
-      - name: Issue for a person
+      - name: Open, update or close the sync-failure issue
         run: |
-          gh issue create --title "Upstream GridCraft ${{ needs.merge.outputs.upstream }} merged but tests fail" \
-            --body "The merge is on branch \`sync/candidate\`. CI run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}. Nothing was released. Fix on that branch, then merge it into main and bump packaging/dexterity/VERSION."
+          gh label create sync-failure --color d73a4a --description "The automatic upstream sync needs a person" --force -R "$GITHUB_REPOSITORY" || true
+          open=$(gh issue list -R "$GITHUB_REPOSITORY" --label sync-failure --state open --json number --jq '.[0].number')
+          failed=""
+          for j in "merge:${{ needs.merge.result }}" "test:${{ needs.test.result }}" "build:${{ needs.build.result }}" "promote:${{ needs.promote.result }}" "release:${{ needs.release.result }}"; do
+            case "$j" in *:failure|*:cancelled) failed="$failed ${j%%:*}";; esac
+          done
+          status="${{ needs.merge.outputs.status }}"
+          if [ "$status" = "blocked" ]; then failed="$failed blocked"; fi
+          if [ -n "$failed" ]; then
+            body="The upstream sync stopped at:$failed. Nothing was published unless 'release' succeeded.
+
+          Run: $RUN
+          Upstream: ${{ needs.merge.outputs.upstream }} · candidate: ${{ needs.merge.outputs.candidate }} (branch \`sync/candidate\`)
+
+          The run summary has the details. Fix on \`sync/candidate\` (or on main), bump packaging/dexterity/VERSION and push: the release workflow tests, builds and publishes it. See packaging/dexterity/UPSTREAM.md."
+            if [ -n "$open" ]; then
+              gh issue comment "$open" -R "$GITHUB_REPOSITORY" --body "$body"
+            else
+              gh issue create -R "$GITHUB_REPOSITORY" --title "Upstream sync needs a person" --label sync-failure --body "$body"
+            fi
+            exit 1
+          fi
+          if [ -n "$open" ] && [ "${{ needs.release.result }}" = "success" -o "$status" = "up-to-date" ]; then
+            gh issue close "$open" -R "$GITHUB_REPOSITORY" --comment "Fixed: $RUN ($status)."
+          fi
 
   ai-assist:
     needs: merge

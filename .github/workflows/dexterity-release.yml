@@ -1,11 +1,20 @@
 name: Dexterity Release
 
-# Builds the Windows installer and the server bundle and publishes them as a GitHub release
-# tagged v<packaging/dexterity/VERSION>. Office servers configured with update-source.json
-# download the .msi from the release and offer it to every Dexterity Sheets on the LAN.
+# Builds, proves and publishes a Dexterity Sheets release (tag v<packaging/dexterity/VERSION>):
+#   build    Windows: the full CI first (unless the caller already ran it), then
+#            DexteritySheets-Setup.exe, the .msi, the portable zip and the server bundle;
+#            the installer smoke test (both installers install, start, calculate, uninstall);
+#            fresh screenshots and the README demo animation from the released build.
+#   publish  checksums verified, a draft release with every file, the upload checked, and only
+#            then the release made public and "latest" (office servers never see a half release).
+#   docs     the README's version / what's-new blocks and any screenshot that really changed,
+#            committed to main; then the landing page is redeployed.
+# Nothing is published if any step before it fails. Re-running is safe: a version that is already
+# published is skipped, a leftover draft is replaced.
 #
-# Triggers: a push to main that changes packaging/dexterity/VERSION (a person bumping the
-# version), a manual run, or the upstream sync after it merged and tested a new GridCraft.
+# Triggers: a push to main that changes packaging/dexterity/VERSION (a person releasing), a manual
+# run, or the upstream sync (stage=build on its merge candidate, then stage=publish once main has
+# been fast-forwarded to it).
 on:
   push:
     branches: [main]
@@ -16,50 +25,70 @@ on:
       ref:
         type: string
         required: true
+      stage:
+        description: build | publish | all
+        type: string
+        default: all
+      tested:
+        description: The caller already ran the full CI on this ref
+        type: boolean
+        default: false
 
 permissions:
   contents: write
-
-concurrency:
-  group: release
-  cancel-in-progress: false
+  pages: write
+  id-token: write
 
 jobs:
-  windows:
+  ci:
+    if: ${{ !inputs.tested && (inputs.stage || 'all') != 'publish' }}
+    uses: ./.github/workflows/dexterity-ci.yml
+    with:
+      ref: ${{ inputs.ref || github.sha }}
+
+  build:
+    needs: ci
+    if: ${{ always() && (needs.ci.result == 'success' || needs.ci.result == 'skipped') && (inputs.stage || 'all') != 'publish' }}
     runs-on: windows-latest
     timeout-minutes: 150
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      skip: ${{ steps.v.outputs.skip }}
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.ref || github.ref }}
+          ref: ${{ inputs.ref || github.sha }}
           fetch-depth: 0
       - name: Version
         id: v
         shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           $v = (Get-Content packaging/dexterity/VERSION -Raw).Trim()
+          if ($v -notmatch '^\d+\.\d+\.\d+$') { throw "packaging/dexterity/VERSION must be X.Y.Z, found '$v'" }
           "version=$v" >> $env:GITHUB_OUTPUT
-          $exists = git tag --list "v$v"
-          "exists=$([bool]$exists)".ToLower() >> $env:GITHUB_OUTPUT
-          $base = (Select-String -Path Cargo.toml -Pattern '^version = "(.+)"' | Select-Object -First 1).Matches.Groups[1].Value
-          "gridcraft=$base" >> $env:GITHUB_OUTPUT
+          $draft = gh release view "v$v" --json isDraft --jq .isDraft 2>$null
+          $skip = ($LASTEXITCODE -eq 0 -and $draft -eq 'false')
+          "skip=$($skip.ToString().ToLower())" >> $env:GITHUB_OUTPUT
+          if ($skip) { "Dexterity Sheets $v is already published: nothing to build." >> $env:GITHUB_STEP_SUMMARY }
       - uses: dtolnay/rust-toolchain@stable
-        if: steps.v.outputs.exists != 'true'
+        if: steps.v.outputs.skip != 'true'
         with:
           targets: x86_64-pc-windows-msvc
       - uses: Swatinem/rust-cache@v2
-        if: steps.v.outputs.exists != 'true'
+        if: steps.v.outputs.skip != 'true'
       - name: Install WiX 5
-        if: steps.v.outputs.exists != 'true'
+        if: steps.v.outputs.skip != 'true'
         run: dotnet tool install --global wix --version 5.0.2
-      - name: Build MSI and portable zip
-        if: steps.v.outputs.exists != 'true'
+      - name: Build Setup.exe, MSI and portable zip
+        if: steps.v.outputs.skip != 'true'
         shell: pwsh
         env:
           DIST: dist
         run: ./packaging/windows/package.ps1 -Arch x64
-      - name: Server bundle and checksums
-        if: steps.v.outputs.exists != 'true'
+      - name: Server bundle
+        if: steps.v.outputs.skip != 'true'
         shell: pwsh
         run: |
           $v = '${{ steps.v.outputs.version }}'
@@ -68,34 +97,152 @@ jobs:
           Copy-Item target/x86_64-pc-windows-msvc/release/DexSheetsServer.exe, packaging/dexterity/Install-Server.ps1, docs/collaboration.md, LICENSE-MIT, LICENSE-APACHE, NOTICE $s
           Compress-Archive -Path $s -DestinationPath "$s.zip"
           Remove-Item -Recurse $s
+      - name: Installer smoke test (Setup.exe and MSI install, start, calculate, uninstall)
+        if: steps.v.outputs.skip != 'true'
+        run: python packaging/dexterity/tests/installer_smoke.py dist ${{ steps.v.outputs.version }}
+      - name: Checksums
+        if: steps.v.outputs.skip != 'true'
+        shell: pwsh
+        run: |
           Push-Location dist
-          $sums = Get-ChildItem -File | Where-Object Name -ne 'SHA256SUMS' | ForEach-Object { "{0}  {1}" -f (Get-FileHash $_.Name -Algorithm SHA256).Hash.ToLower(), $_.Name }
+          $sums = Get-ChildItem -File | Where-Object Name -ne 'SHA256SUMS' | Sort-Object Name | ForEach-Object { "{0}  {1}" -f (Get-FileHash $_.Name -Algorithm SHA256).Hash.ToLower(), $_.Name }
           # LF line endings, so `sha256sum -c SHA256SUMS` works as well as Get-FileHash.
           [IO.File]::WriteAllText("$PWD/SHA256SUMS", (($sums -join "`n") + "`n"))
           Get-Content SHA256SUMS
           Pop-Location
       - name: Release notes
-        if: steps.v.outputs.exists != 'true'
-        shell: pwsh
+        if: steps.v.outputs.skip != 'true'
+        run: python packaging/dexterity/release_notes.py ${{ steps.v.outputs.version }} notes/notes.md --checks
+      - name: Screenshots and demo animation of this build
+        # Pictures for the README; a failure here never blocks the release.
+        if: steps.v.outputs.skip != 'true'
+        continue-on-error: true
+        env:
+          DEXSHEETS_SHOTS_OUT: media
+          DEXSHEETS_FRAMES_OUT: tests/out/demo-frames
         run: |
-          $prev = git describe --tags --abbrev=0 2>$null
-          $range = if ($prev) { "$prev..HEAD" } else { "HEAD~30..HEAD" }
-          $log = git log --no-merges --format='- %s' $range | Select-Object -First 60
-          @(
-            "Dexterity Sheets ${{ steps.v.outputs.version }} (based on GridCraft ${{ steps.v.outputs.gridcraft }})",
-            "",
-            "Install: run the .msi on each PC (no administrator rights needed). Office server: DexSheetsServer zip, see docs/collaboration.md.",
-            "Teammates already running Dexterity Sheets are offered this update by the office server automatically.",
-            "",
-            "Changes:",
-            $log
-          ) | Set-Content -Encoding utf8 dist/notes.md
-      - name: Publish
-        if: steps.v.outputs.exists != 'true'
+          python -m pip install --quiet pillow
+          python packaging/dexterity/tests/screenshots.py target/x86_64-pc-windows-msvc/release
+          python packaging/dexterity/make_demo.py tests/out/demo-frames media/demo.webp
+      - uses: actions/upload-artifact@v4
+        if: steps.v.outputs.skip != 'true'
+        with:
+          name: release-files
+          path: dist/*
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: steps.v.outputs.skip != 'true'
+        with:
+          name: release-notes
+          path: notes/notes.md
+      - uses: actions/upload-artifact@v4
+        if: steps.v.outputs.skip != 'true'
+        with:
+          name: release-media
+          path: media/*
+          if-no-files-found: ignore
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: release-test-logs
+          path: tests/out
+          if-no-files-found: ignore
+
+  publish:
+    needs: build
+    if: ${{ always() && (inputs.stage || 'all') != 'build' && (needs.build.result == 'success' || (needs.build.result == 'skipped' && inputs.stage == 'publish')) && needs.build.outputs.skip != 'true' }}
+    runs-on: ubuntu-latest
+    # One publish at a time, never cancelled half-way.
+    concurrency:
+      group: release-publish
+      cancel-in-progress: false
+    outputs:
+      published: ${{ steps.release.outputs.published }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-files
+          path: dist
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-notes
+          path: notes
+      - name: Check the files before anything is published
+        run: |
+          v=$(tr -d '[:space:]' < packaging/dexterity/VERSION)
+          echo "VERSION=$v" >> "$GITHUB_ENV"
+          cd dist
+          sha256sum -c SHA256SUMS
+          for f in DexteritySheets-Setup.exe "dexterity-sheets-$v-windows-x64.msi" "dexterity-sheets-$v-windows-x64-portable.zip" "DexSheetsServer-$v-x64.zip" SHA256SUMS; do
+            test -s "$f" || { echo "::error::missing $f"; exit 1; }
+          done
+          ls -l
+      - name: Draft, upload, verify, publish
+        id: release
         env:
           GH_TOKEN: ${{ github.token }}
-        shell: pwsh
         run: |
-          $v = '${{ steps.v.outputs.version }}'
-          $files = Get-ChildItem dist -File | Where-Object Name -ne 'notes.md' | ForEach-Object FullName
-          gh release create "v$v" @files --target (git rev-parse HEAD) --title "Dexterity Sheets $v" --notes-file dist/notes.md
+          tag="v$VERSION"
+          if state=$(gh release view "$tag" --json isDraft --jq .isDraft 2>/dev/null); then
+            if [ "$state" = "false" ]; then echo "$tag is already published."; echo "published=false" >> "$GITHUB_OUTPUT"; exit 0; fi
+            echo "Replacing a leftover draft of $tag."; gh release delete "$tag" --yes
+          fi
+          sha=$(git rev-parse HEAD)
+          gh release create "$tag" dist/* --draft --target "$sha" --title "Dexterity Sheets $VERSION" --notes-file notes/notes.md
+          expected=$(ls dist | wc -l)
+          uploaded=$(gh release view "$tag" --json assets --jq '[.assets[] | select(.state == "uploaded")] | length')
+          if [ "$uploaded" != "$expected" ]; then echo "::error::$uploaded of $expected files uploaded; the draft stays unpublished"; exit 1; fi
+          gh release edit "$tag" --draft=false --latest
+          echo "published=true" >> "$GITHUB_OUTPUT"
+          {
+            echo "### Published Dexterity Sheets $VERSION"
+            echo "${{ github.server_url }}/${{ github.repository }}/releases/tag/$tag"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  docs:
+    needs: publish
+    if: ${{ always() && needs.publish.outputs.published == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-notes
+          path: notes
+      - uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: release-media
+          path: media
+      - name: Refresh README and screenshots
+        run: |
+          python -m pip install --quiet pillow
+          media=""; [ -d media ] && media="--media media"
+          python packaging/dexterity/update_docs.py $media --notes notes/notes.md
+      - name: Commit to main
+        run: |
+          git config user.name "dexterity-sync[bot]"
+          git config user.email "dexterity-sync@users.noreply.github.com"
+          git add README.md docs/images docs/readme
+          if git diff --cached --quiet; then echo "README and pictures already current."; exit 0; fi
+          v=$(tr -d '[:space:]' < packaging/dexterity/VERSION)
+          git commit -m "Docs: refresh README and screenshots for $v"
+          for i in 1 2 3; do
+            git push origin HEAD:main && exit 0
+            git pull --rebase origin main
+          done
+          echo "::error::could not push the docs refresh"; exit 1
+
+  pages:
+    needs: [publish, docs]
+    if: ${{ always() && needs.publish.outputs.published == 'true' }}
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    uses: ./.github/workflows/dexterity-pages.yml

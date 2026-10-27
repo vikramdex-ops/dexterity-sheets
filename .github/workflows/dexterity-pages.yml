@@ -1,0 +1,52 @@
+name: Dexterity landing page
+
+# Publishes site/ (the Dexterity Sheets landing page) to GitHub Pages, with the README's pictures
+# and the current version filled in. Runs after every release (called by dexterity-release.yml),
+# when someone changes the page, or by hand.
+on:
+  push:
+    branches: [main]
+    paths: [site/**, docs/readme/**, docs/images/**]
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - name: Assemble the site
+        run: |
+          mkdir -p _site/images _site/readme
+          cp -r site/. _site/
+          cp docs/images/*.png _site/images/
+          cp docs/readme/* _site/readme/ 2>/dev/null || true
+          cp assets/app-icon/dexterity-sheets.svg _site/icon.svg
+          cp assets/app-icon/dexterity-sheets-1024.png _site/icon-1024.png
+          version=$(tr -d '[:space:]' < packaging/dexterity/VERSION)
+          gridcraft=$(sed -n '/^\[workspace\.package\]/,/^\[/{s/^version = "\(.*\)"/\1/p}' Cargo.toml | head -1)
+          date=$(date -u +"%-d %B %Y")
+          sed -i -e "s/{{VERSION}}/$version/g" -e "s/{{GRIDCRAFT}}/$gridcraft/g" -e "s/{{DATE}}/$date/g" _site/*.html
+          if grep -l '{{' _site/*.html; then echo "::error::unfilled placeholder"; exit 1; fi
+          touch _site/.nojekyll
+          ls -R _site | head -50
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+      - id: deployment
+        uses: actions/deploy-pages@v4

@@ -11,9 +11,9 @@ layer never has to be re-written.
 | `crates/collab` (LAN co-authoring, server, updates protocol) | `crates/ui-egui/src/lib.rs`: module, app field, per-frame tick, command hook |
 | `apps/gridcraft-server` (DexSheetsServer) | `backstage.rs`: File › Shared page |
 | `crates/ui-egui/src/collab_ui.rs` (all sharing UI) | `panes.rs`, `grid.rs`, `tabs.rs`, `ribbon.rs`: one call each |
-| `packaging/dexterity` (version, scripts, icon, tests) | `crates/engine/src/lib.rs`: `Session::document_mut` |
+| `packaging/dexterity` (version, scripts, icon, tests), `packaging/windows/setup` | `crates/engine/src/lib.rs`: `Session::document_mut` |
 | `.github/workflows/dexterity-*`, `upstream-sync.yml` | `Cargo.toml`, `xtask/src/layers.rs`, crate manifests |
-| `docs/collaboration.md`, `README.md`, icons | branding text in translations and dialogs |
+| `docs/collaboration.md`, `README.md`, `docs/readme`, `site/`, icons | branding text in translations and dialogs |
 
 `packaging/dexterity/check_overlay.py` lists every hook (a hook may live in any file of a module,
 so upstream splitting a file is fine). CI fails if one disappears. `reapply_overlay.py` re-adds
@@ -29,24 +29,48 @@ them all, idempotently; it was first used on upstream PR #2690, which split `gri
 
 ## The automatic sync (`.github/workflows/upstream-sync.yml`)
 
-Every 6 hours (or Actions › Upstream sync › Run workflow):
+Every 6 hours (or Actions › Upstream sync › Run workflow; tick *dry run* to stop before main):
 
-1. The `upstream` branch is updated to official GridCraft `main`.
-2. `sync_upstream.py` merges it into `main`:
+1. **Safety checks** (`sync_upstream.py`). It refuses to start, and opens a `sync-failure` issue,
+   if upstream rewrote its history (the commit we mirrored last time is no longer in upstream
+   main), if `main` itself fails `check_overlay.py`, or if the checkout is dirty.
+2. **Merge** into a candidate commit, never into `main` directly:
    - our files: ours win;
    - files we deleted (upstream CI, ArtCraft brand files): stay deleted; new upstream workflows are dropped;
-   - files where we only changed branding text: upstream's file + the branding rule;
+   - files where we only changed branding text: upstream's file + the branding rule (also on
+     clean merges, so new upstream text gets rebranded too);
    - other files both sides changed (upstream refactors that move code): upstream's file, then
-     `reapply_overlay.py` puts our hooks, branding and test updates back in the new layout;
-   - delete/modify or add/add conflicts, or a hook the overlay can't place: stop.
-3. Clean merge → full CI (format, clippy, all engine tests, collaboration tests, build, the
-   three-window end-to-end test) → fast-forward `main`, tag `vX.Y.Z`, publish the release.
-4. Office servers with `update-source.json` download the new `.msi` within 30 minutes and every
-   open Dexterity Sheets shows "Update to X.Y.Z" in its status bar.
+     `reapply_overlay.py` puts our hooks, branding and test updates back in the new layout, and
+     `cargo fmt` formats the re-added lines;
+   - delete/modify or add/add conflicts, or a hook the overlay can't place: stop → pull request.
+   - new user-visible "GridCraft" text outside the auto-rebranded files → a `branding` issue to review.
+   The version becomes the next patch number that has no tag yet. The `upstream` branch is
+   fast-forwarded to official GridCraft (never forced).
+3. **Test** the exact candidate commit with the full CI: format, clippy, every engine test, the
+   collaboration tests, the build, and the three-window end-to-end test.
+4. **Build** `DexteritySheets-Setup.exe`, the `.msi`, the portable zip and the server bundle from
+   the candidate; the **installer smoke test** installs each installer silently, checks Windows
+   lists exactly one Dexterity Sheets of the new version, starts it, calculates a formula through
+   its control channel and uninstalls it.
+5. **Promote**: `main` is fast-forwarded to the tested candidate. If someone pushed to `main`
+   meanwhile, nothing is forced; the next run merges again on top of their work.
+6. **Release**: checksums verified, a *draft* release with every file, the upload checked, then
+   published as "latest". Office servers never see a half-uploaded release.
+7. **Docs**: the README's version and "what's new" blocks are refreshed from the release notes;
+   the screenshots and the demo animation are re-captured from the released build and replaced
+   only where they really changed; the landing page (GitHub Pages) is redeployed.
+8. **Report**: any failure opens (or comments on) one `sync-failure` issue with the run link; the
+   next successful sync closes it.
 
-When it can't finish on its own you get a pull request (`upstream` → `main`, label
-`upstream-sync`) or an issue (tests failed on `sync/candidate`). Nothing is released until a
-person merges.
+Office servers with `update-source.json` download the new `.msi` within 30 minutes and every open
+Dexterity Sheets shows "Update to X.Y.Z" in its status bar.
+
+A person releasing by hand (bumping `packaging/dexterity/VERSION` on `main`) gets the same
+pipeline: CI, build, smoke test, draft → publish, docs, landing page.
+
+Tested on a real case: replaying upstream PR #2690 (which split `grid.rs`, `ribbon.rs`, `lib.rs`
+and `dialogs.rs` into modules) through `sync_upstream.py` produces a tree identical to the
+hand-resolved v1.0.1 merge.
 
 ## Resolving a sync by hand
 

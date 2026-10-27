@@ -1,43 +1,69 @@
-<p align="center">
-  <img src="assets/app-icon/dexterity-sheets-1024.png" width="128" height="128" alt="Dexterity Sheets icon: a deep-blue tile with a white grid and a bold D">
-</p>
-
-<h1 align="center">Dexterity Sheets</h1>
+<a href="https://github.com/vikramdex-ops/dexterity-sheets/releases/latest/download/DexteritySheets-Setup.exe">
+  <img src="docs/readme/hero.svg" width="100%" alt="Dexterity Sheets: your team's spreadsheet. Live, together, on the office network. A line list floats in 3D while Vikram, Anita and Rahul edit it and Edit History records each change. Download for Windows.">
+</a>
 
 <p align="center">
-  <b>The spreadsheet of Dexterity Design Services Pvt. Ltd.</b><br>
-  Excel-compatible workbooks, edited live by the whole team over the office network,<br>
-  with every change signed by the person who made it.
-</p>
-
-<p align="center">
-  <a href="../../releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/vikramdex-ops/dexterity-sheets?style=flat-square&label=release&color=1f4e9c"></a>
-  <a href="../../actions/workflows/dexterity-ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/vikramdex-ops/dexterity-sheets/dexterity-ci.yml?branch=main&style=flat-square&label=CI"></a>
-  <a href="../../actions/workflows/upstream-sync.yml"><img alt="Upstream sync" src="https://img.shields.io/github/actions/workflow/status/vikramdex-ops/dexterity-sheets/upstream-sync.yml?style=flat-square&label=upstream%20sync"></a>
-  <img alt="Windows desktop" src="https://img.shields.io/badge/runs%20on-Windows%2010%20%7C%2011-1f4e9c?style=flat-square&logo=windows&logoColor=white">
-  <img alt="Written in Rust" src="https://img.shields.io/badge/written%20in-Rust-1f4e9c?style=flat-square&logo=rust&logoColor=white">
-  <img alt="License MIT or Apache-2.0" src="https://img.shields.io/badge/license-MIT%20%2F%20Apache--2.0-1f4e9c?style=flat-square">
+  <a href="https://github.com/vikramdex-ops/dexterity-sheets/releases/latest/download/DexteritySheets-Setup.exe"><img alt="Download for Windows" src="https://img.shields.io/badge/%E2%AC%87%20Download%20for%20Windows-DexteritySheets--Setup.exe-0d3b8c?style=for-the-badge&labelColor=082866"></a>
+  &nbsp;
+  <a href="https://vikramdex-ops.github.io/dexterity-sheets/"><img alt="Visit the website" src="https://img.shields.io/badge/%E2%9C%A8%20Website-see%20it%20in%20action-ffffff?style=for-the-badge&labelColor=0d3b8c"></a>
 </p>
 
 <p align="center">
-  <a href="#a-look-around">A look around</a> ·
-  <a href="#why-dexterity-sheets">Why</a> ·
-  <a href="#install">Install</a> ·
-  <a href="#working-together">Working together</a> ·
-  <a href="#updates">Updates</a> ·
-  <a href="#excel-compatibility">Excel compatibility</a> ·
-  <a href="#architecture">Architecture</a> ·
-  <a href="#staying-in-step-with-gridcraft">Upstream</a> ·
-  <a href="#building">Building</a> ·
-  <a href="#license-and-credits">License</a>
+  <sub><!-- dex:release -->Version <b>1.0.1</b> · 27 October 2026 · based on GridCraft 0.12.1<!-- /dex:release --> · Windows 10 and 11 · no administrator rights needed · updates itself</sub>
+</p>
+
+<p align="center">
+  <a href="../../releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/vikramdex-ops/dexterity-sheets?style=flat-square&label=release&color=0d3b8c"></a>
+  <a href="../../actions/workflows/dexterity-ci.yml"><img alt="Tests" src="https://img.shields.io/github/actions/workflow/status/vikramdex-ops/dexterity-sheets/dexterity-ci.yml?branch=main&style=flat-square&label=tests"></a>
+  <a href="../../actions/workflows/upstream-sync.yml"><img alt="GridCraft sync" src="https://img.shields.io/github/actions/workflow/status/vikramdex-ops/dexterity-sheets/upstream-sync.yml?style=flat-square&label=GridCraft%20sync"></a>
+  <img alt="License MIT or Apache-2.0" src="https://img.shields.io/badge/license-MIT%20%2F%20Apache--2.0-0d3b8c?style=flat-square">
 </p>
 
 <br>
 
+<h2 align="center">Your team's spreadsheet. Live, together, on the office network.</h2>
+
 <p align="center">
-  <img src="docs/images/collab-history.png" alt="A shared line list open in Dexterity Sheets: Anita Rao's selection outlined in red and Rahul Mehta's in green, each with a name tag; the Edit History pane on the right lists who changed cell F3 and when; the status bar reads Shared · saved, shows who else is in the workbook and that F3 was last changed by Anita Rao" width="100%">
-  <br><sub><b>One line list, three engineers, live.</b> Everyone sees the others' selections with their names; the status bar says who last changed the active cell; <i>Edit History</i> shows every change, old → new, with the person and the time.</sub>
+  Dexterity Sheets is the spreadsheet of <b>Dexterity Design Services Pvt. Ltd.</b><br>
+  It opens and saves Excel files, and the whole team can work in the same workbook at the same time.<br>
+  Everybody signs in, so every change shows <i>who</i> made it, <i>when</i>, and what it was before.
 </p>
+
+<p align="center">
+  <img src="docs/readme/demo.webp" width="100%" alt="Recorded from the real app: Vikram, Anita and Rahul fill in a piping line list together. Each person's selection is outlined in their colour with their name, rows appear as they type, and Edit History shows who changed cell F3 and when">
+  <br><sub>Recorded from the real app, not a mock-up: three engineers filling in one line list together.</sub>
+</p>
+
+<br>
+
+## Start in three steps
+
+<p align="center">
+  <img src="docs/readme/steps.svg" width="100%" alt="1 Install, 2 Sign in, 3 Edit together">
+</p>
+
+1. **Install.** [Download `DexteritySheets-Setup.exe`](https://github.com/vikramdex-ops/dexterity-sheets/releases/latest/download/DexteritySheets-Setup.exe) and double-click it. No
+   administrator rights, nothing else to install. If Windows says *"Windows protected your PC"*,
+   click **More info → Run anyway** (the installer isn't code-signed yet).
+2. **Sign in.** Open Dexterity Sheets and go to **File › Shared**. The office server is found on
+   its own; enter the user name and password IT gave you.
+3. **Edit together.** Open a shared workbook, or share one of yours. Everyone in it sees each
+   other's changes almost instantly.
+
+## What it does for you
+
+<table>
+<tr>
+<td width="33%" valign="top"><img src="docs/readme/feature-live.svg" width="100%" alt="Several coloured cursors with names editing one grid"><p><b>Work in the same file at once.</b> No more "who has the line list open?", no emailed copies, no <code>_final_v3_RK.xlsx</code>.</p></td>
+<td width="33%" valign="top"><img src="docs/readme/feature-who.svg" width="100%" alt="A cell with a name tag showing who changed it"><p><b>Every change has a name on it.</b> No guests and no anonymous edits: the status bar tells you who last changed the cell you're on.</p></td>
+<td width="33%" valign="top"><img src="docs/readme/feature-history.svg" width="100%" alt="Edit History: old value, new value, who and when"><p><b>See every change.</b> Edit History lists each change, old → new, with the person and the time. Filter by cell or by person.</p></td>
+</tr>
+<tr>
+<td width="33%" valign="top"><img src="docs/readme/feature-versions.svg" width="100%" alt="Versions kept every hour and on Save, each one restorable"><p><b>Nothing gets lost.</b> Versions are kept every hour and on every save. Open any of them as a copy, or bring one back for everyone.</p></td>
+<td width="33%" valign="top"><img src="docs/readme/feature-excel.svg" width="100%" alt="An .xlsx file going in and coming out intact"><p><b>Excel in, Excel out.</b> Clients send <code>.xlsx</code>, you send <code>.xlsx</code> back. Formulas, formats, charts and tables survive the trip.</p></td>
+<td width="33%" valign="top"><img src="docs/readme/feature-updates.svg" width="100%" alt="An update arriving and installing itself"><p><b>Always up to date.</b> When there's a new version, the status bar says so. One click and it installs itself and reopens.</p></td>
+</tr>
+</table>
 
 ## A look around
 
@@ -60,36 +86,106 @@
 </tr>
 </table>
 
-## Why Dexterity Sheets
+## What's new
 
-- **Everyone edits the same workbook at once.** No more "who has the line list open?", no
-  emailed copies, no `_final_v3_RK.xlsx`. Changes appear in everyone's window in a fraction of
-  a second on the office LAN.
-- **Every change is signed.** Shared workbooks need a named account, so the history can always
-  answer *who changed this cell, when, and from what*. Values that merely recalculated are
-  never blamed on anyone.
-- **Nothing to save, nothing to lose.** Each edit reaches the server's disk before anyone else
-  sees it. Pull the network cable and keep typing: the edits wait and go through when the
-  connection returns. Undo takes back *your* edits, never a colleague's.
-- **Excel in, Excel out.** Clients send `.xlsx`, you send `.xlsx` back. Files are checked
-  against Microsoft Excel itself (see [Excel compatibility](#excel-compatibility)).
-- **Yours.** Built from open source, runs on your network, no subscription, no telemetry, no
-  cloud. The office server is one small program on one PC.
-- **Always current.** Fixes and features from the open-source GridCraft project flow in
-  automatically, are tested, and reach every desk through the built-in updater.
+<!-- dex:whatsnew -->
+- refactor: shared module layout (craft-contrib#20) ([GridCraft #2690](https://github.com/storytold/gridcraft/pull/2690))
+- ci: require nextest 0.9.150 ([GridCraft #2680](https://github.com/storytold/gridcraft/pull/2680))
 
-## Install
+[Everything in 1.0.1](https://github.com/vikramdex-ops/dexterity-sheets/releases/tag/v1.0.1).
+<!-- /dex:whatsnew -->
 
-Download from the [latest release](../../releases/latest):
+Dexterity Sheets is built on the open-source [GridCraft](https://github.com/storytold/gridcraft)
+spreadsheet. Every improvement made there is merged in automatically, tested, and delivered to
+every desk by the built-in updater, usually within hours.
 
-| File | Where |
+## Questions
+
+<details>
+<summary><b>Is it like Excel?</b></summary>
+
+It looks and works the way you expect: the same ribbon tabs, the same shortcuts, 500+ functions
+(`VLOOKUP`, `XLOOKUP`, `SUMIFS`, `IFS`, dynamic arrays…), tables, conditional formatting, charts,
+filters and printing. It reads and writes real `.xlsx` files that Excel opens without complaint.
+Dates and numbers follow your Windows settings (dd-mm-yyyy, 12,34,567) like Excel does.
+</details>
+
+<details>
+<summary><b>Do I need the internet?</b></summary>
+
+No. Everything runs on the office network, and shared workbooks stay on the office server, not in
+anyone's cloud. Only the office server goes online, to fetch new versions.
+</details>
+
+<details>
+<summary><b>What if two people change the same cell?</b></summary>
+
+Both changes are kept in Edit History. The one the server received last is the value everyone
+sees, and everyone ends up with exactly the same workbook. People editing different cells never
+get in each other's way, and Undo only takes back <i>your</i> changes.
+</details>
+
+<details>
+<summary><b>What if the network drops while I'm typing?</b></summary>
+
+Keep working. Your edits are kept on your PC and go through as soon as the office server can be
+reached again; the status bar shows how many are waiting. Nothing the server has confirmed can be
+lost: it writes every change to disk before anyone else sees it.
+</details>
+
+<details>
+<summary><b>Can I still work on files on my own PC?</b></summary>
+
+Yes. Open and save `.xlsx` and `.csv` files anywhere, like any spreadsheet. Sharing is only for
+the workbooks you put on the office server.
+</details>
+
+<details>
+<summary><b>Who can see or change a shared workbook?</b></summary>
+
+Only people with an account on the office server. IT gives each person a role: <b>viewer</b>
+(read only), <b>editor</b> (edit, create, share) or <b>admin</b>. Every change is recorded with
+the name of the person who made it.
+</details>
+
+<details>
+<summary><b>How do I update?</b></summary>
+
+You don't have to do anything. When a new version is out, the status bar shows
+<b>Update to X.Y.Z</b>: click it and Dexterity Sheets installs the update and reopens. You can also
+use <b>Automate › Check for Updates…</b>
+</details>
+
+<details>
+<summary><b>Windows says "Windows protected your PC". Is it safe?</b></summary>
+
+That message appears for any program that isn't code-signed yet. Click <b>More info → Run
+anyway</b>. Every release lists SHA-256 checksums and is built and tested automatically from the
+code in this repository.
+</details>
+
+## For IT
+
+<details>
+<summary><b>Files in every release</b></summary>
+
+From the [latest release](../../releases/latest):
+
+| File | What it is |
 |---|---|
-| `dexterity-sheets-<version>-windows-x64.msi` | every PC: per-user install, no administrator rights, no extra runtimes |
-| `DexSheetsServer-<version>-x64.zip` | the one always-on office PC that holds shared workbooks |
-| `dexterity-sheets-<version>-windows-x64-portable.zip` | running without installing |
-| `SHA256SUMS` | checksums of the above |
+| `DexteritySheets-Setup.exe` | The installer for everyone: double-click. Per-user, no administrator rights, no extra runtimes. `/quiet` or `/passive` for silent installs, `/log <file>` for a log. |
+| `dexterity-sheets-<version>-windows-x64.msi` | The same installer as an MSI, for deployment tools: `msiexec /i … /qn` |
+| `dexterity-sheets-<version>-windows-x64-portable.zip` | Runs without installing |
+| `DexSheetsServer-<version>-x64.zip` | The office server: one always-on PC per office |
+| `SHA256SUMS` | Checksums of all of the above |
 
-**The office server (once, by IT):**
+Before any release is published it has passed the full test suite, a live three-window
+co-editing test, and an installer test that installs both installers, starts the app, checks a
+calculation and uninstalls them.
+</details>
+
+<details>
+<summary><b>Setting up the office server (once)</b></summary>
 
 ```powershell
 # On the server PC, in an elevated PowerShell, in the unzipped folder:
@@ -104,10 +200,19 @@ powershell -ExecutionPolicy Bypass -File .\Install-Server.ps1
 Roles: `admin` (everything), `editor` (edit, create and share; delete own workbooks), `viewer`
 (read only). Full guide: [docs/collaboration.md](docs/collaboration.md).
 
-**Everyone else:** install the `.msi`, open Dexterity Sheets, **File › Shared**, pick the
-server, sign in.
+**Automatic updates for every PC:** put `update-source.json` in the server's data folder:
 
-## Working together
+```json
+{"repo": "vikramdex-ops/dexterity-sheets"}
+```
+
+The server checks for new releases every 30 minutes, verifies the download against
+`SHA256SUMS`, and offers it to every Dexterity Sheets on the network, so PCs never need internet
+access. You can also drop an `.msi` into the server's `updates` folder by hand.
+</details>
+
+<details>
+<summary><b>Using shared workbooks: the details</b></summary>
 
 | | |
 |---|---|
@@ -120,17 +225,12 @@ server, sign in.
 
 What the server keeps on disk, and why nothing acknowledged can be lost, is in
 [docs/collaboration.md](docs/collaboration.md#how-it-works-for-maintainers).
+</details>
 
-## Updates
+## For developers
 
-1. A new version is released here (by a person, or automatically after an upstream sync).
-2. The office server picks it up: put `update-source.json` in its data folder
-   (`{"repo": "vikramdex-ops/dexterity-sheets"}`), or drop an `.msi` into its `updates` folder.
-3. Every running Dexterity Sheets shows **Update to X.Y.Z**; *Update now* downloads the installer
-   over the LAN, verifies its SHA-256, installs it in place and reopens. PCs never need
-   internet access.
-
-## Excel compatibility
+<details>
+<summary><b>Excel compatibility, measured against Excel itself</b></summary>
 
 A test harness drives **Microsoft Excel itself** (through COM, as a black box) and compares:
 formula results, number-format display, typed entry, CSV import/export, and files written by
@@ -146,8 +246,10 @@ each application opened in the other.
 
 Dates (dd-mm), digit grouping (12,34,567) and currency follow the Windows regional settings, as
 Excel does on the same PC; files stay locale-independent.
+</details>
 
-## Architecture
+<details>
+<summary><b>Architecture</b></summary>
 
 An engine-first Rust workspace (from GridCraft) with Dexterity's layer on top:
 
@@ -167,26 +269,33 @@ without per-feature code. The server numbers each patch, writes it to an append-
 (fsync), records the audit lines, and broadcasts it. Every window shows *server state + its own
 not-yet-acknowledged patches*, so all copies converge on the server's order. Remote patches are
 also applied to each window's undo history, which is why Undo only takes back your own edits.
+</details>
 
-## Staying in step with GridCraft
+<details>
+<summary><b>Staying in step with GridCraft (fully automatic)</b></summary>
 
-Dexterity Sheets tracks [storytold/gridcraft](https://github.com/storytold/gridcraft). The
-**Upstream sync** workflow runs every 6 hours:
+Every 6 hours the **Upstream sync** workflow checks
+[storytold/gridcraft](https://github.com/storytold/gridcraft) and, when there is something new:
 
-1. The `upstream` branch is updated to official GridCraft.
-2. `packaging/dexterity/sync_upstream.py` merges it into `main`, keeping Dexterity's own files,
-   re-applying branding where only text conflicts, and checking with `check_overlay.py` that every
-   hook into GridCraft's code is still there.
-3. A clean merge runs the full CI (format, clippy, engine and file-format tests, collaboration
-   tests, build, three-window end-to-end test), then is tagged and released, and the updater
-   delivers it.
-4. Anything needing judgement becomes a pull request instead; nothing untested is released.
+1. **Checks it's safe:** it refuses if upstream rewrote its history or `main` is broken.
+2. **Merges** into a candidate, never straight into `main`. Dexterity's files stay ours, branding
+   is re-applied, and our small hooks into GridCraft's code are put back even when upstream moves
+   code around (`reapply_overlay.py`, verified by `check_overlay.py`).
+3. **Tests** that exact candidate: format, lint, every engine test, the collaboration tests, and
+   three app windows editing one workbook live.
+4. **Builds and tries the installers:** `DexteritySheets-Setup.exe` and the `.msi` are each
+   installed, started, asked to calculate, and uninstalled.
+5. **Releases** it (draft → upload → verify → publish), then refreshes this README, the
+   screenshots, the demo animation and the [website](https://vikramdex-ops.github.io/dexterity-sheets/). Every PC is offered the update.
+6. Anything that needs judgement becomes a pull request or an issue for a person. Nothing
+   untested is ever released.
 
-Dexterity's code lives in its own files; GridCraft's files carry only small, checked hooks.
-Details and the rules that keep merges easy: [packaging/dexterity/UPSTREAM.md](packaging/dexterity/UPSTREAM.md).
+Details: [packaging/dexterity/UPSTREAM.md](packaging/dexterity/UPSTREAM.md).
 Versions: `packaging/dexterity/VERSION` is Dexterity Sheets'; `Cargo.toml` keeps GridCraft's.
+</details>
 
-## Building
+<details>
+<summary><b>Building and testing</b></summary>
 
 Rust 1.95+ with the MSVC toolchain; WiX 5 for the installer.
 
@@ -195,7 +304,7 @@ cargo build --release -p gridcraft -p gridcraft-server -p gridcraft-cli
 #   target\release\DexteritySheets.exe   the app
 #   target\release\DexSheetsServer.exe   the office server
 #   target\release\gridcraft-cli.exe     headless CLI (eval, convert, run commands)
-pwsh packaging/windows/package.ps1 -Arch x64     # MSI + portable zip, static C runtime
+pwsh packaging/windows/package.ps1 -Arch x64     # Setup.exe + MSI + portable zip, static C runtime
 ```
 
 Tests:
@@ -204,8 +313,11 @@ Tests:
 cargo test --release -p gridcraft-collab                         # patches, convergence, real TCP server
 py -3 packaging/dexterity/tests/lan_e2e.py target/release        # 3 windows + server, 19 checks
 py -3 packaging/dexterity/tests/update_e2e.py old.msi new.msi target/release/DexSheetsServer.exe work
-py -3 packaging/dexterity/tests/screenshots.py target/release    # regenerates docs/images
+py -3 packaging/dexterity/tests/installer_smoke.py dist 1.2.3   # both installers: install, start, uninstall
+py -3 packaging/dexterity/tests/screenshots.py target/release    # regenerates docs/images + demo frames
+py -3 packaging/dexterity/make_demo.py                           # docs/readme/demo.webp from the frames
 ```
+</details>
 
 ## License and credits
 

@@ -3,7 +3,9 @@
 Starts a DexSheetsServer with three accounts, opens app windows through the control channel,
 builds a small line list together and captures: the samples, the Formulas and Insert tabs (light
 and dark), live co-editing with Edit History, Versions, File > Shared, sign-in, and the update
-prompt. Output: docs/images/*.png.
+prompt. Output: docs/images/*.png (or $DEXSHEETS_SHOTS_OUT), plus the frames of the README demo
+animation in tests/out/demo-frames (or $DEXSHEETS_FRAMES_OUT): Vikram's window while the three of
+them type the line list. packaging/dexterity/make_demo.py turns the frames into the animation.
 
 Run from the repository root after a release build:
     py -3 -I packaging/dexterity/tests/screenshots.py target/release
@@ -20,7 +22,8 @@ import time
 REL = os.path.abspath(sys.argv[1] if len(sys.argv) > 1 else os.path.join("target", "release"))
 APP = os.path.join(REL, "DexteritySheets.exe")
 SERVER = os.path.join(REL, "DexSheetsServer.exe")
-OUT = os.path.abspath(os.path.join("docs", "images"))
+OUT = os.path.abspath(os.environ.get("DEXSHEETS_SHOTS_OUT") or os.path.join("docs", "images"))
+FRAMES = os.path.abspath(os.environ.get("DEXSHEETS_FRAMES_OUT") or os.path.join("tests", "out", "demo-frames"))
 PORT = 47920
 W, H = 1440, 860
 procs = []
@@ -58,9 +61,9 @@ class App:
     def run(self, command, **params):
         return self.call("engine.execute", {"command": command, "params": params})
 
-    def shot(self, name, settle=1.2):
+    def shot(self, name, settle=1.2, folder=None):
         time.sleep(settle)
-        path = os.path.join(OUT, name)
+        path = os.path.join(folder or OUT, name)
         for _ in range(12):
             try:
                 self.call("ui.screenshot", {"path": path})
@@ -85,6 +88,8 @@ def wait(pred, timeout=20):
 
 def main():
     os.makedirs(OUT, exist_ok=True)
+    shutil.rmtree(FRAMES, ignore_errors=True)
+    os.makedirs(FRAMES)
     data = tempfile.mkdtemp(prefix="dexsheets-shots-")
     try:
         for u, d, p, r in [("vikram", "Vikram", "shots-pass-1", "admin"), ("anita", "Anita Rao", "shots-pass-2", "editor"), ("rahul", "Rahul Mehta", "shots-pass-3", "editor")]:
@@ -144,28 +149,44 @@ def main():
             ["100-P-2007-A1A", "10", "A1A", "P-104", "T-106", "84.9", "60.29"],
         ]
         cols = "ABCDEFGHI"
+        frame = [0]
+
+        def capture():
+            v.shot(f"frame-{frame[0]:03d}.png", 0.7, FRAMES)
+            frame[0] += 1
+
+        capture()
         for c, h in zip(cols, head):
             v.run("cell.set", cell=f"{c}1", input=h)
+        v.run("home.bold", range="A1:I1", on=True)
+        for col, width in (("A", 130), ("B", 70), ("F", 80), ("H", 90), ("I", 120)):
+            v.run("home.columnWidth", range=f"{col}1", width=width)
+        capture()
         for i, row in enumerate(rows, start=2):
             who = [v, an, ra][i % 3]
+            who.run("selection.set", range=f"A{i}:I{i}")
             for c, val in zip(cols, row):
                 who.run("cell.set", cell=f"{c}{i}", input=val)
             who.run("cell.set", cell=f"H{i}", input=f"=ROUND(F{i}*G{i},1)")
             who.run("cell.set", cell=f"I{i}", input=["IFC", "Issued for review", "Hold"][i % 3])
+            capture()
         v.run("cell.set", cell="G10", input="Total")
         v.run("cell.set", cell="H10", input="=SUM(H2:H8)")
         v.run("home.bold", range="A1:I1", on=True)
         v.run("home.bold", range="G10:H10", on=True)
-        v.run("home.columnWidth", range="A1", width=130)
-        v.run("home.columnWidth", range="I1", width=120)
+        capture()
+        an.run("selection.set", range="F3")
         an.run("cell.set", cell="F3", input="38.0")
+        ra.run("selection.set", range="I4")
         ra.run("cell.set", cell="I4", input="IFC")
-        time.sleep(1.5)
+        capture()
+        time.sleep(1.0)
         an.run("selection.set", range="F3:F5")
         ra.run("selection.set", range="I2:I4")
         v.run("selection.set", range="F3")
         v.run("collab.history", cell=True)
         v.shot("collab-history.png", 2.5)
+        capture()
         v.run("file.save")
         time.sleep(1.0)
         v.run("collab.versions")

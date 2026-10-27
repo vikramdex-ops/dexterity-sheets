@@ -1,0 +1,24 @@
+# DexteritySheets-Setup.exe: a double-click installer that carries the Dexterity Sheets MSI inside
+# it and hands it to Windows Installer. Built by package.ps1 after the MSI, with
+# DEXSHEETS_SETUP_MSI pointing at it. Kept out of the GridCraft workspace (own [workspace]) because
+# it can only be built once the MSI exists.
+[package]
+name = "dexsheets-setup"
+version = "0.0.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[[bin]]
+name = "DexteritySheets-Setup"
+path = "main.rs"
+
+[build-dependencies]
+winresource = "0.1"
+
+[profile.release]
+opt-level = "s"
+strip = true
+lto = true
+
+[workspace]

@@ -4,7 +4,8 @@
 
 .DESCRIPTION
   Produces, in $env:DIST (default: dist/release):
-    dexterity-sheets-<version>-windows-<arch>.msi            per-machine installer (WiX v5)
+    dexterity-sheets-<version>-windows-<arch>.msi            per-user installer (WiX v5)
+    DexteritySheets-Setup.exe                                the same installer as a double-click .exe (x64)
     dexterity-sheets-<version>-windows-<arch>-portable.zip   DexteritySheets.exe + gridcraft-cli.exe
 
   The binaries link the C runtime statically (+crt-static), so neither the MSI nor the portable
@@ -123,6 +124,23 @@ Invoke-Native 'wix build' {
 Remove-Item -Force -ErrorAction SilentlyContinue ([IO.Path]::ChangeExtension($Msi, '.wixpdb'))
 & (Join-Path $PSScriptRoot 'sign.ps1') $Msi
 
+# ---- setup exe ---------------------------------------------------------------------------------
+# DexteritySheets-Setup.exe carries the MSI and runs it: the double-click download for people who
+# don't know what an .msi is. A stable name, so .../releases/latest/download/DexteritySheets-Setup.exe
+# always points at the newest one; the version is in the file's properties.
+if ($Arch -eq 'x64') {
+  $env:DEXSHEETS_SETUP_MSI = $Msi
+  $env:DEXSHEETS_SETUP_VERSION = $Version
+  Invoke-Native 'cargo build (setup exe)' {
+    cargo build --release --locked --manifest-path (Join-Path $PSScriptRoot 'setup\Cargo.toml') --target $Target --target-dir (Join-Path $TargetDir 'setup')
+  }
+  $Setup = Join-Path $Dist 'DexteritySheets-Setup.exe'
+  Copy-Item -Force (Join-Path $TargetDir "setup\$Target\release\DexteritySheets-Setup.exe") $Setup
+  $h = Get-PeHeader $Setup
+  if ($h.Machine -ne $Machine -or $h.Subsystem -ne 2) { throw "DexteritySheets-Setup.exe: machine 0x$('{0:X}' -f $h.Machine), subsystem $($h.Subsystem)" }
+  & (Join-Path $PSScriptRoot 'sign.ps1') $Setup
+}
+
 # ---- portable zip ------------------------------------------------------------------------------
 $Portable = Join-Path $TargetDir "windows-package\dexterity-sheets-$Version-windows-$Arch-portable"
 Remove-Item -Recurse -Force $Portable -ErrorAction SilentlyContinue
@@ -150,4 +168,4 @@ if ($Arch -ne 'arm64' -or $HostArch -eq 'arm64') {
 } else {
   Write-Output "skipping gridcraft-cli --version: an $Arch build doesn't run on this $HostArch machine"
 }
-Get-Item $Msi, $Zip | Format-Table Name, Length
+Get-ChildItem $Dist -File | Format-Table Name, Length

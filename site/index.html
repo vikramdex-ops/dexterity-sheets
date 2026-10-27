@@ -1,0 +1,389 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dexterity Sheets: your team's spreadsheet</title>
+<meta name="description" content="Dexterity Sheets is the spreadsheet of Dexterity Design Services. Edit the same workbook together on the office network, see who changed what, go back to any version, and keep working with Excel .xlsx files.">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#082866">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to the content</a>
+
+<header class="topbar">
+  <div class="wrap topbar-in">
+    <a class="brand" href="#top" aria-label="Dexterity Sheets, back to the top">
+      <img src="icon.svg" alt="" width="34" height="34">
+      <span>Dexterity Sheets</span>
+    </a>
+    <nav class="topnav" aria-label="Sections">
+      <a href="#how">How it works</a>
+      <a href="#features">What it does</a>
+      <a href="#faq">Questions</a>
+    </nav>
+    <a class="btn btn-solid btn-small" href="https://github.com/vikramdex-ops/dexterity-sheets/releases/latest/download/DexteritySheets-Setup.exe">
+      <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11m-5-5 5 5 5-5M5 20h14"/></svg>
+      Download
+    </a>
+  </div>
+</header>
+
+<main id="main">
+
+<!-- ============================================================ HERO -->
+<section class="hero" id="top" aria-labelledby="hero-title">
+  <div class="hero-bg" aria-hidden="true">
+    <div class="hero-glow"></div>
+    <div class="hero-floor"></div>
+    <span class="bit b1"></span><span class="bit b2"></span><span class="bit b3"></span><span class="bit b4"></span>
+    <span class="bit b5"></span><span class="bit b6"></span><span class="bit b7"></span><span class="bit b8"></span>
+  </div>
+
+  <div class="wrap hero-grid">
+    <div class="hero-copy">
+      <p class="eyebrow"><img src="icon.svg" alt="" width="22" height="22"> Dexterity Design Services · the office spreadsheet</p>
+      <h1 id="hero-title">Your team's spreadsheet.<span>Live, together, on the office network.</span></h1>
+      <p class="lead">Open the line list, the MTO or the budget at the same time as everyone else. You see each other's changes as they happen, and every change carries the name of the person who made it.</p>
+
+      <div class="cta">
+        <a class="btn btn-hero btn-big" href="https://github.com/vikramdex-ops/dexterity-sheets/releases/latest/download/DexteritySheets-Setup.exe">
+          <svg class="ico ico-big" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m-5.5-5.5L12 15l5.5-5.5M4 20h16"/></svg>
+          <span class="btn-lines"><strong>Download for Windows</strong><small>Version {{VERSION}} · Windows 10 and 11</small></span>
+        </a>
+        <a class="btn btn-ghost" href="#download">Other downloads</a>
+      </div>
+
+      <ul class="assure">
+        <li><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg>No administrator rights needed</li>
+        <li><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg>Updates itself from the office server</li>
+        <li><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg>Opens and saves Excel .xlsx files</li>
+      </ul>
+    </div>
+
+    <div class="hero-stage">
+      <div class="stage3d">
+        <div class="tilt">
+          <figure class="device device-hero">
+            <img src="images/collab-history.png" width="1440" height="860"
+                 alt="A shared line list open in Dexterity Sheets. Anita Rao's selection is outlined in red and Rahul Mehta's in green, each with a name tag. The Edit History pane on the right lists who changed cell F3 and when, and the status bar says the workbook is shared and saved.">
+            <span class="sheen" aria-hidden="true"></span>
+          </figure>
+
+          <div class="float float-card" aria-hidden="true">
+            <p class="fc-title">Edit History <span class="live-dot"></span></p>
+            <p class="fc-row"><i class="dot red"></i><b class="t-red">Anita Rao</b><span>07:15</span></p>
+            <p class="fc-change">F3 &nbsp; 36.2 → <b>38.0</b></p>
+            <p class="fc-row"><i class="dot blue"></i><b class="t-blue">Vikram</b><span>07:15</span></p>
+            <p class="fc-change">F3 &nbsp; (empty) → <b>36.2</b></p>
+          </div>
+
+          <div class="float float-presence" aria-hidden="true">
+            <i class="dot ok"></i><span>Shared · saved</span>
+            <i class="dot blue"></i><span>Vikram</span>
+            <i class="dot red"></i><span>Anita</span>
+            <i class="dot green"></i><span>Rahul</span>
+          </div>
+
+          <span class="float float-cell fc1" aria-hidden="true">38.0</span>
+          <span class="float float-cell fc2" aria-hidden="true">IFC</span>
+          <span class="float float-tag ft1" aria-hidden="true">Anita Rao <em>typing…</em></span>
+        </div>
+      </div>
+      <div class="stage-shadow" aria-hidden="true"></div>
+    </div>
+  </div>
+</section>
+
+<!-- ======================================================= AT A GLANCE -->
+<section class="section glance" aria-labelledby="glance-title">
+  <div class="wrap">
+    <header class="sec-head reveal">
+      <p class="kicker">At a glance</p>
+      <h2 id="glance-title">One workbook. The whole team. No more copies.</h2>
+      <p class="sec-lead">No more “who has the file open?”, no emailed copies, no <code>line_list_final_v3_RK.xlsx</code>. Everyone works in the same workbook, and it remembers everything.</p>
+    </header>
+    <ul class="tiles">
+      <li class="tile reveal"><img src="readme/feature-live.svg" width="400" height="260" loading="lazy" alt="Edit together, live: changes show up on everyone's screen at once."></li>
+      <li class="tile reveal"><img src="readme/feature-who.svg" width="400" height="260" loading="lazy" alt="Every change has a name: everyone signs in, so you always know who changed what."></li>
+      <li class="tile reveal"><img src="readme/feature-history.svg" width="400" height="260" loading="lazy" alt="Edit History: the old value, the new value, who changed it and when."></li>
+      <li class="tile reveal"><img src="readme/feature-versions.svg" width="400" height="260" loading="lazy" alt="Versions: kept every hour and on Save, and any one can be restored."></li>
+      <li class="tile reveal"><img src="readme/feature-excel.svg" width="400" height="260" loading="lazy" alt="Excel files in and out: open the .xlsx a client sends and save .xlsx back."></li>
+      <li class="tile reveal"><img src="readme/feature-updates.svg" width="400" height="260" loading="lazy" alt="Updates itself: one click installs the new version, no administrator rights needed."></li>
+    </ul>
+  </div>
+</section>
+
+<!-- ====================================================== HOW IT WORKS -->
+<section class="section how" id="how" aria-labelledby="how-title">
+  <div class="wrap">
+    <header class="sec-head reveal">
+      <p class="kicker">How it works</p>
+      <h2 id="how-title">Up and running in three steps</h2>
+      <p class="sec-lead">Your IT person sets up the office server once. After that, this is all anyone needs to do.</p>
+    </header>
+    <ol class="steps">
+      <li class="step reveal">
+        <span class="step-no" aria-hidden="true">1</span>
+        <span class="step-ico" aria-hidden="true"><svg viewBox="0 0 48 48"><path class="bob" d="M24 6v22m-9-9 9 9 9-9"/><path d="M8 30v10h32V30"/></svg></span>
+        <h3>Install</h3>
+        <p>Download the setup and run it. It installs just for you, so you do not need an administrator.</p>
+      </li>
+      <li class="step reveal">
+        <span class="step-no" aria-hidden="true">2</span>
+        <span class="step-ico" aria-hidden="true"><svg viewBox="0 0 48 48"><circle cx="24" cy="16" r="8"/><path d="M8 42c0-9 7-15 16-15s16 6 16 15"/></svg></span>
+        <h3>Sign in</h3>
+        <p>Open <b>File › Shared</b>. The office server shows up on its own. Type the user name and password IT gave you.</p>
+      </li>
+      <li class="step reveal">
+        <span class="step-no" aria-hidden="true">3</span>
+        <span class="step-ico" aria-hidden="true"><svg viewBox="0 0 48 48"><rect x="6" y="9" width="36" height="30" rx="3"/><path d="M6 19h36M6 29h36M18 9v30M30 9v30"/><rect class="sel-r" x="18" y="19" width="12" height="10"/><rect class="sel-g" x="30" y="29" width="12" height="10"/></svg></span>
+        <h3>Edit together</h3>
+        <p>Open a shared workbook, or share the one you have open. Everyone's edits appear live. There is nothing to save.</p>
+      </li>
+    </ol>
+  </div>
+</section>
+
+<!-- ========================================================== FEATURES -->
+<section class="section features" id="features" aria-labelledby="features-title">
+  <div class="wrap">
+    <header class="sec-head reveal">
+      <p class="kicker">What it does for you</p>
+      <h2 id="features-title">Built for a design office that shares its numbers</h2>
+    </header>
+
+    <article class="story">
+      <div class="story-text reveal">
+        <p class="kicker">Live editing</p>
+        <h3>Work on the same file at the same time</h3>
+        <p>Everyone in the workbook sees each other's changes within a blink on the office network. Other people's selected cells are outlined in their colour with their name, and you can see when someone is typing.</p>
+        <ul class="ticks">
+          <li>No waiting for someone to close the file</li>
+          <li>Network dropped? Keep typing. Your edits wait and go through when it comes back.</li>
+          <li>Undo takes back <em>your</em> edits, never a colleague's</li>
+        </ul>
+      </div>
+      <figure class="shot shot-zoom tilt-in">
+        <div class="device"><img src="images/shared-workbooks.png" width="1440" height="860" loading="lazy" alt="File › Shared in Dexterity Sheets: signed in to the office server, a list of shared workbooks with the last change and who has each one open right now."></div>
+        <figcaption>File › Shared: every shared workbook, who changed it last, and who has it open now.</figcaption>
+      </figure>
+    </article>
+
+    <article class="story">
+      <div class="story-text reveal">
+        <p class="kicker">Named accounts</p>
+        <h3>Everyone signs in, so every change has a name</h3>
+        <p>Shared workbooks need a named account. There are no guests and no anonymous edits, so the workbook can always answer: who changed this cell, when, and what was it before?</p>
+        <ul class="ticks">
+          <li>The office server is found on the network by itself</li>
+          <li>The status bar shows who last changed the cell you are on</li>
+          <li>IT decides who can edit and who can only view</li>
+        </ul>
+      </div>
+      <figure class="shot shot-zoom tilt-in">
+        <div class="device"><img src="images/sign-in.png" width="1440" height="860" loading="lazy" alt="The sign-in page of Dexterity Sheets listing the office server found on the network, with server, user name and password fields."></div>
+        <figcaption>Sign in once. The app remembers the server and your user name.</figcaption>
+      </figure>
+    </article>
+
+    <article class="story">
+      <div class="story-text reveal">
+        <p class="kicker">Edit History</p>
+        <h3>See every change: old value, new value, who and when</h3>
+        <p>Click the “last changed by” note in the status bar, or open <b>Review › Edit History</b>. You get the story of one cell or of the whole workbook, and you can filter it by person.</p>
+        <ul class="ticks">
+          <li>Values that only recalculated are never blamed on anyone</li>
+          <li>Useful when a client asks “who changed this length, and when?”</li>
+        </ul>
+      </div>
+      <figure class="shot shot-crop tilt-in">
+        <div class="device"><img src="images/collab-history.png" width="1440" height="860" loading="lazy" alt="The Edit History pane next to a line list: Anita Rao changed Sheet1 F3 from 36.2 to 38.0 at 07:15, and Vikram changed it from empty to 36.2 at 07:15."></div>
+        <figcaption>Edit History for cell F3: Anita changed 36.2 to 38.0, Vikram typed the first value.</figcaption>
+      </figure>
+    </article>
+
+    <article class="story">
+      <div class="story-text reveal">
+        <p class="kicker">Versions</p>
+        <h3>Go back to any earlier version</h3>
+        <p>The server keeps a version every hour while people work, every time someone presses Save, and whenever you ask (“Issued for review Rev B”). Open any of them as a separate copy, or restore one for everyone.</p>
+        <ul class="ticks">
+          <li>Before any restore, the current state is kept too, so nothing is lost</li>
+          <li>Every edit reaches the server's disk before anyone else sees it</li>
+        </ul>
+      </div>
+      <figure class="shot tilt-in">
+        <div class="device"><img src="images/versions.png" width="1440" height="860" loading="lazy" alt="The Versions pane listing versions kept by the server, with labels, authors and edit numbers, each with Open a copy and Restore buttons."></div>
+        <figcaption>Review › Versions: open a copy or restore it for everyone.</figcaption>
+      </figure>
+    </article>
+
+    <article class="story">
+      <div class="story-text reveal">
+        <p class="kicker">Excel files in and out</p>
+        <h3>Clients send .xlsx. You send .xlsx back.</h3>
+        <p>Open any Excel workbook, share it with the team, and use <b>File › Save As</b> to send an .xlsx copy out. Tables, charts, conditional formatting and more than 500 functions all work, and Indian number formats like 12,34,567 and dd-mm dates follow your Windows settings, just as Excel does on your PC.</p>
+        <ul class="ticks">
+          <li>Files we write open in Excel with no repair prompts in our tests</li>
+          <li>Excel recalculating our files gives the same numbers</li>
+        </ul>
+      </div>
+      <figure class="shot tilt-in">
+        <div class="device"><img src="images/hero-sales.png" width="1440" height="860" loading="lazy" alt="A quarterly sales dashboard in Dexterity Sheets with a styled table, data bars, icon sets, sparklines, a clustered column chart and a pie chart."></div>
+        <figcaption>A real spreadsheet: tables, charts, sparklines and conditional formatting.</figcaption>
+      </figure>
+    </article>
+
+    <article class="story">
+      <div class="story-text reveal">
+        <p class="kicker">Updates itself</p>
+        <h3>Always the latest version, with one click</h3>
+        <p>When a new version is out, every running copy shows <b>Update to …</b> in the status bar. Click <b>Update now</b>: it downloads from the office server, checks the file and installs itself, then reopens. Shared work is already saved on the server, so nothing is lost.</p>
+        <ul class="ticks">
+          <li>No administrator rights needed</li>
+          <li>PCs never need internet access; the office server brings the update</li>
+        </ul>
+      </div>
+      <figure class="shot tilt-in">
+        <div class="device"><img src="images/update.png" width="1440" height="860" loading="lazy" alt="The Dexterity Sheets updates dialog: a newer version is available with its release notes and an Update now button; the status bar shows Update to 9.9.9."></div>
+        <figcaption>The update dialog: what is new, and one button.</figcaption>
+      </figure>
+    </article>
+  </div>
+</section>
+
+<!-- ============================================================ GALLERY -->
+<section class="section gallery" aria-labelledby="gallery-title">
+  <div class="wrap">
+    <header class="sec-head reveal">
+      <p class="kicker">And everything else a spreadsheet does</p>
+      <h2 id="gallery-title">Formulas, formatting, charts and dark mode</h2>
+    </header>
+    <ul class="cards3">
+      <li class="card3 tilt-in">
+        <div class="device"><img src="images/grades-formulas.png" width="1440" height="860" loading="lazy" alt="A gradebook with averages and letter grades worked out with formulas, with the Formulas tab and its function library open."></div>
+        <h3>500+ formulas</h3>
+        <p>SUM to XLOOKUP, LET and LAMBDA, dynamic arrays and table references.</p>
+      </li>
+      <li class="card3 tilt-in">
+        <div class="device"><img src="images/budget.png" width="1440" height="860" loading="lazy" alt="A budget with accounting number formats, highlighted cells, a colour scale and a bar chart."></div>
+        <h3>Formatting that reads right</h3>
+        <p>Number formats with Indian 12,34,567 grouping, cell styles and colour scales.</p>
+      </li>
+      <li class="card3 tilt-in">
+        <div class="device"><img src="images/dark-insert.png" width="1440" height="860" loading="lazy" alt="The sales dashboard in dark mode with the Insert tab open."></div>
+        <h3>Easy on the eyes</h3>
+        <p>A dark mode for late nights, and the Insert tab for charts, pictures and shapes.</p>
+      </li>
+    </ul>
+  </div>
+</section>
+
+<!-- =========================================================== DOWNLOAD -->
+<section class="section download" id="download" aria-labelledby="download-title">
+  <div class="wrap">
+    <div class="dl-panel reveal">
+      <div class="dl-main">
+        <img class="dl-icon" src="icon.svg" alt="" width="88" height="88">
+        <h2 id="download-title">Get Dexterity Sheets</h2>
+        <p class="dl-meta">Version {{VERSION}} · released {{DATE}} · Windows 10 and 11 (64-bit)</p>
+        <a class="btn btn-solid btn-big" href="https://github.com/vikramdex-ops/dexterity-sheets/releases/latest/download/DexteritySheets-Setup.exe">
+          <svg class="ico ico-big" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m-5.5-5.5L12 15l5.5-5.5M4 20h16"/></svg>
+          <span class="btn-lines"><strong>Download for Windows</strong><small>DexteritySheets-Setup.exe</small></span>
+        </a>
+        <p class="dl-note">Double-click the file you downloaded and follow the steps. No administrator rights needed. After that, Dexterity Sheets keeps itself up to date from the office server.</p>
+      </div>
+      <div class="dl-options">
+        <div class="dl-opt">
+          <h3>Other formats</h3>
+          <p>The MSI installer (for IT tools that deploy software), a portable copy that runs without installing, and checksums.</p>
+          <a class="link-arrow" href="https://github.com/vikramdex-ops/dexterity-sheets/releases/latest">All files of the latest release</a>
+        </div>
+        <div class="dl-opt">
+          <h3>For the IT person: the office server</h3>
+          <p>One always-on office PC holds the shared workbooks. Download the <b>office server bundle</b> (<code>DexSheetsServer</code> zip) from the same page, run its install script once, and add an account for each person.</p>
+          <a class="link-arrow" href="https://github.com/vikramdex-ops/dexterity-sheets/blob/main/docs/collaboration.md">Server setup guide</a>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ================================================================ FAQ -->
+<section class="section faq" id="faq" aria-labelledby="faq-title">
+  <div class="wrap wrap-narrow">
+    <header class="sec-head reveal">
+      <p class="kicker">Questions</p>
+      <h2 id="faq-title">Good to know</h2>
+    </header>
+    <div class="faq-list">
+      <details class="reveal">
+        <summary>Do I need administrator rights to install it?</summary>
+        <div class="answer"><p>No. The setup installs Dexterity Sheets just for your Windows account, so you can install it and update it yourself.</p></div>
+      </details>
+      <details class="reveal">
+        <summary>Can I open my existing Excel files?</summary>
+        <div class="answer"><p>Yes. Open any .xlsx as usual. To work on it with others, choose <b>File › Shared › Share the current workbook</b>. To send a file to a client, use <b>File › Save As</b> and pick .xlsx. Excel opens those files without complaint.</p></div>
+      </details>
+      <details class="reveal">
+        <summary>Do I still need to press Save?</summary>
+        <div class="answer"><p>Not in a shared workbook. Every change is stored on the office server as you make it. Pressing Ctrl+S keeps a named version you can go back to later.</p></div>
+      </details>
+      <details class="reveal">
+        <summary>What if two people change the same cell?</summary>
+        <div class="answer"><p>The server puts the two changes in order and the later one wins. Everyone ends up seeing exactly the same thing, and Edit History keeps both, so nothing disappears without a trace. Changes to different cells never get in each other's way.</p></div>
+      </details>
+      <details class="reveal">
+        <summary>What happens if the network drops?</summary>
+        <div class="answer"><p>Keep working. Your edits are kept on your PC and the status bar shows how many are waiting. They are sent as soon as the office server can be reached again.</p></div>
+      </details>
+      <details class="reveal">
+        <summary>Can a colleague undo my work by mistake?</summary>
+        <div class="answer"><p>No. Undo only takes back your own edits. And if something does go wrong, any earlier version can be opened as a copy or restored.</p></div>
+      </details>
+      <details class="reveal">
+        <summary>How do I get an account?</summary>
+        <div class="answer"><p>Ask your IT person or office administrator. Accounts are created on the office server; there is no sign-up form and no guest access. IT can make you an editor, or a viewer who can only read.</p></div>
+      </details>
+      <details class="reveal">
+        <summary>Is anything sent to the internet or the cloud?</summary>
+        <div class="answer"><p>No. Workbooks live on the office server, on your own network. There is no cloud service, no subscription and no tracking. Your PC does not even need internet access to get updates.</p></div>
+      </details>
+      <details class="reveal">
+        <summary>Does it work on a Mac or at home?</summary>
+        <div class="answer"><p>Dexterity Sheets is made for Windows 10 and 11 PCs in the office. Shared workbooks need the office network; on its own the app opens and saves .xlsx files anywhere.</p></div>
+      </details>
+    </div>
+  </div>
+</section>
+
+<!-- ======================================================== UNDER THE HOOD -->
+<section class="section tech" aria-labelledby="tech-title">
+  <div class="wrap wrap-narrow">
+    <h2 id="tech-title">Under the hood</h2>
+    <p>A native Windows app written in Rust, built on <a href="https://github.com/storytold/gridcraft">GridCraft</a> {{GRIDCRAFT}}, an open-source, Excel-compatible spreadsheet engine. Dexterity adds live co-authoring over the office LAN: a small server program, named accounts, an audit trail of every cell change, versions and update distribution. Fixes from GridCraft flow in automatically, are tested, and are released through the built-in updater.</p>
+    <ul class="tech-links">
+      <li><a href="https://github.com/vikramdex-ops/dexterity-sheets">Source code</a></li>
+      <li><a href="https://github.com/vikramdex-ops/dexterity-sheets/blob/main/docs/collaboration.md">How shared workbooks work</a></li>
+      <li><a href="https://github.com/vikramdex-ops/dexterity-sheets/releases">Release notes</a></li>
+    </ul>
+  </div>
+</section>
+
+</main>
+
+<footer class="footer">
+  <div class="wrap footer-in">
+    <div class="footer-brand">
+      <img src="icon.svg" alt="" width="28" height="28">
+      <span>Dexterity Sheets {{VERSION}} · © Dexterity Design Services Pvt. Ltd.</span>
+    </div>
+    <p>Based on <a href="https://github.com/storytold/gridcraft">GridCraft</a> by the ArtCraft team (MIT/Apache-2.0). Dexterity Sheets is not affiliated with or endorsed by the ArtCraft team.</p>
+    <p class="fine">Microsoft Excel is a trademark of Microsoft Corporation. Dexterity Sheets is not made or endorsed by Microsoft and contains no Microsoft code or artwork.</p>
+  </div>
+</footer>
+</body>
+</html>
