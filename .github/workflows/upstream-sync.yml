@@ -68,7 +68,16 @@ jobs:
             echo "\`python packaging/dexterity/check_overlay.py\` passes, bump packaging/dexterity/VERSION,"
             echo "and merge: the release workflow then publishes the new version."
           } > body.md
-          gh pr create --head upstream --base main --title "$title" --body-file body.md --label upstream-sync || gh pr create --head upstream --base main --title "$title" --body-file body.md
+          gh label create upstream-sync --color 1f4e9c --description "Merging official GridCraft" --force || true
+          if ! gh pr create --head upstream --base main --title "$title" --body-file body.md --label upstream-sync; then
+            # Repositories that don't let Actions open pull requests get an issue with a one-click link instead.
+            if gh issue list --label upstream-sync --state open --json number --jq '.[0].number' | grep -q .; then
+              echo "A sync issue is already open."; exit 0
+            fi
+            echo >> body.md
+            echo "Open the pull request: ${{ github.server_url }}/${{ github.repository }}/compare/main...upstream?expand=1" >> body.md
+            gh issue create --title "$title" --body-file body.md --label upstream-sync
+          fi
 
   test:
     needs: merge

@@ -15,7 +15,10 @@ layer never has to be re-written.
 | `.github/workflows/dexterity-*`, `upstream-sync.yml` | `Cargo.toml`, `xtask/src/layers.rs`, crate manifests |
 | `docs/collaboration.md`, `README.md`, icons | branding text in translations and dialogs |
 
-`packaging/dexterity/check_overlay.py` lists every hook. CI fails if one disappears.
+`packaging/dexterity/check_overlay.py` lists every hook (a hook may live in any file of a module,
+so upstream splitting a file is fine). CI fails if one disappears. `reapply_overlay.py` re-adds
+them all, idempotently; it was first used on upstream PR #2690, which split `grid.rs`,
+`ribbon.rs`, `lib.rs` and `dialogs.rs` into modules.
 
 ## Versions
 
@@ -33,7 +36,9 @@ Every 6 hours (or Actions › Upstream sync › Run workflow):
    - our files: ours win;
    - files we deleted (upstream CI, ArtCraft brand files): stay deleted; new upstream workflows are dropped;
    - files where we only changed branding text: upstream's file + the branding rule;
-   - anything else: stop.
+   - other files both sides changed (upstream refactors that move code): upstream's file, then
+     `reapply_overlay.py` puts our hooks, branding and test updates back in the new layout;
+   - delete/modify or add/add conflicts, or a hook the overlay can't place: stop.
 3. Clean merge → full CI (format, clippy, all engine tests, collaboration tests, build, the
    three-window end-to-end test) → fast-forward `main`, tag `vX.Y.Z`, publish the release.
 4. Office servers with `update-source.json` download the new `.msi` within 30 minutes and every

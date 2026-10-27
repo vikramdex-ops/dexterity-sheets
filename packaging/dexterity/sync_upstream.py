@@ -14,7 +14,10 @@ Conflict policy (see packaging/dexterity/UPSTREAM.md):
 2. Files Dexterity Sheets deleted (upstream CI, ArtCraft brand files, old icons): stay deleted.
 3. Files where our only change is user-visible branding text (translations, About text…): take
    upstream's file and re-apply the branding rule.
-4. Anything else: stop and report; the workflow opens a pull request for a person.
+4. Other files both sides changed: take upstream's file and re-apply Dexterity's hooks, branding
+   and test updates with reapply_overlay.py. If an anchor can't be found, stop for a person.
+5. Anything else (delete/modify, add/add): stop and report; the workflow opens a pull request.
+The full CI (build, every test, the three-window end-to-end test) must pass before release.
 Afterwards check_overlay.py verifies that every hook into upstream files is still present.
 """
 import fnmatch
@@ -115,6 +118,7 @@ def main() -> int:
     subject = git("log", "-1", "--format=%s", head)
     merge = subprocess.run(["git", "merge", "--no-ff", "--no-commit", f"upstream/{UPSTREAM_BRANCH}"], capture_output=True, text=True, encoding="utf-8")
     unresolved = []
+    reapplied = []
     if merge.returncode != 0:
         status_lines = git("status", "--porcelain").splitlines()
         conflicted = [(l[:2], l[3:].strip().strip('"')) for l in status_lines if l[:2] in ("UU", "AA", "DU", "UD", "AU", "UA", "DD")]
@@ -132,6 +136,12 @@ def main() -> int:
                 with open(path, "w", encoding="utf-8", newline="") as f:
                     f.write(rebrand(text))
                 git("add", "--", path)
+            elif code == "UU":
+                # Upstream changed code we also touched (often a refactor that moved it): take
+                # upstream's file; reapply_overlay.py puts our hooks and branding back below.
+                git("checkout", "--theirs", "--", path)
+                git("add", "--", path)
+                reapplied.append(path)
             else:
                 unresolved.append(f"{code} {path}")
     # Upstream may add new workflows; Dexterity runs only its own.
@@ -143,6 +153,12 @@ def main() -> int:
     if unresolved:
         output(status="conflict", upstream=head, subject=subject, unresolved=unresolved)
         return 0
+    if reapplied:
+        again = subprocess.run([sys.executable, "packaging/dexterity/reapply_overlay.py"], capture_output=True, text=True, encoding="utf-8")
+        if again.returncode != 0:
+            output(status="conflict", upstream=head, subject=subject, unresolved=reapplied + again.stdout.splitlines())
+            return 0
+        git("add", "-A")
     hooks = subprocess.run([sys.executable, "packaging/dexterity/check_overlay.py"], capture_output=True, text=True, encoding="utf-8")
     if hooks.returncode != 0:
         output(status="conflict", upstream=head, subject=subject, unresolved=hooks.stdout.splitlines())
@@ -153,7 +169,7 @@ def main() -> int:
         f.write(version)
     git("add", "packaging/dexterity/VERSION")
     git("commit", "-q", "-m", f"Sync with upstream GridCraft {head[:10]}\n\nUpstream: {subject}\nDexterity Sheets {version}")
-    output(status="merged", upstream=head, subject=subject, version=version)
+    output(status="merged", upstream=head, subject=subject, version=version, reapplied=reapplied)
     return 0
 
 
