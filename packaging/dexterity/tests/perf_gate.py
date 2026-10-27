@@ -6,7 +6,11 @@ runner for releases):
   idle_ram_mb          memory in use right after start (working set: what Task Manager shows)
   idle_commit_mb       memory reserved (private bytes; mostly the graphics driver's, tracked only)
   idle_cpu_ms_per_10s  CPU used while nobody touches it (should be ~0: it only draws on demand)
-  edit_roundtrip_ms    one typed cell, median over 200 edits
+  edit_ms              the app's own time for one typed cell: applying it plus drawing the
+                       frame that shows it (median over 200 edits)
+  wake_ms              a do-nothing request's round trip: one screen refresh. Tracked only:
+                       Windows slows the refresh of a window nobody can see (16.7 ms visible
+                       and 111 ms minimised on a laptop; some CI runners show 300+ ms)
   open_big_ms          opening a 200,000-row CSV (2 million cells)
   big_ram_mb           memory in use with that workbook open
   scroll_frame_ms      slowest frame while paging through it (95th percentile)
@@ -91,13 +95,25 @@ def main():
         m["idle_commit_mb"] = commit
         time.sleep(10)
         m["idle_cpu_ms_per_10s"] = proc_stats(app.proc.pid)[2] - cpu0
-        times = []
+        # A control request waits for the next frame, so its round trip is mostly the screen's
+        # refresh, which Windows throttles when the window can't be seen. Each edit is paired
+        # with a do-nothing request: the difference is the time spent applying the edit (the
+        # reply leaves straight after), and that request reports how long drawing the edit took.
+        edits, wakes = [], []
         for i in range(200):
             t = time.perf_counter()
             app.run("cell.set", cell=f"B{i + 2}", input=str(i * 3))
-            times.append((time.perf_counter() - t) * 1000)
-        times.sort()
-        m["edit_roundtrip_ms"] = times[len(times) // 2]
+            edit = (time.perf_counter() - t) * 1000
+            t = time.perf_counter()
+            info = app.call("ui.inspect") or {}
+            wake = (time.perf_counter() - t) * 1000
+            paint = float((info.get("perf") or {}).get("frameMs") or 0)
+            edits.append(max(0.0, edit - wake) + paint)
+            wakes.append(wake)
+        edits.sort()
+        wakes.sort()
+        m["edit_ms"] = edits[len(edits) // 2]
+        m["wake_ms"] = wakes[len(wakes) // 2]
         t = time.perf_counter()
         app.call("app.open", {"path": big})
         m["open_big_ms"] = (time.perf_counter() - t) * 1000
