@@ -89,12 +89,10 @@ pub fn check_once(src: &Source, updates: &Path, newest_local: Option<&str>) -> R
     if newest_local.is_some_and(|v| !gridcraft_collab::proto::version_newer(&version, v)) {
         return Ok(None);
     }
-    let Some(msi) = rel
-        .assets
-        .iter()
-        .find(|a| a.name.to_ascii_lowercase().ends_with(".msi") && a.name.contains("x64"))
-        .or_else(|| rel.assets.iter().find(|a| a.name.to_ascii_lowercase().ends_with(".msi")))
-    else {
+    // The app's installer only: a release also carries the server's own installer, which must
+    // never be offered to office PCs.
+    let app_msi = |a: &&Asset| gridcraft_collab::server::is_app_installer(&a.name);
+    let Some(msi) = rel.assets.iter().filter(app_msi).find(|a| a.name.contains("x64")).or_else(|| rel.assets.iter().find(app_msi)) else {
         return Err(format!("release {} has no .msi asset", rel.tag_name));
     };
     let data = get(&c, &msi.url, token, "application/octet-stream")?;
@@ -142,7 +140,7 @@ fn newest_local(updates: &Path) -> Option<String> {
     let mut best: Option<String> = None;
     for e in std::fs::read_dir(updates).ok()?.flatten() {
         let n = e.file_name().to_string_lossy().to_string();
-        if !n.to_ascii_lowercase().ends_with(".msi") {
+        if !gridcraft_collab::server::is_app_installer(&n) {
             continue;
         }
         if let Some(v) = n.trim_end_matches(".msi").split('-').find(|p| p.starts_with(|c: char| c.is_ascii_digit()) && p.contains('.'))

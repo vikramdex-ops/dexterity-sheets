@@ -12,9 +12,9 @@
 //! A workbook's state is always its newest snapshot plus the log entries after it, so a crash at
 //! any point loses nothing that was acknowledged.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs::{self, File, OpenOptions};
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -34,6 +34,10 @@ use crate::{Error, Result, auth, now_ms};
 const SNAPSHOT_EVERY: u64 = 300;
 /// Keep an automatic version at most this often while a workbook is being edited.
 const AUTO_VERSION_MS: i64 = 60 * 60 * 1000;
+/// A workbook nobody has had open for this long is dropped from memory (it loads again when
+/// opened), so a server that runs for months doesn't hold every workbook it ever served.
+const IDLE_UNLOAD_MS: i64 = 10 * 60 * 1000;
+const DAY_MS: i64 = 24 * 60 * 60 * 1000;
 /// Most changes a history query returns.
 const HISTORY_MAX: usize = 5000;
 
@@ -80,6 +84,8 @@ struct Book {
     audit: File,
     last_edits: HashMap<(String, CellRef), (String, i64)>,
     last_version: i64,
+    /// Last opened or edited.
+    touched: i64,
 }
 
 struct Conn {
@@ -131,6 +137,59 @@ pub fn save_users(dir: &Path, users: &[UserRecord]) -> Result<()> {
     write_atomic(&users_path(dir), &serde_json::to_vec_pretty(users)?)
 }
 
+/// Opens an append-only log (edits, audit). A line cut short by a crash has no newline: it is ended
+/// first, so the next entry starts on a line of its own instead of being glued to the broken one
+/// (which would make that acknowledged entry unreadable at the next start).
+fn open_log(path: &Path) -> Result<File> {
+    let mut f = OpenOptions::new().create(true).read(true).append(true).open(path)?;
+    let len = f.metadata()?.len();
+    if len > 0 {
+        let mut last = [0u8; 1];
+        f.seek(SeekFrom::Start(len - 1))?;
+        f.read_exact(&mut last)?;
+        if last[0] != b'\n' {
+            f.write_all(b"\n")?;
+            f.sync_data()?;
+        }
+    }
+    Ok(f)
+}
+
+/// Rewrites `log.jsonl` without the entries up to `keep_after` (they are in every kept snapshot)
+/// and without unreadable lines (never acknowledged).
+fn compact_log(dir: &Path, b: &mut Book, keep_after: u64) -> Result<()> {
+    let path = dir.join("log.jsonl");
+    let Ok(f) = File::open(&path) else { return Ok(()) };
+    let mut kept = Vec::new();
+    let mut dropped = 0usize;
+    for line in BufReader::new(f).lines().map_while(std::result::Result::ok) {
+        match serde_json::from_str::<Logged>(&line) {
+            Ok(e) if e.seq > keep_after => {
+                kept.extend_from_slice(line.as_bytes());
+                kept.push(b'\n');
+            }
+            _ => dropped += 1,
+        }
+    }
+    if dropped == 0 {
+        return Ok(());
+    }
+    let tmp = dir.join("log.jsonl.tmp");
+    {
+        let mut t = File::create(&tmp)?;
+        t.write_all(&kept)?;
+        t.sync_all()?;
+    }
+    // Windows can't replace a file that is open: let go of it while it is swapped.
+    let parked = dir.join("log.parked");
+    b.log = OpenOptions::new().create(true).append(true).open(&parked)?;
+    let swapped = fs::rename(&tmp, &path);
+    b.log = open_log(&path)?;
+    let _ = fs::remove_file(&parked);
+    swapped?;
+    Ok(())
+}
+
 fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
     let tmp = path.with_extension("tmp");
     {
@@ -140,6 +199,13 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
     }
     fs::rename(&tmp, path)?;
     Ok(())
+}
+
+/// An installer the server may hand to office PCs: an `.msi` of the app, never the server's own
+/// (`DexSheetsServer-…msi`), which releases carry too and IT may drop into the same folder.
+pub fn is_app_installer(file: &str) -> bool {
+    let f = file.to_ascii_lowercase();
+    f.ends_with(".msi") && !f.contains("server")
 }
 
 pub fn valid_username(u: &str) -> bool {
@@ -383,7 +449,7 @@ impl State {
         let mut best: Option<(String, PathBuf, u64, std::time::SystemTime)> = None;
         for e in fs::read_dir(&dir).ok()?.flatten() {
             let path = e.path();
-            if !path.extension().is_some_and(|x| x.eq_ignore_ascii_case("msi")) {
+            if !path.file_name().is_some_and(|n| is_app_installer(&n.to_string_lossy())) {
                 continue;
             }
             let stem = path.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
@@ -459,6 +525,9 @@ impl State {
         for (seq, p) in &snaps {
             match fs::read(p)
                 .map_err(Error::from)
+                // An .xlsx is a zip: anything else is damage, never "a workbook" (the reader would
+                // otherwise take stray text as a CSV and serve a near-empty sheet).
+                .and_then(|b| if b.starts_with(b"PK\x03\x04") { Ok(b) } else { Err(Error::Engine("not an .xlsx file".into())) })
                 .and_then(|b| gridcraft_engine::io::open_bytes("book.xlsx", &b).map(|(wb, _)| (wb, b)).map_err(Error::from))
             {
                 Ok((wb, bytes)) => {
@@ -499,13 +568,61 @@ impl State {
                 }
             }
         }
-        let log = OpenOptions::new().create(true).append(true).open(&log_path)?;
-        let audit = OpenOptions::new().create(true).append(true).open(dir.join("audit.jsonl"))?;
+        let log = open_log(&log_path)?;
+        let audit = open_log(&dir.join("audit.jsonl"))?;
         let mut meta = meta;
         meta.seq = seq;
-        self.books
-            .insert(id.to_string(), Book { meta, wb, snapshot_seq, snapshot: Arc::new(bytes), tail, log, audit, last_edits, last_version: now_ms() });
+        let now = now_ms();
+        self.books.insert(
+            id.to_string(),
+            Book { meta, wb, snapshot_seq, snapshot: Arc::new(bytes), tail, log, audit, last_edits, last_version: now, touched: now },
+        );
         Ok(())
+    }
+
+    /// Drops workbooks nobody has had open for [`IDLE_UNLOAD_MS`] from memory, after a final
+    /// snapshot. Their files stay; opening one loads it again.
+    fn unload_idle(&mut self) {
+        let now = now_ms();
+        let open: HashSet<&String> = self.conns.values().flat_map(|c| c.open.iter()).collect();
+        let idle: Vec<String> =
+            self.books.iter().filter(|(id, b)| !open.contains(id) && now - b.touched > IDLE_UNLOAD_MS).map(|(id, _)| id.clone()).collect();
+        for id in idle {
+            if self.books.get(&id).is_some_and(|b| b.meta.seq != b.snapshot_seq)
+                && let Err(e) = self.snapshot(&id)
+            {
+                // Kept in memory; every edit is in its log anyway. Tried again next time.
+                log::error!("{id}: snapshot before unloading failed: {e}");
+                continue;
+            }
+            if let Some(m) = self.books.get(&id).map(|b| b.meta.clone()) {
+                let _ = self.save_meta(&m);
+                self.metas.insert(id.clone(), m);
+            }
+            self.books.remove(&id);
+            log::info!("{id}: unloaded from memory (nobody has had it open for a while)");
+        }
+    }
+
+    /// Automatic versions thin out with age: every one from the last 14 days, one a day for 90
+    /// days, one a week after that. Versions someone kept by name, on Save, or before a restore are
+    /// never removed.
+    fn prune_versions(&self, id: &str) {
+        let dir = self.book_dir(id).join("versions");
+        let now = now_ms();
+        let mut kept: HashSet<(bool, i64)> = HashSet::new();
+        // Newest first: the newest of each day (or week) is the one kept.
+        for v in self.versions(id).into_iter().filter(|v| v.label == "automatic") {
+            let age = now - v.time;
+            if age < 14 * DAY_MS {
+                continue;
+            }
+            let bucket = if age < 90 * DAY_MS { (false, v.time / DAY_MS) } else { (true, v.time / (7 * DAY_MS)) };
+            if !kept.insert(bucket) {
+                let _ = fs::remove_file(dir.join(format!("{}.xlsx", v.id)));
+                let _ = fs::remove_file(dir.join(format!("{}.json", v.id)));
+            }
+        }
     }
 
     fn save_meta(&self, m: &BookMeta) -> Result<()> {
@@ -581,6 +698,13 @@ impl State {
         snaps.sort_by_key(|s| std::cmp::Reverse(s.0));
         for (_, p) in snaps.iter().skip(3) {
             let _ = fs::remove_file(p);
+        }
+        // The edit log only needs what comes after the oldest snapshot still kept (a damaged newer
+        // snapshot falls back to an older one plus the log), so it never grows without end.
+        if let Some(oldest) = snaps.iter().take(3).map(|s| s.0).min()
+            && let Err(e) = compact_log(&dir, b, oldest)
+        {
+            log::warn!("{id}: edit log not compacted: {e}");
         }
         Ok(())
     }
@@ -679,6 +803,9 @@ impl State {
             }
             ClientMsg::OpenBook { book } => {
                 self.load_book(&book)?;
+                if let Some(b) = self.books.get_mut(&book) {
+                    b.touched = now_ms();
+                }
                 if let Some(c) = self.conns.get_mut(&conn)
                     && !c.open.contains(&book)
                 {
@@ -864,6 +991,7 @@ impl State {
         b.meta.modified = time;
         b.meta.modified_by = user.to_string();
         b.tail.push(entry.clone());
+        b.touched = time;
         let (seq, snap_due, version_due) = (b.meta.seq, b.meta.seq - b.snapshot_seq >= SNAPSHOT_EVERY, time - b.last_version >= AUTO_VERSION_MS);
         let msg = ServerMsg::Patched { book: book.to_string(), seq, time, user: user.to_string(), origin: entry.origin, patch: entry.patch };
         self.broadcast(book, &msg, None);
@@ -871,6 +999,7 @@ impl State {
             if let Err(e) = self.save_version(book, "auto", "automatic") {
                 log::error!("{book}: automatic version failed: {e}");
             }
+            self.prune_versions(book);
         } else if snap_due && let Err(e) = self.snapshot(book) {
             log::error!("{book}: snapshot failed: {e}");
         }
@@ -901,6 +1030,11 @@ impl State {
 impl Server {
     pub fn flush_all(&self) {
         lock(&self.state).flush_all();
+    }
+
+    /// Housekeeping, every half minute: workbooks nobody has open leave memory.
+    pub fn unload_idle(&self) {
+        lock(&self.state).unload_idle();
     }
 
     /// Looks for a new installer in `updates/` and tells everyone connected about it.
@@ -1041,7 +1175,161 @@ pub fn start_on(dir: PathBuf, name: String, port: u16) -> Result<(Arc<Server>, u
         loop {
             std::thread::sleep(Duration::from_secs(30));
             s.poll_updates();
+            s.unload_idle();
         }
     })?;
     Ok((server, port))
+}
+
+#[cfg(test)]
+mod housekeeping_tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
+    use super::*;
+    use gridcraft_engine::core::Value;
+    use gridcraft_engine::{DocState, Session, Trust};
+
+    fn dir(name: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("dexsheets-house-{name}-{}", now_ms()));
+        set_user(&d, "vikram", "Vikram", "pipe-123", Role::Admin).expect("user");
+        d
+    }
+
+    /// The log entry that sets `cell` to `n`, on top of `wb`; `wb` becomes the result.
+    fn entry(wb: &mut Arc<Workbook>, seq: u64, cell: &str, n: f64) -> Logged {
+        let mut s = Session::new();
+        s.add_document(DocState::new((**wb).clone(), None, "t".into(), Trust::Local));
+        s.execute("cell.set", serde_json::json!({"cell": cell, "input": n.to_string()})).expect("set");
+        let after = s.active().expect("doc").wb.clone();
+        let p = patch::diff(wb, &after, &mut patch::DiffCache::default()).expect("diff");
+        *wb = after;
+        Logged { seq, time: now_ms(), user: "vikram".into(), origin: None, patch: p }
+    }
+
+    fn value(st: &State, id: &str, at: &str) -> Value {
+        let b = st.books.get(id).expect("loaded");
+        b.wb.sheet(0).expect("sheet").value(CellRef::parse(at).expect("cell"))
+    }
+
+    fn fresh(d: &Path) -> (State, String, Arc<Workbook>) {
+        let mut st = Server::open(d.to_path_buf(), "T".into()).expect("open").state.into_inner().unwrap_or_else(|p| p.into_inner());
+        let id = st.create_book("vikram", "Book", None, None).expect("create").id;
+        st.load_book(&id).expect("load");
+        let wb = Arc::new(st.books.get(&id).expect("b").wb.clone());
+        (st, id, wb)
+    }
+
+    fn reopen(d: &Path, id: &str) -> State {
+        let mut st = Server::open(d.to_path_buf(), "T".into()).expect("open").state.into_inner().unwrap_or_else(|p| p.into_inner());
+        st.load_book(id).expect("load");
+        st
+    }
+
+    #[test]
+    fn a_line_cut_short_by_a_crash_never_swallows_the_next_edit() {
+        let d = dir("cut");
+        let (st, id, mut wb) = fresh(&d);
+        drop(st);
+        let log = d.join("books").join(&id).join("log.jsonl");
+        let first = entry(&mut wb, 1, "A1", 1.0);
+        // Edit 1 written; edit 2 cut off by a power cut halfway through (never acknowledged).
+        fs::write(&log, format!("{}\n{{\"seq\":2,\"ti", serde_json::to_string(&first).expect("json"))).expect("write");
+        let mut st = reopen(&d, &id);
+        assert_eq!(st.books.get(&id).expect("b").meta.seq, 1);
+        // The next acknowledged edit, appended exactly as a live edit is.
+        let mut wb1 = Arc::new(st.books.get(&id).expect("b").wb.clone());
+        let second = entry(&mut wb1, 2, "A2", 2.0);
+        let b = st.books.get_mut(&id).expect("b");
+        writeln!(b.log, "{}", serde_json::to_string(&second).expect("json")).expect("append");
+        drop(st);
+        let st = reopen(&d, &id);
+        assert_eq!(st.books.get(&id).expect("b").meta.seq, 2, "the edit after the broken line survives a restart");
+        assert_eq!(value(&st, &id, "A2"), Value::Number(2.0));
+        let _ = fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn the_log_is_compacted_and_an_older_snapshot_still_restores_everything() {
+        let d = dir("compact");
+        let (mut st, id, mut wb) = fresh(&d);
+        let book = d.join("books").join(&id);
+        let mut seq = 0;
+        for round in 0..4 {
+            let mut lines = String::new();
+            for _ in 0..5 {
+                seq += 1;
+                lines += &format!("{}\n", serde_json::to_string(&entry(&mut wb, seq, &format!("A{seq}"), seq as f64)).expect("json"));
+            }
+            let b = st.books.get_mut(&id).expect("b");
+            b.log.write_all(lines.as_bytes()).expect("append");
+            // Reload so the server's copy has the edits, then snapshot (as every 300 edits).
+            st.books.remove(&id);
+            st.load_book(&id).expect("load");
+            if round > 0 {
+                st.snapshot(&id).expect("snapshot");
+            }
+        }
+        let log = fs::read_to_string(book.join("log.jsonl")).expect("log");
+        let first_kept = log.lines().filter_map(|l| serde_json::from_str::<Logged>(l).ok()).map(|e| e.seq).min();
+        assert_eq!(first_kept, Some(11), "edits in every kept snapshot (5..=20 kept as 10, 15, 20) leave the log");
+        drop(st);
+        let st = reopen(&d, &id);
+        assert_eq!(st.books.get(&id).expect("b").meta.seq, 20);
+        assert_eq!(value(&st, &id, "A20"), Value::Number(20.0));
+        drop(st);
+        // The newest snapshot is damaged: the oldest kept one plus the log still has everything.
+        fs::write(book.join("snapshot-20.xlsx"), b"not a workbook").expect("damage");
+        fs::write(book.join("snapshot-15.xlsx"), b"not a workbook").expect("damage");
+        let st = reopen(&d, &id);
+        assert_eq!(st.books.get(&id).expect("b").meta.seq, 20);
+        assert_eq!(value(&st, &id, "A13"), Value::Number(13.0));
+        assert_eq!(value(&st, &id, "A20"), Value::Number(20.0));
+        let _ = fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn idle_workbooks_leave_memory_and_load_again() {
+        let d = dir("idle");
+        let (mut st, id, _) = fresh(&d);
+        st.unload_idle();
+        assert!(st.books.contains_key(&id), "just used: stays");
+        st.books.get_mut(&id).expect("b").touched = 0;
+        st.unload_idle();
+        assert!(!st.books.contains_key(&id), "nobody had it open for a while: unloaded");
+        st.load_book(&id).expect("loads again");
+        let _ = fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn automatic_versions_thin_out_but_kept_ones_stay() {
+        let d = dir("versions");
+        let (st, id, _) = fresh(&d);
+        let vdir = d.join("books").join(&id).join("versions");
+        fs::create_dir_all(&vdir).expect("dir");
+        let now = now_ms();
+        let add = |n: usize, age_days: i64, hour: i64, label: &str| {
+            let v = VersionInfo {
+                id: format!("v{n}"),
+                seq: 1,
+                time: now - age_days * DAY_MS - hour * 3_600_000,
+                user: "auto".into(),
+                label: label.into(),
+                size: 1,
+            };
+            fs::write(vdir.join(format!("v{n}.json")), serde_json::to_vec(&v).expect("json")).expect("w");
+            fs::write(vdir.join(format!("v{n}.xlsx")), b"x").expect("w");
+        };
+        add(1, 1, 0, "automatic");
+        add(2, 1, 1, "automatic");
+        add(3, 30, 0, "automatic");
+        add(4, 30, 1, "automatic");
+        add(5, 30, 2, "Issued for review Rev B");
+        add(6, 200, 0, "automatic");
+        add(7, 201, 0, "automatic");
+        st.prune_versions(&id);
+        let left: HashSet<String> = st.versions(&id).into_iter().map(|v| v.id).collect();
+        let want: HashSet<String> = ["v1", "v2", "v3", "v5", "v6"].iter().map(|s| s.to_string()).collect();
+        assert_eq!(left, want);
+        assert!(!vdir.join("v4.xlsx").exists());
+        let _ = fs::remove_dir_all(&d);
+    }
 }

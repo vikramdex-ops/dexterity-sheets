@@ -2,6 +2,7 @@
 //!
 //! ```text
 //! DexSheetsServer                      run (creates the first administrator if there is none)
+//! DexSheetsServer service              run as the Windows service the installer registers
 //! DexSheetsServer user add NAME [--display "Full Name"] [--role admin|editor|viewer]
 //! DexSheetsServer user passwd NAME     set a new password
 //! DexSheetsServer user role NAME ROLE
@@ -10,6 +11,8 @@
 //! Updates: drop DexteritySheets-<version>-x64.msi into <data>\updates, or configure
 //! <data>\update-source.json {"repo": "owner/name", "token": "…"} to fetch GitHub releases.
 //! options: --data DIR (default %ProgramData%\Dexterity Sheets\Server), --port N, --name "Server name"
+//! (the name otherwise comes from <data>\server.json {"name": "…"}, set in the Server Manager)
+//! Most offices never need these commands: the Server Manager app does all of it.
 //! ```
 
 use std::io::Write;
@@ -20,9 +23,45 @@ use gridcraft_collab::proto::{DEFAULT_PORT, Role};
 use gridcraft_collab::server;
 
 mod github;
+#[cfg(windows)]
+mod service;
+
+/// `server.log` is kept under this size: past it, it becomes `server.log.1` (replacing the one
+/// before) and a new log starts, so a server that runs for years never fills its disk.
+const LOG_MAX_BYTES: u64 = 16 * 1024 * 1024;
+
+struct LogFile {
+    path: PathBuf,
+    file: Option<std::fs::File>,
+    size: u64,
+}
+
+impl LogFile {
+    fn open(path: PathBuf) -> LogFile {
+        let file = std::fs::OpenOptions::new().create(true).append(true).open(&path).ok();
+        let size = file.as_ref().and_then(|f| f.metadata().ok()).map_or(0, |m| m.len());
+        LogFile { path, file, size }
+    }
+
+    fn write(&mut self, line: &str) {
+        if self.size + line.len() as u64 > LOG_MAX_BYTES {
+            // Let go of the file first: Windows can't rename a file that is open.
+            self.file = None;
+            let old = self.path.with_extension("log.1");
+            let _ = std::fs::remove_file(&old);
+            let _ = std::fs::rename(&self.path, &old);
+            *self = LogFile::open(self.path.clone());
+        }
+        if let Some(f) = &mut self.file
+            && f.write_all(line.as_bytes()).is_ok()
+        {
+            self.size += line.len() as u64;
+        }
+    }
+}
 
 struct Logger {
-    file: Option<Mutex<std::fs::File>>,
+    file: Mutex<LogFile>,
 }
 
 impl log::Log for Logger {
@@ -35,10 +74,8 @@ impl log::Log for Logger {
         }
         let line = format!("{} {:<5} {}\n", chrono::Local::now().format("%Y-%m-%d %H:%M:%S"), r.level(), r.args());
         eprint!("{line}");
-        if let Some(f) = &self.file
-            && let Ok(mut f) = f.lock()
-        {
-            let _ = f.write_all(line.as_bytes());
+        if let Ok(mut f) = self.file.lock() {
+            f.write(&line);
         }
     }
     fn flush(&self) {}
@@ -151,12 +188,40 @@ fn user_command(dir: &std::path::Path, args: &[String]) -> Result<(), String> {
     }
 }
 
+/// The server's name from `<data>\server.json` (the Server Manager writes it), if set.
+fn configured_name(dir: &std::path::Path) -> Option<String> {
+    let v: serde_json::Value = serde_json::from_slice(&std::fs::read(dir.join("server.json")).ok()?).ok()?;
+    v.get("name").and_then(serde_json::Value::as_str).map(str::trim).filter(|n| !n.is_empty()).map(str::to_string)
+}
+
+fn start_logging(dir: &std::path::Path) {
+    let file = Mutex::new(LogFile::open(dir.join("server.log")));
+    if log::set_boxed_logger(Box::new(Logger { file })).is_ok() {
+        log::set_max_level(log::LevelFilter::Info);
+    }
+}
+
+/// Starts serving: workbooks, discovery, app updates. Returns once listening.
+fn serve(dir: PathBuf, name: String, port: u16) -> Result<std::sync::Arc<server::Server>, String> {
+    let srv = server::start(dir.clone(), name.clone(), port).map_err(|e| format!("{e}. Is another server already using port {port}?"))?;
+    log::info!("{name} listening on TCP port {port}; data in {}", dir.display());
+    match github::load(&dir) {
+        Some(src) => log::info!("app updates: checking GitHub releases of {} (and the updates folder)", src.repo),
+        None => log::info!("app updates: put new installers (.msi) in {}", srv.updates_dir().display()),
+    }
+    let watch_dir = dir.clone();
+    let watched = srv.clone();
+    let _ = std::thread::Builder::new().name("github-updates".into()).spawn(move || github::watch(watch_dir, watched));
+    log::info!("Teammates: open Dexterity Sheets, choose File > Shared, and pick this server.");
+    Ok(srv)
+}
+
 fn main() {
     let mut args: Vec<String> = std::env::args().skip(1).collect();
     let dir = arg_value(&mut args, "--data").map(PathBuf::from).unwrap_or_else(default_dir);
     let port = arg_value(&mut args, "--port").and_then(|p| p.parse().ok()).unwrap_or(DEFAULT_PORT);
     let host = std::env::var("COMPUTERNAME").unwrap_or_else(|_| "server".into());
-    let name = arg_value(&mut args, "--name").unwrap_or_else(|| format!("Dexterity Sheets on {host}"));
+    let name = arg_value(&mut args, "--name").or_else(|| configured_name(&dir)).unwrap_or_else(|| format!("Dexterity Sheets on {host}"));
     if let Err(e) = std::fs::create_dir_all(&dir) {
         eprintln!("Cannot create the data folder {}: {e}", dir.display());
         std::process::exit(1);
@@ -180,10 +245,20 @@ fn main() {
         );
         return;
     }
-    let file = std::fs::OpenOptions::new().create(true).append(true).open(dir.join("server.log")).ok().map(Mutex::new);
-    if log::set_boxed_logger(Box::new(Logger { file })).is_ok() {
-        log::set_max_level(log::LevelFilter::Info);
+    if args.first().map(String::as_str) == Some("service") {
+        start_logging(&dir);
+        #[cfg(windows)]
+        let r = service::run(dir, name, port);
+        #[cfg(not(windows))]
+        let r: Result<(), String> = Err("the service mode is for Windows".into());
+        if let Err(e) = r {
+            log::error!("{e}");
+            eprintln!("{e}");
+            std::process::exit(1);
+        }
+        return;
     }
+    start_logging(&dir);
     match server::load_users(&dir) {
         Ok(u) if u.is_empty() => {
             println!("No accounts yet. Create the first administrator.");
@@ -203,22 +278,12 @@ fn main() {
             std::process::exit(1);
         }
     }
-    match server::start(dir.clone(), name.clone(), port) {
-        Ok(srv) => {
-            log::info!("{name} listening on TCP port {port}; data in {}", dir.display());
-            match github::load(&dir) {
-                Some(src) => log::info!("app updates: checking GitHub releases of {} (and the updates folder)", src.repo),
-                None => log::info!("app updates: put new installers (.msi) in {}", srv.updates_dir().display()),
-            }
-            let watch_dir = dir.clone();
-            let _ = std::thread::Builder::new().name("github-updates".into()).spawn(move || github::watch(watch_dir, srv));
-            log::info!("Teammates: open Dexterity Sheets, choose File > Shared, and pick this server.");
-            loop {
-                std::thread::park();
-            }
-        }
+    match serve(dir, name, port) {
+        Ok(_srv) => loop {
+            std::thread::park();
+        },
         Err(e) => {
-            eprintln!("Cannot start: {e}. Is another server already using port {port}?");
+            eprintln!("Cannot start: {e}");
             std::process::exit(1);
         }
     }

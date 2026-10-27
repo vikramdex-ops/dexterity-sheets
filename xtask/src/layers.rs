@@ -41,6 +41,7 @@ pub const TABLE: &[(&str, Class)] = &[
     // LAN co-authoring (no UI toolkit); the UI builds on it.
     ("collab", Class::Layer(6)),
     ("server", Class::Layer(7)),
+    ("server-manager", Class::Layer(7)),
     // L7 apps (exempt) and tooling (unchecked)
     ("gridcraft", Class::Layer(7)),
     ("cli", Class::Layer(7)),

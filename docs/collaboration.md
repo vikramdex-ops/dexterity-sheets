@@ -46,21 +46,40 @@ app.
 
 ## Setting up the server (once, by IT)
 
-1. Pick an always-on PC on the office network. Copy `DexSheetsServer.exe` and
-   `Install-Server.ps1` to it.
-2. In an elevated PowerShell in that folder:
-   `powershell -ExecutionPolicy Bypass -File .\Install-Server.ps1`
-   It creates the first administrator, opens TCP 47810 / UDP 47811 for the Domain and Private
-   firewall profiles, and registers a startup task so the server runs after every reboot.
-3. Add teammates:
+No commands are needed; anyone comfortable installing a program can do it.
 
-   ```
-   & "C:\Program Files\Dexterity Sheets Server\DexSheetsServer.exe" --data "C:\ProgramData\Dexterity Sheets\Server" user add anita --display "Anita Rao" --role editor
-   ```
+1. Pick an always-on PC on the office network. Download **`DexSheetsServer-Setup.exe`** from the
+   latest release and run it (Windows asks for administrator rights once). It installs:
+   - the server as the Windows service **Dexterity Sheets Server**: starts with Windows, runs in
+     the background without anyone signed in, and restarts itself if it ever stops;
+   - Windows Firewall rules for TCP 47810 (workbooks) and UDP 47811 (finding the server), for the
+     Domain and Private profiles only, never Public;
+   - the **Dexterity Sheets Server Manager** (Start menu), which opens when setup finishes;
+   - the data folder `C:\ProgramData\Dexterity Sheets\Server`, readable only by SYSTEM and
+     Administrators because it holds the accounts.
+   An older script-based install (`Install-Server.ps1`) is replaced cleanly, data included.
+2. In the Server Manager, create the first administrator.
+3. Add the team on **People** (one at a time) or **Add many people**:
+   - type them into the list, or paste rows copied from Excel (User name, Full name, Role,
+     Password);
+   - or click **Download template**, fill in the *People* sheet (one person per row; the *How to
+     fill this in* sheet explains each column), and **Import from file** (`.xlsx`, `.xls`, `.ods`,
+     `.csv` or `.tsv`). Columns can be in any order; "Name", "Login", "Access" and similar
+     headings are recognised;
+   - every row is checked first: user name rules, duplicates in the list or on the server, the
+     role, password length. Nothing is created until every row is right. An empty user name is
+     made from the full name (`anita.rao`); an empty password becomes a readable one;
+   - after **Create**, save the **sign-in sheet** (an `.xlsx` with each person's user name,
+     password and the server name) to hand out, and delete it once everyone has signed in.
+4. Keep backups: **Backup and restore › Back up** writes one `.zip` with everything. Restoring
+   stops the server for a moment and keeps the data it replaces beside it.
 
-   Other commands: `user list`, `user passwd NAME`, `user role NAME admin|editor|viewer`,
-   `user disable NAME`, `user enable NAME`. Changes apply at the person's next sign-in.
-4. **Back up** `C:\ProgramData\Dexterity Sheets\Server` with the office's normal backups.
+The Server Manager also starts, stops and restarts the server, shows its log, the addresses
+teammates can type, the firewall state (with a button to open it), resets passwords (shown once),
+changes roles, disables or removes people (never the last administrator), and manages app updates
+(below). Unattended installs: `DexSheetsServer-Setup.exe /quiet` or
+`msiexec /i DexSheetsServer-<version>-x64.msi /qn`. The same account commands are available
+for scripts: `DexSheetsServer.exe user add|passwd|role|disable|enable|list` (run `--help`).
 
 ### What is on the server's disk
 

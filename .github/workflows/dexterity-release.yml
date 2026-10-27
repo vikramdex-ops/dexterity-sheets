@@ -2,8 +2,11 @@ name: Dexterity Release
 
 # Builds, proves and publishes a Dexterity Sheets release (tag v<packaging/dexterity/VERSION>):
 #   build    Windows: the full CI first (unless the caller already ran it), then
-#            DexteritySheets-Setup.exe, the .msi, the portable zip and the server bundle;
-#            the installer smoke test (both installers install, start, calculate, uninstall);
+#            DexteritySheets-Setup.exe, the .msi, the portable zip, and the office server's
+#            DexSheetsServer-Setup.exe and .msi (Windows service + Server Manager);
+#            the installer smoke tests (the app's two installers install, start, calculate,
+#            uninstall; the server's two install a running service, open the firewall for the
+#            office network, lock the data folder, open the Server Manager, uninstall keeping data);
 #            fresh screenshots and the README demo animation from the released build.
 #   publish  checksums verified, a draft release with every file, the upload checked, and only
 #            then the release made public and "latest" (office servers never see a half release).
@@ -80,28 +83,23 @@ jobs:
           targets: x86_64-pc-windows-msvc
       - uses: Swatinem/rust-cache@v2
         if: steps.v.outputs.skip != 'true'
-      - name: Install WiX 5
+      - name: Install WiX 5 (with the Util and Firewall extensions the server installer uses)
         if: steps.v.outputs.skip != 'true'
-        run: dotnet tool install --global wix --version 5.0.2
+        run: |
+          dotnet tool install --global wix --version 5.0.2
+          wix extension add -g WixToolset.Util.wixext/5.0.2 WixToolset.Firewall.wixext/5.0.2
       - name: Build Setup.exe, MSI and portable zip
         if: steps.v.outputs.skip != 'true'
         shell: pwsh
         env:
           DIST: dist
         run: ./packaging/windows/package.ps1 -Arch x64
-      - name: Server bundle
-        if: steps.v.outputs.skip != 'true'
-        shell: pwsh
-        run: |
-          $v = '${{ steps.v.outputs.version }}'
-          $s = "dist/DexSheetsServer-$v-x64"
-          New-Item -ItemType Directory -Force $s | Out-Null
-          Copy-Item target/x86_64-pc-windows-msvc/release/DexSheetsServer.exe, packaging/dexterity/Install-Server.ps1, docs/collaboration.md, LICENSE-MIT, LICENSE-APACHE, NOTICE $s
-          Compress-Archive -Path $s -DestinationPath "$s.zip"
-          Remove-Item -Recurse $s
       - name: Installer smoke test (Setup.exe and MSI install, start, calculate, uninstall)
         if: steps.v.outputs.skip != 'true'
         run: python packaging/dexterity/tests/installer_smoke.py dist ${{ steps.v.outputs.version }}
+      - name: Server installer smoke test (service, firewall, data folder, Server Manager, uninstall)
+        if: steps.v.outputs.skip != 'true'
+        run: python packaging/dexterity/tests/server_installer_smoke.py dist ${{ steps.v.outputs.version }}
       - name: Checksums
         if: steps.v.outputs.skip != 'true'
         shell: pwsh
@@ -126,6 +124,7 @@ jobs:
           python -m pip install --quiet pillow
           python packaging/dexterity/tests/screenshots.py target/x86_64-pc-windows-msvc/release
           python packaging/dexterity/make_demo.py tests/out/demo-frames media/demo.webp
+          python packaging/dexterity/tests/server_manager_shots.py target/x86_64-pc-windows-msvc/release media
       - uses: actions/upload-artifact@v4
         if: steps.v.outputs.skip != 'true'
         with:
@@ -178,7 +177,7 @@ jobs:
           echo "VERSION=$v" >> "$GITHUB_ENV"
           cd dist
           sha256sum -c SHA256SUMS
-          for f in DexteritySheets-Setup.exe "dexterity-sheets-$v-windows-x64.msi" "dexterity-sheets-$v-windows-x64-portable.zip" "DexSheetsServer-$v-x64.zip" SHA256SUMS; do
+          for f in DexteritySheets-Setup.exe "dexterity-sheets-$v-windows-x64.msi" "dexterity-sheets-$v-windows-x64-portable.zip" DexSheetsServer-Setup.exe "DexSheetsServer-$v-x64.msi" SHA256SUMS; do
             test -s "$f" || { echo "::error::missing $f"; exit 1; }
           done
           ls -l
@@ -226,11 +225,13 @@ jobs:
           python -m pip install --quiet pillow
           media=""; [ -d media ] && media="--media media"
           python packaging/dexterity/update_docs.py $media --notes notes/notes.md
+          v=$(tr -d '[:space:]' < packaging/dexterity/VERSION)
+          python packaging/dexterity/changes.py roll "$v"
       - name: Commit to main
         run: |
           git config user.name "dexterity-sync[bot]"
           git config user.email "dexterity-sync@users.noreply.github.com"
-          git add README.md docs/images docs/readme
+          git add README.md docs/images docs/readme packaging/dexterity/CHANGES.md
           if git diff --cached --quiet; then echo "README and pictures already current."; exit 0; fi
           v=$(tr -d '[:space:]' < packaging/dexterity/VERSION)
           git commit -m "Docs: refresh README and screenshots for $v"

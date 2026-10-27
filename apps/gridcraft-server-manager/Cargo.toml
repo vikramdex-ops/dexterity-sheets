@@ -1,0 +1,32 @@
+[package]
+name = "gridcraft-server-manager"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+description = "Dexterity Sheets Server Manager: the office server's control panel for IT (people, bulk import, service, updates, backups)"
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "DexSheetsServerManager"
+path = "src/main.rs"
+
+[dependencies]
+gridcraft-collab = { workspace = true }
+gridcraft-engine = { workspace = true }
+eframe = { workspace = true, features = ["default_fonts", "wgpu", "accesskit"] }
+egui = { workspace = true }
+image = { workspace = true }
+rfd = { workspace = true }
+serde_json = { workspace = true }
+zip = { workspace = true }
+chrono = { workspace = true, features = ["clock"] }
+
+[target.'cfg(windows)'.dependencies]
+# Starts, stops and reads the state of the server's Windows service.
+windows-service = "0.8"
+
+[build-dependencies]
+winresource = "0.1"

@@ -421,6 +421,10 @@ code { font: .9em/1 Consolas, "Cascadia Mono", ui-monospace, monospace; backgrou
 .dl-meta { color: #a9c4f5; margin: 8px 0 26px; }
 .dl-panel .btn-solid { background: linear-gradient(#ffffff, #dfe9ff); color: #0d3b8c; }
 .dl-note { color: #cfdcf6; font-size: 15.5px; margin-top: 20px; max-width: 34em; }
+.dl-new { font-size: 18px; margin-top: 28px; }
+.dl-whatsnew { margin-top: 12px; color: #e3ecfb; font-size: 15px; max-width: 36em; }
+.dl-whatsnew a, .dl-whatsnew b { color: #fff; }
+.dl-whatsnew code { background: rgba(255, 255, 255, .1); color: #fff; }
 .dl-options { display: grid; gap: 18px; align-content: center; }
 .dl-opt { background: rgba(255, 255, 255, .07); border: 1px solid rgba(255, 255, 255, .14); border-radius: 18px; padding: 22px 24px; }
 .dl-opt h3 { font-size: 19px; margin-bottom: 8px; }

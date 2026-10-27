@@ -6,6 +6,8 @@
   Produces, in $env:DIST (default: dist/release):
     dexterity-sheets-<version>-windows-<arch>.msi            per-user installer (WiX v5)
     DexteritySheets-Setup.exe                                the same installer as a double-click .exe (x64)
+    DexSheetsServer-<version>-x64.msi                        the office server: Windows service + Server Manager (x64)
+    DexSheetsServer-Setup.exe                                the same server installer as a double-click .exe (x64)
     dexterity-sheets-<version>-windows-<arch>-portable.zip   DexteritySheets.exe + gridcraft-cli.exe
 
   The binaries link the C runtime statically (+crt-static), so neither the MSI nor the portable
@@ -71,7 +73,7 @@ if (-not $SkipBuild) {
   [Environment]::SetEnvironmentVariable($flagVar, '-C target-feature=+crt-static')
   # Fail the build (rather than warn) if the icon/VERSIONINFO can't be embedded.
   $env:GRIDCRAFT_REQUIRE_WINRES = '1'
-  Invoke-Native "cargo build ($Target)" { cargo build --release --locked -p gridcraft -p gridcraft-cli -p gridcraft-server --target $Target }
+  Invoke-Native "cargo build ($Target)" { cargo build --release --locked -p gridcraft -p gridcraft-cli -p gridcraft-server -p gridcraft-server-manager --target $Target }
 }
 
 $Bin = Join-Path $TargetDir "$Target\release"
@@ -141,6 +143,45 @@ if ($Arch -eq 'x64') {
   $h = Get-PeHeader $Setup
   if ($h.Machine -ne $Machine -or $h.Subsystem -ne 2) { throw "DexteritySheets-Setup.exe: machine 0x$('{0:X}' -f $h.Machine), subsystem $($h.Subsystem)" }
   & (Join-Path $PSScriptRoot 'sign.ps1') $Setup
+}
+
+# ---- server: MSI and setup exe -----------------------------------------------------------------
+# The office server (DexSheetsServer.exe, a console program that runs as a Windows service) and its
+# control panel (DexSheetsServerManager.exe, a window), for the one always-on office PC.
+if ($Arch -eq 'x64') {
+  foreach ($check in @(@('DexSheetsServer.exe', 3), @('DexSheetsServerManager.exe', 2))) {
+    $h = Get-PeHeader (Join-Path $Bin $check[0])
+    if ($h.Machine -ne $Machine -or $h.Subsystem -ne $check[1]) { throw "$($check[0]): machine 0x$('{0:X}' -f $h.Machine), subsystem $($h.Subsystem)" }
+  }
+  $ServerStage = Join-Path $TargetDir 'windows-package\server'
+  Remove-Item -Recurse -Force $ServerStage -ErrorAction SilentlyContinue
+  New-Item -ItemType Directory -Force -Path $ServerStage | Out-Null
+  Copy-Item (Join-Path $Bin 'DexSheetsServer.exe'), (Join-Path $Bin 'DexSheetsServerManager.exe') $ServerStage
+  & (Join-Path $PSScriptRoot 'sign.ps1') (Join-Path $ServerStage 'DexSheetsServer.exe') (Join-Path $ServerStage 'DexSheetsServerManager.exe')
+  $ServerDocs = Join-Path $ServerStage 'docs'
+  New-Item -ItemType Directory -Force -Path $ServerDocs | Out-Null
+  Copy-Item -LiteralPath (Join-Path $Root 'NOTICE'), (Join-Path $Root 'ATTRIBUTION.md'), (Join-Path $Root 'docs\collaboration.md'), (Join-Path $Root 'LICENSE-MIT'), (Join-Path $Root 'LICENSE-APACHE') -Destination $ServerDocs
+  $ServerMsi = Join-Path $Dist "DexSheetsServer-$Version-x64.msi"
+  Invoke-Native 'wix build (server)' {
+    wix build (Join-Path $PSScriptRoot 'server.wxs') -arch x64 -ext WixToolset.Util.wixext -ext WixToolset.Firewall.wixext `
+      -d "Version=$MsiVersion" -d "BinDir=$ServerStage" -d "IconPath=$(Join-Path $Root 'assets\app-icon\dexterity-sheets.ico')" -d "DocsDir=$ServerDocs" `
+      -o $ServerMsi
+  }
+  Remove-Item -Force -ErrorAction SilentlyContinue ([IO.Path]::ChangeExtension($ServerMsi, '.wixpdb'))
+  & (Join-Path $PSScriptRoot 'sign.ps1') $ServerMsi
+  $env:DEXSHEETS_SETUP_MSI = $ServerMsi
+  $env:DEXSHEETS_SETUP_PRODUCT = 'Dexterity Sheets Server'
+  $env:DEXSHEETS_SETUP_STEM = 'DexSheetsServer'
+  $env:DEXSHEETS_SETUP_EXE = 'DexSheetsServer-Setup'
+  Invoke-Native 'cargo build (server setup exe)' {
+    cargo build --release --locked --manifest-path (Join-Path $PSScriptRoot 'setup\Cargo.toml') --target $Target --target-dir (Join-Path $TargetDir 'setup-server')
+  }
+  Remove-Item Env:DEXSHEETS_SETUP_PRODUCT, Env:DEXSHEETS_SETUP_STEM, Env:DEXSHEETS_SETUP_EXE
+  $ServerSetup = Join-Path $Dist 'DexSheetsServer-Setup.exe'
+  Copy-Item -Force (Join-Path $TargetDir "setup-server\$Target\release\DexteritySheets-Setup.exe") $ServerSetup
+  $h = Get-PeHeader $ServerSetup
+  if ($h.Machine -ne $Machine -or $h.Subsystem -ne 2) { throw "DexSheetsServer-Setup.exe: machine 0x$('{0:X}' -f $h.Machine), subsystem $($h.Subsystem)" }
+  & (Join-Path $PSScriptRoot 'sign.ps1') $ServerSetup
 }
 
 # ---- portable zip ------------------------------------------------------------------------------

@@ -44,6 +44,7 @@ UPSTREAM_BRANCH = "main"
 OURS = [
     "crates/collab/*",
     "apps/gridcraft-server/*",
+    "apps/gridcraft-server-manager/*",
     "crates/ui-egui/src/collab_ui.rs",
     "packaging/dexterity/*",
     "packaging/windows/setup/*",

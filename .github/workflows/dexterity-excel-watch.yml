@@ -1,0 +1,93 @@
+name: Excel release watch
+
+# RULES.md §2.2: every new Microsoft Excel release (Microsoft 365 Current Channel, public release
+# notes) becomes an `excel-release` issue listing its Excel items, checked against the parity audit.
+# With the ANTHROPIC_API_KEY secret set, an agent is asked to implement the new items as a pull
+# request; that PR must pass every check (CI, end-to-end, installers, performance) before anyone
+# merges it, and nothing reaches users until it is released. Clean-room: public documentation only.
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+  id-token: write
+
+concurrency:
+  group: excel-watch
+  cancel-in-progress: false
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    outputs:
+      issues: ${{ steps.issues.outputs.list }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - name: Read Microsoft's release notes
+        run: python3 packaging/dexterity/excel_watch.py
+      - name: One issue per new Excel version
+        id: issues
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh label create excel-release --color 1f6f43 --description "A new Microsoft Excel release to match" 2>/dev/null || true
+          list=""
+          for f in excel-watch/*.md; do
+            [ -e "$f" ] || continue
+            title=$(head -1 "$f")
+            if gh issue list --label excel-release --state all --search "\"$title\" in:title" --json number --jq '.[0].number' | grep -q .; then
+              echo "already filed: $title"; continue
+            fi
+            url=$(tail -n +2 "$f" | gh issue create --title "$title" --label excel-release --body-file -)
+            echo "filed $url"
+            list="$list $url"
+          done
+          echo "list=$list" >> "$GITHUB_OUTPUT"
+      - name: Remember what was seen
+        run: |
+          git config user.name "dexterity-sync[bot]"
+          git config user.email "dexterity-sync@users.noreply.github.com"
+          git add packaging/dexterity/excel-releases.json
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m "Excel watch: record the release notes seen [no-user-change]"
+          for i in 1 2 3; do git push origin HEAD:main && exit 0; git pull --rebase origin main; done
+          exit 1
+
+  implement:
+    needs: watch
+    if: needs.watch.outputs.issues != ''
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check for an API key
+        id: key
+        env:
+          K: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: echo "present=$([ -n "$K" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+      - name: No key, no agent
+        if: steps.key.outputs.present != 'true'
+        run: echo "::notice::ANTHROPIC_API_KEY is not set, so the new Excel items stay as issues for a person:${{ needs.watch.outputs.issues }}"
+      - uses: actions/checkout@v4
+        if: steps.key.outputs.present == 'true'
+        with:
+          ref: main
+          fetch-depth: 0
+      - uses: anthropics/claude-code-action@v1
+        if: steps.key.outputs.present == 'true'
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: |
+            Read RULES.md and CLAUDE.md first and follow them. New Microsoft Excel releases were filed as
+            these issues:${{ needs.watch.outputs.issues }}
+            For each item: decide from Microsoft's public description whether Dexterity Sheets already has
+            it, should get it, or it does not apply (cloud-only, Microsoft account, Copilot, sensitivity
+            labels and other Microsoft services do not apply to an offline office spreadsheet). Implement
+            the ones that apply, clean-room, as engine commands with tests, on a new branch
+            `excel/<version>`. Update docs/dexterity-parity-audit.md, packaging/dexterity/CHANGES.md
+            (Unreleased), README.md and site/index.html where the feature is described. Comment on each
+            issue with the outcome of every item. Open one pull request into main per issue; never merge it.

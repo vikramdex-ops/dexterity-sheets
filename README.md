@@ -85,6 +85,10 @@
 <td width="50%" valign="top"><img src="docs/images/dark-insert.png" alt="The sales dashboard in dark mode with the Insert ribbon tab open"><p align="center"><sub><b>Dark mode</b> and the Insert tab: tables, charts, sparklines, pictures, shapes, links and comments.</sub></p></td>
 <td width="50%" valign="top"><img src="docs/images/budget.png" alt="A household budget with accounting formats, highlights, a colour scale and a bar chart"><p align="center"><sub><b>Formatting.</b> Number formats (with Indian 12,34,567 grouping and dd-mm dates, like Excel on your PC), cell styles, colour scales.</sub></p></td>
 </tr>
+<tr>
+<td width="50%" valign="top"><img src="docs/images/server-people.png" alt="Dexterity Sheets Server Manager, People page: everyone who can sign in, with role drop-downs, Reset password, Disable and Remove"><p align="center"><sub><b>Server Manager for IT.</b> Add people, change roles, reset passwords, disable or remove: no commands to type.</sub></p></td>
+<td width="50%" valign="top"><img src="docs/images/server-updates.png" alt="Server Manager, App updates page: fetch new versions from GitHub automatically, or add an installer by hand"><p align="center"><sub><b>Updates for every PC.</b> The server fetches each new version and offers it to every Dexterity Sheets on the network.</sub></p></td>
+</tr>
 </table>
 
 ## What's new
@@ -201,39 +205,45 @@ From the [latest release](../../releases/latest):
 | `DexteritySheets-Setup.exe` | The installer for everyone: double-click. Per-user, no administrator rights, no extra runtimes. `/quiet` or `/passive` for silent installs, `/log <file>` for a log. |
 | `dexterity-sheets-<version>-windows-x64.msi` | The same installer as an MSI, for deployment tools: `msiexec /i … /qn` |
 | `dexterity-sheets-<version>-windows-x64-portable.zip` | Runs without installing |
-| `DexSheetsServer-<version>-x64.zip` | The office server: one always-on PC per office |
+| `DexSheetsServer-Setup.exe` | The office server, for the one always-on PC: double-click. Installs the server as a Windows service and the **Server Manager**. `/quiet` for silent installs. |
+| `DexSheetsServer-<version>-x64.msi` | The same server installer as an MSI, for deployment tools |
 | `SHA256SUMS` | Checksums of all of the above |
 
 Before any release is published it has passed the full test suite, a live three-window
-co-editing test, and an installer test that installs both installers, starts the app, checks a
-calculation and uninstalls them.
+co-editing test, and installer tests: the app's two installers are installed, started, asked to
+calculate and uninstalled; the server's two are installed, checked for a running service, the
+firewall rules and a locked data folder, opened in the Server Manager, and uninstalled.
 </details>
 
-<details>
-<summary><b>Setting up the office server (once)</b></summary>
+<details open>
+<summary><b>Setting up the office server (once, no commands)</b></summary>
 
-```powershell
-# On the server PC, in an elevated PowerShell, in the unzipped folder:
-powershell -ExecutionPolicy Bypass -File .\Install-Server.ps1
-# creates the first administrator, opens TCP 47810 / UDP 47811 for the LAN only,
-# and starts the server at every boot
+1. On the office PC that stays on, run **`DexSheetsServer-Setup.exe`** from the
+   [latest release](../../releases/latest) and click **Install** (Windows asks for administrator
+   rights once). It installs the server as a Windows service that starts with Windows and
+   restarts itself if it ever stops, and opens the firewall for the office network only.
+2. The **Dexterity Sheets Server Manager** opens. Create the first administrator account.
+3. Add your team on the **People** page, one by one, or many at once on **Add many people**:
+   type them into the list, paste rows copied from Excel, or click **Download template**, fill
+   it in, and **Import from file**. Every row is checked before anything is created; passwords
+   left empty are made for you. Then **Save the sign-in sheet** to hand the passwords out.
 
-# add teammates
-& "C:\Program Files\Dexterity Sheets Server\DexSheetsServer.exe" --data "C:\ProgramData\Dexterity Sheets\Server" user add anita --display "Anita Rao" --role editor
-```
+<p align="center"><img src="docs/images/server-add-many.png" width="100%" alt="Server Manager, Add many people: a filled-in template imported, each row checked; rows that need fixing say why"></p>
 
-Roles: `admin` (everything), `editor` (edit, create and share; delete own workbooks), `viewer`
-(read only). Full guide: [docs/collaboration.md](docs/collaboration.md).
+Everything else is in the Server Manager too, so the job can be handed to anyone:
 
-**Automatic updates for every PC:** put `update-source.json` in the server's data folder:
+| Page | What it does |
+|---|---|
+| **Server** | Running or stopped, with Start / Stop / Restart; the name, computer name and addresses teammates use; whether the firewall is open (and a button to open it); the data folder and its size; the server log |
+| **People** | Everyone who can sign in: change a role, reset a password (a readable one is made and shown once), disable or remove. The last administrator can't be locked out. |
+| **Add many people** | The bulk list described above |
+| **App updates** | Fetch new versions of Dexterity Sheets from this GitHub repository automatically, or add an `.msi` by hand; every PC on the network is offered it |
+| **Backup and restore** | One `.zip` with every account, shared workbook, edit history and version; restoring keeps the data it replaces |
 
-```json
-{"repo": "vikramdex-ops/dexterity-sheets"}
-```
-
-The server checks for new releases every 30 minutes, verifies the download against
-`SHA256SUMS`, and offers it to every Dexterity Sheets on the network, so PCs never need internet
-access. You can also drop an `.msi` into the server's `updates` folder by hand.
+Roles: **Editor** (edit, create and share), **Viewer** (read only), **Administrator** (also
+manages shared workbooks). The data lives in `C:\ProgramData\Dexterity Sheets\Server`, readable
+only by administrators; uninstalling never deletes it. Full guide:
+[docs/collaboration.md](docs/collaboration.md).
 </details>
 
 <details>
@@ -285,7 +295,8 @@ An engine-first Rust workspace (from GridCraft) with Dexterity's layer on top:
 | `core`, `numfmt`, `formula`, `functions`, `model`, `calc`, `xlsx`, `chart`, `engine` | the spreadsheet: values, number formats (now with regional settings), parser, 500+ functions, copy-on-write workbook model, dependency-graph recalculation, XLSX/CSV, charts, the command registry |
 | `ui-egui`, `apps/gridcraft` | the Windows desktop app (`DexteritySheets.exe`) |
 | **`collab`** | LAN co-authoring: workbook diff/patch, the wire protocol, client, server, discovery, accounts, audit trail, versions, update distribution |
-| **`apps/gridcraft-server`** | `DexSheetsServer.exe`: accounts CLI, the server, GitHub release fetcher |
+| **`apps/gridcraft-server`** | `DexSheetsServer.exe`: the server (as a Windows service), accounts CLI, GitHub release fetcher |
+| **`apps/gridcraft-server-manager`** | `DexSheetsServerManager.exe`: the server's control panel (people, bulk import from a template, service, firewall, updates, backups) |
 | **`ui-egui/src/collab_ui.rs`** | everything sharing looks like in the window |
 
 **How live editing works.** Each window compares its workbook with the last state it
@@ -311,7 +322,8 @@ Every 6 hours the **Upstream sync** workflow checks
 3. **Tests** that exact candidate: format, lint, every engine test, the collaboration tests, and
    three app windows editing one workbook live.
 4. **Builds and tries the installers:** `DexteritySheets-Setup.exe` and the `.msi` are each
-   installed, started, asked to calculate, and uninstalled.
+   installed, started, asked to calculate, and uninstalled; the server's `DexSheetsServer-Setup.exe`
+   and `.msi` are installed as a running service, checked, and uninstalled.
 5. **Releases** it (draft → upload → verify → publish), then refreshes this README, the
    screenshots, the demo animation and the [website](https://vikramdex-ops.github.io/dexterity-sheets/). Every PC is offered the update.
 6. Anything that needs judgement becomes a pull request or an issue for a person. Nothing
@@ -322,16 +334,35 @@ Versions: `packaging/dexterity/VERSION` is Dexterity Sheets'; `Cargo.toml` keeps
 </details>
 
 <details>
+<summary><b>The rules, and the guards that enforce them</b></summary>
+
+[`RULES.md`](RULES.md) is binding for every change, by people, workflows or AI agents. What
+enforces it:
+
+| Guard | When | What it stops |
+|---|---|---|
+| **Upstream sync** | every 6 hours | GridCraft changes reaching users untested: each is merged on a candidate, fully tested, built and installer-tested before release |
+| **Excel watch** ([workflow](.github/workflows/dexterity-excel-watch.yml)) | daily | a new Microsoft Excel release going unnoticed: each one becomes an `excel-release` issue listing its Excel items, and with an `ANTHROPIC_API_KEY` secret an agent proposes the implementation as a pull request |
+| **Docs check** ([`docs_check.py`](packaging/dexterity/docs_check.py)) | every push and PR | a user-visible change without a [`CHANGES.md`](packaging/dexterity/CHANGES.md) line; the README or landing page naming a file a release doesn't ship; broken images and links; "coming soon" or placeholder text in the app |
+| **Performance gate** ([`perf_gate.py`](packaging/dexterity/tests/perf_gate.py), [budgets](packaging/dexterity/perf-budget.json)) | every push and release | start-up, memory, idle CPU, typing, opening and scrolling a 2-million-cell file, memory given back after closing |
+| **Installer tests** | every release | an installer that doesn't install, start, work and uninstall cleanly (app and server) |
+
+`CHANGES.md` is written once per change; the release notes, this README's "What's new" and the
+landing page are generated from it.
+</details>
+
+<details>
 <summary><b>Building and testing</b></summary>
 
 Rust 1.95+ with the MSVC toolchain; WiX 5 for the installer.
 
 ```powershell
-cargo build --release -p gridcraft -p gridcraft-server -p gridcraft-cli
-#   target\release\DexteritySheets.exe   the app
-#   target\release\DexSheetsServer.exe   the office server
+cargo build --release -p gridcraft -p gridcraft-server -p gridcraft-server-manager -p gridcraft-cli
+#   target\release\DexteritySheets.exe         the app
+#   target\release\DexSheetsServer.exe         the office server
+#   target\release\DexSheetsServerManager.exe  its control panel
 #   target\release\gridcraft-cli.exe     headless CLI (eval, convert, run commands)
-pwsh packaging/windows/package.ps1 -Arch x64     # Setup.exe + MSI + portable zip, static C runtime
+pwsh packaging/windows/package.ps1 -Arch x64     # app and server Setup.exe + MSI, portable zip
 ```
 
 Tests:
@@ -341,6 +372,8 @@ cargo test --release -p gridcraft-collab                         # patches, conv
 py -3 packaging/dexterity/tests/lan_e2e.py target/release        # 3 windows + server, 19 checks
 py -3 packaging/dexterity/tests/update_e2e.py old.msi new.msi target/release/DexSheetsServer.exe work
 py -3 packaging/dexterity/tests/installer_smoke.py dist 1.2.3   # both installers: install, start, uninstall
+py -3 packaging/dexterity/tests/server_installer_smoke.py dist 1.2.3   # server installers (as administrator)
+py -3 packaging/dexterity/tests/server_manager_shots.py target/release media   # Server Manager screenshots
 py -3 packaging/dexterity/tests/screenshots.py target/release    # regenerates docs/images + demo frames
 py -3 packaging/dexterity/make_demo.py                           # docs/readme/demo.webp from the frames
 ```

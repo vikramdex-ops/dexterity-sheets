@@ -281,3 +281,13 @@ fn two_people_edit_through_a_real_server() {
     drop(again);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn only_app_installers_reach_office_pcs() {
+    use crate::server::is_app_installer;
+    assert!(is_app_installer("dexterity-sheets-1.2.0-windows-x64.msi"));
+    assert!(is_app_installer("DexteritySheets-1.2.0-x64.MSI"));
+    assert!(!is_app_installer("DexSheetsServer-1.2.0-x64.msi"), "the server's own installer is never offered");
+    assert!(!is_app_installer("DexteritySheets-Setup.exe"));
+    assert!(!is_app_installer("dexterity-sheets-1.2.0-windows-x64.msi.part"));
+}

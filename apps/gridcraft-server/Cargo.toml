@@ -15,10 +15,14 @@ path = "src/main.rs"
 
 [dependencies]
 gridcraft-collab = { workspace = true }
-log = { workspace = true }
+log = { workspace = true, features = ["std"] }
 rpassword = "7"
 reqwest = { version = "0.13", features = ["blocking"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = { workspace = true }
 chrono = { workspace = true, features = ["clock"] }
+
+[target.'cfg(windows)'.dependencies]
+# Runs as a Windows service (started at boot, restarted on failure) when the installer sets it up.
+windows-service = "0.8"

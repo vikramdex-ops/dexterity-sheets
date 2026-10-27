@@ -2,9 +2,9 @@
 
     python packaging/dexterity/release_notes.py <version> <out.md> [--checks]
 
-Facts only, all from git: which files to download, the GridCraft changes this release brings in
-(upstream pull requests merged since the previous release, with links), and Dexterity's own
-changes. `--checks` adds the list of automatic checks the release passed; the release workflow
+Facts only: which files to download, what changed for users (packaging/dexterity/CHANGES.md),
+the GridCraft changes this release brings in (upstream pull requests merged since the previous
+release, with links), and, when CHANGES.md has nothing, Dexterity's own commits. `--checks` adds the list of automatic checks the release passed; the release workflow
 passes it only after they ran.
 """
 import datetime
@@ -12,6 +12,9 @@ import os
 import re
 import subprocess
 import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import changes  # noqa: E402
 
 UPSTREAM_REPO = "https://github.com/storytold/gridcraft"
 REPO = "https://github.com/" + os.environ.get("GITHUB_REPOSITORY", "vikramdex-ops/dexterity-sheets")
@@ -84,6 +87,7 @@ def main():
     upstream = upstream_ref()
     ups = upstream_changes(prev, upstream)
     own = own_changes(prev, upstream)
+    news = changes.items(version)
     date = datetime.date.today().strftime("%d %b %Y")
     lines = [
         f"**Dexterity Sheets {version}** · {date} · based on GridCraft {gridcraft_version()}",
@@ -97,18 +101,21 @@ def main():
         "| **DexteritySheets-Setup.exe** | Everyone: download, double-click, done. No administrator rights needed. |",
         f"| `dexterity-sheets-{version}-windows-x64.msi` | IT: the same installer for deployment tools (`msiexec /i … /qn`). |",
         f"| `dexterity-sheets-{version}-windows-x64-portable.zip` | Run without installing (USB stick, test PC). |",
-        f"| `DexSheetsServer-{version}-x64.zip` | The office server: once per office, by IT ([guide]({REPO}/blob/main/docs/collaboration.md)). |",
+        f"| `DexSheetsServer-Setup.exe` | The office server, for IT, once per office: installs the server as a Windows service and the Server Manager (people, bulk import, updates, backups) ([guide]({REPO}/blob/main/docs/collaboration.md)). |",
+        f"| `DexSheetsServer-{version}-x64.msi` | The same server installer for deployment tools. |",
         "| `SHA256SUMS` | Checksums of every file above. |",
         "",
         "Windows may say *\"Windows protected your PC\"* because the installer is not code-signed yet: click **More info → Run anyway**.",
         "",
     ]
+    if news:
+        lines += ["### What's new in Dexterity Sheets", *news, ""]
     if ups:
         lines += [f"### New from official GridCraft ({len(ups)})", *ups[:60]]
         if len(ups) > 60:
             lines.append(f"- … and {len(ups) - 60} more")
         lines.append("")
-    if own:
+    if own and not news:
         lines += ["### Dexterity Sheets changes", *own[:40], ""]
     if prev:
         lines += [f"All changes: [{prev}…v{version}]({REPO}/compare/{prev}...v{version})", ""]
@@ -119,6 +126,8 @@ def main():
             "- Every engine, formula, file-format and collaboration test",
             "- Three app windows editing one shared workbook live over the network (end to end)",
             "- DexteritySheets-Setup.exe and the .msi each installed, started, calculated a formula and uninstalled cleanly",
+            "- DexSheetsServer-Setup.exe and its .msi each installed a running Windows service (firewall for the office network, data folder locked to administrators), opened in the Server Manager, and uninstalled keeping the data",
+            "- The README, landing page and release notes checked against what this release ships",
             "",
         ]
     os.makedirs(os.path.dirname(os.path.abspath(out)), exist_ok=True)

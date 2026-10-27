@@ -41,6 +41,8 @@ jobs:
           gridcraft=$(sed -n '/^\[workspace\.package\]/,/^\[/{s/^version = "\(.*\)"/\1/p}' Cargo.toml | head -1)
           date=$(date -u +"%-d %B %Y")
           sed -i -e "s/{{VERSION}}/$version/g" -e "s/{{GRIDCRAFT}}/$gridcraft/g" -e "s/{{DATE}}/$date/g" _site/*.html
+          # What's new: this version's items from CHANGES.md, the same list as the README's.
+          python packaging/dexterity/site_whatsnew.py _site/index.html "$version"
           if grep -l '{{' _site/*.html; then echo "::error::unfilled placeholder"; exit 1; fi
           touch _site/.nojekyll
           ls -R _site | head -50

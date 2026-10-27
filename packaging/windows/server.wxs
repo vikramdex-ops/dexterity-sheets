@@ -1,0 +1,188 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Dexterity Sheets Server MSI (WiX Toolset v5 with the Util and Firewall extensions). Built by
+  package.ps1:
+
+    wix build server.wxs -arch x64 -ext WixToolset.Util.wixext -ext WixToolset.Firewall.wixext
+        -d Version=1.2.3 -d BinDir=... -d IconPath=... -d DocsDir=... -o out.msi
+
+  For the one always-on office PC that serves shared workbooks. Per-machine (administrator), into
+  "C:\Program Files\Dexterity Sheets Server":
+    - DexSheetsServer.exe as the Windows service "Dexterity Sheets Server": starts at boot, runs
+      as LocalSystem, restarts itself if it ever stops, stopped and removed on uninstall;
+    - Windows Firewall rules for TCP 47810 (workbooks) and UDP 47811 (discovery), for the Domain
+      and Private (office) network profiles only;
+    - DexSheetsServerManager.exe, the control panel (Start menu), offered at the end of setup to
+      create the first administrator and add the team;
+    - the data folder "C:\ProgramData\Dexterity Sheets\Server", readable only by SYSTEM and
+      Administrators (it holds the accounts). Uninstalling never deletes it.
+  An earlier script-based install (Install-Server.ps1: a scheduled task of the same name) is
+  stopped and removed first, so the two never fight over the port.
+
+  UpgradeCode is fixed for Dexterity Sheets Server (generated 2026-10-27): never change it.
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util"
+     xmlns:fw="http://wixtoolset.org/schemas/v4/wxs/firewall">
+  <Package
+      Name="Dexterity Sheets Server"
+      Manufacturer="Dexterity Design Services Pvt. Ltd."
+      Version="$(var.Version)"
+      UpgradeCode="1AC7B99D-6071-4AED-9BA8-3F6BC29E4C51"
+      Scope="perMachine"
+      InstallerVersion="500"
+      Compressed="yes"
+      Language="1033">
+    <SummaryInformation Description="Dexterity Sheets Server: shared workbooks on the office network" Manufacturer="Dexterity Design Services Pvt. Ltd." />
+    <MajorUpgrade AllowSameVersionUpgrades="yes"
+        DowngradeErrorMessage="A newer version of Dexterity Sheets Server is already installed." />
+    <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
+
+    <Icon Id="ServerIcon.ico" SourceFile="$(var.IconPath)" />
+    <Property Id="ARPPRODUCTICON" Value="ServerIcon.ico" />
+    <Property Id="ARPNOMODIFY" Value="1" />
+
+    <!-- Open the Server Manager when setup finishes (the checkbox on the first page). -->
+    <Property Id="OPENMANAGER" Value="1" Secure="yes" />
+    <Property Id="WixShellExecTarget" Value="[#ManagerExe]" />
+    <CustomAction Id="LaunchManager" BinaryRef="Wix4UtilCA_X64" DllEntry="WixShellExec" Impersonate="yes" Return="ignore" />
+
+    <!-- An earlier script-based install: its scheduled task and process. -->
+    <SetProperty Id="RemoveLegacyTask" Value="&quot;[System64Folder]schtasks.exe&quot; /Delete /TN &quot;Dexterity Sheets Server&quot; /F"
+        Before="RemoveLegacyTask" Sequence="execute" />
+    <CustomAction Id="RemoveLegacyTask" BinaryRef="Wix4UtilCA_X64" DllEntry="WixQuietExec64" Execute="deferred" Impersonate="no" Return="ignore" />
+    <SetProperty Id="StopLegacyServer" Value="&quot;[System64Folder]taskkill.exe&quot; /F /IM DexSheetsServer.exe"
+        Before="StopLegacyServer" Sequence="execute" />
+    <CustomAction Id="StopLegacyServer" BinaryRef="Wix4UtilCA_X64" DllEntry="WixQuietExec64" Execute="deferred" Impersonate="no" Return="ignore" />
+    <InstallExecuteSequence>
+      <Custom Action="RemoveLegacyTask" Before="StopLegacyServer" Condition="NOT REMOVE" />
+      <Custom Action="StopLegacyServer" Before="InstallFiles" Condition="NOT REMOVE" />
+    </InstallExecuteSequence>
+
+    <Property Id="DefaultUIFont" Value="ServerUIFont" />
+    <Property Id="ErrorDialog" Value="ServerErrorDlg" />
+    <EnsureTable Id="ListBox" />
+    <UI>
+      <TextStyle Id="ServerUIFont" FaceName="Segoe UI" Size="9" />
+      <TextStyle Id="ServerTitleFont" FaceName="Segoe UI" Size="12" Bold="yes" />
+      <Dialog Id="ServerWelcomeDlg" Width="370" Height="220" Title="Dexterity Sheets Server Setup" NoMinimize="yes">
+        <Control Id="Heading" Type="Text" X="15" Y="12" Width="340" Height="22" Text="{\ServerTitleFont}Install Dexterity Sheets Server" />
+        <Control Id="Description" Type="Text" X="15" Y="40" Width="340" Height="96"
+            Text="Install this on the one office PC that stays on. It keeps the team's shared workbooks, accounts and edit history, and hands new versions of Dexterity Sheets to every PC.&#xD;&#xA;&#xD;&#xA;Setup installs it as a Windows service that starts with Windows, and opens the firewall for the office network only. Your data is kept in C:\ProgramData\Dexterity Sheets\Server." />
+        <Control Id="OpenManager" Type="CheckBox" X="15" Y="142" Width="340" Height="18"
+            Property="OPENMANAGER" CheckBoxValue="1" Text="&amp;Open the Server Manager when setup finishes, to add the team" />
+        <Control Id="Install" Type="PushButton" X="215" Y="188" Width="70" Height="20" Default="yes" ElevationShield="yes" Text="&amp;Install">
+          <Publish Event="EndDialog" Value="Return" />
+        </Control>
+        <Control Id="Cancel" Type="PushButton" X="290" Y="188" Width="65" Height="20" Cancel="yes" Text="Cancel">
+          <Publish Event="EndDialog" Value="Exit" />
+        </Control>
+      </Dialog>
+
+      <Dialog Id="ServerErrorDlg" Width="320" Height="120" Title="Dexterity Sheets Server Setup" ErrorDialog="yes" NoMinimize="yes">
+        <Control Id="ErrorText" Type="Text" X="15" Y="15" Width="290" Height="65" TabSkip="no" />
+        <Control Id="A" Type="PushButton" X="15" Y="90" Width="65" Height="20" Text="Abort" TabSkip="yes"><Publish Event="EndDialog" Value="ErrorAbort" /></Control>
+        <Control Id="C" Type="PushButton" X="15" Y="90" Width="65" Height="20" Text="Cancel" TabSkip="yes"><Publish Event="EndDialog" Value="ErrorCancel" /></Control>
+        <Control Id="I" Type="PushButton" X="15" Y="90" Width="65" Height="20" Text="Ignore" TabSkip="yes"><Publish Event="EndDialog" Value="ErrorIgnore" /></Control>
+        <Control Id="N" Type="PushButton" X="15" Y="90" Width="65" Height="20" Text="No" TabSkip="yes"><Publish Event="EndDialog" Value="ErrorNo" /></Control>
+        <Control Id="O" Type="PushButton" X="15" Y="90" Width="65" Height="20" Text="OK" TabSkip="yes"><Publish Event="EndDialog" Value="ErrorOk" /></Control>
+        <Control Id="R" Type="PushButton" X="15" Y="90" Width="65" Height="20" Text="Retry" TabSkip="yes"><Publish Event="EndDialog" Value="ErrorRetry" /></Control>
+        <Control Id="Y" Type="PushButton" X="15" Y="90" Width="65" Height="20" Text="Yes" TabSkip="yes"><Publish Event="EndDialog" Value="ErrorYes" /></Control>
+      </Dialog>
+      <Dialog Id="FilesInUse" Width="320" Height="190" Title="Dexterity Sheets Server Setup" NoMinimize="yes">
+        <Control Id="Description" Type="Text" X="15" Y="15" Width="290" Height="35"
+            Text="Close the applications listed below (the Server Manager), then choose Retry." />
+        <Control Id="Files" Type="ListBox" X="15" Y="55" Width="290" Height="85" Property="FileInUseProcess" />
+        <Control Id="Retry" Type="PushButton" X="95" Y="155" Width="65" Height="20" Default="yes" Text="Retry"><Publish Event="EndDialog" Value="Retry" /></Control>
+        <Control Id="Ignore" Type="PushButton" X="167" Y="155" Width="65" Height="20" Text="Ignore"><Publish Event="EndDialog" Value="Ignore" /></Control>
+        <Control Id="Cancel" Type="PushButton" X="240" Y="155" Width="65" Height="20" Cancel="yes" Text="Cancel"><Publish Event="EndDialog" Value="Exit" /></Control>
+      </Dialog>
+      <Dialog Id="SetupCompleteDlg" Width="320" Height="120" Title="Dexterity Sheets Server Setup" NoMinimize="yes">
+        <Control Id="Message" Type="Text" X="15" Y="20" Width="290" Height="45"
+            Text="Dexterity Sheets Server is installed and running. Use the Server Manager (Start menu) to add people and see the server's state." />
+        <Control Id="Close" Type="PushButton" X="240" Y="85" Width="65" Height="20" Default="yes" Cancel="yes" Text="Close">
+          <Publish Event="DoAction" Value="LaunchManager" Condition="OPENMANAGER = 1 AND NOT Installed" />
+          <Publish Event="EndDialog" Value="Return" />
+        </Control>
+      </Dialog>
+      <Dialog Id="SetupCanceledDlg" Width="320" Height="110" Title="Dexterity Sheets Server Setup" NoMinimize="yes">
+        <Control Id="Message" Type="Text" X="15" Y="20" Width="290" Height="35" Text="Dexterity Sheets Server setup was canceled. Nothing was changed." />
+        <Control Id="Close" Type="PushButton" X="240" Y="75" Width="65" Height="20" Default="yes" Cancel="yes" Text="Close"><Publish Event="EndDialog" Value="Return" /></Control>
+      </Dialog>
+      <Dialog Id="SetupFailedDlg" Width="320" Height="110" Title="Dexterity Sheets Server Setup" NoMinimize="yes">
+        <Control Id="Message" Type="Text" X="15" Y="20" Width="290" Height="35" Text="Dexterity Sheets Server setup could not finish. See the installer message or log for details." />
+        <Control Id="Close" Type="PushButton" X="240" Y="75" Width="65" Height="20" Default="yes" Cancel="yes" Text="Close"><Publish Event="EndDialog" Value="Return" /></Control>
+      </Dialog>
+    </UI>
+    <InstallUISequence>
+      <Show Dialog="ServerWelcomeDlg" Before="CostInitialize" Condition="NOT Installed AND NOT REMOVE AND UILevel = 5" />
+      <Show Dialog="SetupCompleteDlg" OnExit="success" Condition="UILevel = 5" />
+      <Show Dialog="SetupCanceledDlg" OnExit="cancel" Condition="UILevel = 5" />
+      <Show Dialog="SetupFailedDlg" OnExit="error" Condition="UILevel = 5" />
+    </InstallUISequence>
+    <AdminUISequence>
+      <Show Dialog="SetupCompleteDlg" OnExit="success" Condition="UILevel = 5" />
+      <Show Dialog="SetupCanceledDlg" OnExit="cancel" Condition="UILevel = 5" />
+      <Show Dialog="SetupFailedDlg" OnExit="error" Condition="UILevel = 5" />
+    </AdminUISequence>
+
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="Dexterity Sheets Server" />
+    </StandardDirectory>
+    <StandardDirectory Id="CommonAppDataFolder">
+      <Directory Id="DexCommonData" Name="Dexterity Sheets">
+        <Directory Id="DATAFOLDER" Name="Server" />
+      </Directory>
+    </StandardDirectory>
+    <StandardDirectory Id="ProgramMenuFolder" />
+
+    <Feature Id="Main" Title="Dexterity Sheets Server" Level="1">
+      <ComponentGroupRef Id="ServerFiles" />
+    </Feature>
+  </Package>
+
+  <Fragment>
+    <ComponentGroup Id="ServerFiles" Directory="INSTALLFOLDER">
+      <Component Id="ServerService" Guid="64160005-1C68-43D8-BCC9-02E408FD8AFB">
+        <File Id="ServerExe" Source="$(var.BinDir)\DexSheetsServer.exe" KeyPath="yes">
+          <!-- The office network only (Domain and Private profiles), never Public. -->
+          <fw:FirewallException Id="FwTcpDomain" Name="Dexterity Sheets Server (TCP)" Port="47810" Protocol="tcp" Profile="domain" Scope="any" />
+          <fw:FirewallException Id="FwTcpPrivate" Name="Dexterity Sheets Server (TCP)" Port="47810" Protocol="tcp" Profile="private" Scope="any" />
+          <fw:FirewallException Id="FwUdpDomain" Name="Dexterity Sheets Discovery (UDP)" Port="47811" Protocol="udp" Profile="domain" Scope="any" />
+          <fw:FirewallException Id="FwUdpPrivate" Name="Dexterity Sheets Discovery (UDP)" Port="47811" Protocol="udp" Profile="private" Scope="any" />
+        </File>
+        <ServiceInstall Id="ServerServiceInstall" Name="DexSheetsServer" DisplayName="Dexterity Sheets Server"
+            Description="Shared workbooks, accounts, edit history and app updates for Dexterity Sheets on the office network."
+            Type="ownProcess" Start="auto" ErrorControl="normal" Account="LocalSystem" Arguments="service" Vital="yes">
+          <util:ServiceConfig FirstFailureActionType="restart" SecondFailureActionType="restart" ThirdFailureActionType="restart"
+              RestartServiceDelayInSeconds="30" ResetPeriodInDays="1" />
+        </ServiceInstall>
+        <ServiceControl Id="ServerServiceControl" Name="DexSheetsServer" Start="install" Stop="both" Remove="uninstall" Wait="yes" />
+      </Component>
+
+      <Component Id="ServerManager" Guid="EF09CAF0-B990-403F-8863-2C7CEE96ABCD">
+        <File Id="ManagerExe" Source="$(var.BinDir)\DexSheetsServerManager.exe" KeyPath="yes">
+          <Shortcut Id="ManagerShortcut" Directory="ProgramMenuFolder" Name="Dexterity Sheets Server Manager"
+              Description="Add people, see the server's state, app updates, backups" WorkingDirectory="INSTALLFOLDER" Advertise="no"
+              Icon="ServerIcon.ico" IconIndex="0" />
+        </File>
+      </Component>
+
+      <Component Id="ServerDocs" Guid="DB0AAFFB-A0E6-46EC-B8A8-FA40F758CCDC">
+        <File Id="ServerNotice" Source="$(var.DocsDir)\NOTICE" KeyPath="yes" />
+        <File Id="ServerAttribution" Source="$(var.DocsDir)\ATTRIBUTION.md" />
+        <File Id="ServerGuide" Source="$(var.DocsDir)\collaboration.md" Name="Server guide.md" />
+        <File Id="ServerLicenceMit" Source="$(var.DocsDir)\LICENSE-MIT" />
+        <File Id="ServerLicenceApache" Source="$(var.DocsDir)\LICENSE-APACHE" />
+      </Component>
+
+      <!-- The data folder: SYSTEM and Administrators only (it holds the accounts). Left in place
+           on uninstall, with everything in it. -->
+      <Component Id="ServerData" Directory="DATAFOLDER" Guid="7F21B075-BE7C-4E82-8E38-1A479AD8400D" Permanent="yes">
+        <CreateFolder>
+          <PermissionEx Sddl="D:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)" />
+        </CreateFolder>
+      </Component>
+    </ComponentGroup>
+  </Fragment>
+</Wix>

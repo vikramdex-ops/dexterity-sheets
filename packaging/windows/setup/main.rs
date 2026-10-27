@@ -1,4 +1,5 @@
-//! DexteritySheets-Setup.exe: writes the MSI it carries to a temporary folder, runs Windows
+//! DexteritySheets-Setup.exe (and DexSheetsServer-Setup.exe, the same program carrying the
+//! server's MSI): writes the MSI it carries to a temporary folder, runs Windows
 //! Installer on it (the MSI's own dialogs: desktop shortcut choice, progress, finish) and passes
 //! its exit code back. One product in "Installed apps", the same as installing the .msi directly,
 //! so the in-app updater (which installs .msi files) keeps working for either.
@@ -12,12 +13,22 @@ use std::process::Command;
 
 const MSI: &[u8] = include_bytes!(env!("DEXSHEETS_SETUP_MSI"));
 const VERSION: &str = env!("DEXSHEETS_SETUP_VERSION");
+/// The product, as people see it in messages ("Dexterity Sheets", "Dexterity Sheets Server").
+const PRODUCT: &str = match option_env!("DEXSHEETS_SETUP_PRODUCT") {
+    Some(p) => p,
+    None => "Dexterity Sheets",
+};
+/// The MSI's file name stem while it is unpacked.
+const STEM: &str = match option_env!("DEXSHEETS_SETUP_STEM") {
+    Some(s) => s,
+    None => "dexterity-sheets",
+};
 
 fn main() {
-    let dir = std::env::temp_dir().join("Dexterity Sheets Setup");
-    let msi = dir.join(format!("dexterity-sheets-{VERSION}-windows-x64.msi"));
+    let dir = std::env::temp_dir().join(format!("{PRODUCT} Setup"));
+    let msi = dir.join(format!("{STEM}-{VERSION}-x64.msi"));
     if let Err(e) = std::fs::create_dir_all(&dir).and_then(|()| std::fs::write(&msi, MSI)) {
-        fail(&format!("Dexterity Sheets Setup could not unpack the installer to {}:\n{e}\n\nFree some disk space and run Setup again.", dir.display()));
+        fail(&format!("{PRODUCT} Setup could not unpack the installer to {}:\n{e}\n\nFree some disk space and run Setup again.", dir.display()));
         std::process::exit(1);
     }
     let mut args: Vec<String> = vec!["/i".into(), msi.display().to_string()];
@@ -48,7 +59,7 @@ fn main() {
         Ok(s) => s.code().unwrap_or(1),
         Err(e) => {
             if !quiet {
-                fail(&format!("Dexterity Sheets Setup could not start Windows Installer:\n{e}"));
+                fail(&format!("{PRODUCT} Setup could not start Windows Installer:\n{e}"));
             }
             1
         }
@@ -68,6 +79,6 @@ fn fail(message: &str) {
     let text = message.replace('\'', "''");
     let _ = Command::new(system32(r"WindowsPowerShell\v1.0\powershell.exe"))
         .args(["-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command"])
-        .arg(format!("Add-Type -AssemblyName PresentationFramework; [void][System.Windows.MessageBox]::Show('{text}', 'Dexterity Sheets Setup', 'OK', 'Error')"))
+        .arg(format!("Add-Type -AssemblyName PresentationFramework; [void][System.Windows.MessageBox]::Show('{text}', '{PRODUCT} Setup', 'OK', 'Error')"))
         .status();
 }

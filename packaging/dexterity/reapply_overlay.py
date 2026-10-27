@@ -119,6 +119,14 @@ insert(
     "                    ui.separator();\n",
 )
 
+# ---- Agents read RULES.md first ---------------------------------------------------------------
+insert(
+    "CLAUDE.md",
+    "RULES.md",
+    "# GridCraft — instructions for agents\n\n",
+    '> **Dexterity Sheets:** read [`RULES.md`](RULES.md) first. Its rules (share from anywhere, no placeholders, performance budgets, docs and `CHANGES.md` in the same change, Excel and GridCraft kept current) bind every change here.\n\n',
+)
+
 # ---- File > Shared page ----------------------------------------------------------------------
 B = f"{UI}/backstage.rs"
 replace(B, "    Open,\n    Info,", "    Open,\n    Shared,\n    Info,")

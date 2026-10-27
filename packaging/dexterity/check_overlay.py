@@ -18,6 +18,8 @@ HOOKS = [
     ("Cargo.toml", 'gridcraft-collab = { path = "crates/collab" }', "workspace dependency on the collab crate"),
     ("xtask/src/layers.rs", '("collab", Class::Layer(6))', "layering rule for collab"),
     ("xtask/src/layers.rs", '&["collab", "ui-egui"]', "ui-egui may use collab"),
+    ("xtask/src/layers.rs", '("server-manager", Class::Layer(7))', "layering rule for the Server Manager"),
+    ("CLAUDE.md", "RULES.md", "agents are pointed at RULES.md"),
     ("crates/engine/src/{lib.rs,session.rs,session/*.rs}", "pub fn document_mut(&mut self, uid: u64)", "engine accessor used to apply remote edits"),
     ("crates/ui-egui/Cargo.toml", "gridcraft-collab = { workspace = true }", "UI depends on collab"),
     ("crates/ui-egui/src/lib.rs", "pub mod collab_ui;", "collab UI module"),
