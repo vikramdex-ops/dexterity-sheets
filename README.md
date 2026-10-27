@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <sub><!-- dex:release -->Version <b>1.0.2</b> · 27 October 2026 · based on GridCraft 0.12.1<!-- /dex:release --> · Windows 10 and 11 · no administrator rights needed · updates itself</sub>
+  <sub><!-- dex:release -->Version <b>1.1.0</b> · 27 October 2026 · based on GridCraft 0.12.1<!-- /dex:release --> · Windows 10 and 11 · no administrator rights needed · updates itself</sub>
 </p>
 
 <p align="center">
@@ -90,7 +90,7 @@
 ## What's new
 
 <!-- dex:whatsnew -->
-[Everything in 1.0.2](https://github.com/vikramdex-ops/dexterity-sheets/releases/tag/v1.0.2)
+[Everything in 1.1.0](https://github.com/vikramdex-ops/dexterity-sheets/releases/tag/v1.1.0)
 <!-- /dex:whatsnew -->
 
 Dexterity Sheets is built on the open-source [GridCraft](https://github.com/storytold/gridcraft)
