@@ -8,6 +8,8 @@ automatically and don't go here.
 
 ## Unreleased
 
+## 1.2.1 · 27 October 2026
+
 - The server log no longer fills with "login refused" lines every few seconds while the Server Manager is open: its "is the server running" check is no longer counted as a failed sign-in. Real failed sign-ins are still logged and slowed down.
 
 ## 1.2.0 · 27 October 2026
