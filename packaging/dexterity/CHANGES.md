@@ -8,6 +8,8 @@ automatically and don't go here.
 
 ## Unreleased
 
+## 1.2.2 · 27 October 2026
+
 - Fixed: the server's log file was missing its own lines (when it started, its port, where app updates come from, and why a start failed). They are written again, so the Server Manager's log shows what the server is doing.
 
 ## 1.2.1 · 27 October 2026

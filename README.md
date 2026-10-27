@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <sub><!-- dex:release -->Version <b>1.2.1</b> · 27 October 2026 · based on GridCraft 0.12.1<!-- /dex:release --> · Windows 10 and 11 · no administrator rights needed · updates itself</sub>
+  <sub><!-- dex:release -->Version <b>1.2.2</b> · 27 October 2026 · based on GridCraft 0.12.1<!-- /dex:release --> · Windows 10 and 11 · no administrator rights needed · updates itself</sub>
 </p>
 
 <p align="center">
@@ -94,9 +94,9 @@
 ## What's new
 
 <!-- dex:whatsnew -->
-- The server log no longer fills with "login refused" lines every few seconds while the Server Manager is open: its "is the server running" check is no longer counted as a failed sign-in. Real failed sign-ins are still logged and slowed down.
+- Fixed: the server's log file was missing its own lines (when it started, its port, where app updates come from, and why a start failed). They are written again, so the Server Manager's log shows what the server is doing.
 
-[Everything in 1.2.1](https://github.com/vikramdex-ops/dexterity-sheets/releases/tag/v1.2.1).
+[Everything in 1.2.2](https://github.com/vikramdex-ops/dexterity-sheets/releases/tag/v1.2.2).
 <!-- /dex:whatsnew -->
 
 Dexterity Sheets is built on the open-source [GridCraft](https://github.com/storytold/gridcraft)
