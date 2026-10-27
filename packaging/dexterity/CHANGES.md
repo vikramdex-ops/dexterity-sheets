@@ -8,6 +8,8 @@ automatically and don't go here.
 
 ## Unreleased
 
+- Fixed: the server's log file was missing its own lines (when it started, its port, where app updates come from, and why a start failed). They are written again, so the Server Manager's log shows what the server is doing.
+
 ## 1.2.1 · 27 October 2026
 
 - The server log no longer fills with "login refused" lines every few seconds while the Server Manager is open: its "is the server running" check is no longer counted as a failed sign-in. Real failed sign-ins are still logged and slowed down.

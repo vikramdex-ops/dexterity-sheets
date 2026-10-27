@@ -66,7 +66,7 @@ struct Logger {
 
 impl log::Log for Logger {
     fn enabled(&self, m: &log::Metadata) -> bool {
-        m.level() <= log::Level::Info && m.target().starts_with("gridcraft")
+        m.level() <= log::Level::Info && ours(m.target())
     }
     fn log(&self, r: &log::Record) {
         if !self.enabled(r.metadata()) {
@@ -79,6 +79,12 @@ impl log::Log for Logger {
         }
     }
     fn flush(&self) {}
+}
+
+/// Lines from this program and the GridCraft crates go to the log; chatter from libraries doesn't.
+/// This program's own lines carry its binary's crate name (`DexSheetsServer`), not `gridcraft`.
+fn ours(target: &str) -> bool {
+    target.starts_with("gridcraft") || target.starts_with(env!("CARGO_CRATE_NAME"))
 }
 
 fn default_dir() -> PathBuf {
@@ -286,5 +292,16 @@ fn main() {
             eprintln!("Cannot start: {e}");
             std::process::exit(1);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn the_servers_own_lines_reach_its_log() {
+        // "listening on TCP port", the update source and service errors are logged from here.
+        assert!(super::ours(module_path!()));
+        assert!(super::ours("gridcraft_collab::server"));
+        assert!(!super::ours("rustls::client"));
     }
 }
