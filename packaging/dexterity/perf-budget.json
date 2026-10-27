@@ -1,14 +1,14 @@
 {
- "about": "RULES.md 1.4: the performance gate (packaging/dexterity/tests/perf_gate.py) fails a build over any of these. Measured on 28 Oct 2026 on an office laptop (DirectX 12 GPU): startup 1.5 s, idle 212 MB in use (486 MB reserved, mostly by the graphics driver), idle CPU 0, typing 17-33 ms, 2 million cells open in 3.6 s using 371 MB, scrolling them 27 ms per frame, 0-10 MB kept after closing. CI runners draw in software (no GPU), so frame and start times there are slower: the budgets leave room for that. Raise a budget only with a reason written here.",
+ "about": "RULES.md 1.4: the performance gate (packaging/dexterity/tests/perf_gate.py) fails a build over any of these. Measured on 28 Oct 2026 on an office laptop (DirectX 12 GPU): startup 1.5 s, idle 212 MB in use (486 MB reserved, mostly by the graphics driver), idle CPU 0, typing 17-33 ms, 2 million cells open in 3.6 s using 371 MB, scrolling them 27 ms per frame, 0-10 MB kept after closing. The GitHub runner (release 1.2.0, 27 Oct 2026): exe 37.3 MB, startup 0.5 s, idle 121 MB, idle CPU 0, typing 33 ms, 2 million cells in 1.1 s using 303 MB, scrolling 25 ms, 21 MB kept. Budgets sit about 1.5-2x above the slower of the two. Raise a budget only with a reason written here.",
  "budgets": {
-  "exe_mb": {"max": 50, "why": "the app is 37 MB; a jump means a dependency or asset bloated it"},
-  "startup_ms": {"max": 8000, "why": "1.5 s on a laptop; a software-rendered CI runner is slower"},
-  "idle_ram_mb": {"max": 350, "why": "212 MB on a laptop"},
-  "idle_cpu_ms_per_10s": {"max": 500, "why": "0 on a laptop: the window draws only when something changes"},
-  "edit_roundtrip_ms": {"max": 80, "why": "one or two frames"},
-  "open_big_ms": {"max": 12000, "why": "3.6 s for 2 million cells on a laptop"},
-  "big_ram_mb": {"max": 800, "why": "371 MB with 2 million cells open"},
-  "scroll_frame_ms": {"max": 150, "why": "27 ms on a laptop GPU; CI draws in software"},
-  "leak_after_close_mb": {"max": 80, "why": "memory not given back after closing the big workbook (0-10 MB on a laptop)"}
+  "exe_mb": {"max": 45, "why": "37.3 MB; a jump means a dependency or asset bloated it"},
+  "startup_ms": {"max": 4000, "why": "1.5 s on a laptop, 0.5 s on the runner"},
+  "idle_ram_mb": {"max": 300, "why": "212 MB on a laptop, 121 MB on the runner"},
+  "idle_cpu_ms_per_10s": {"max": 200, "why": "0 on both: the window draws only when something changes"},
+  "edit_roundtrip_ms": {"max": 60, "why": "17-33 ms: one or two frames"},
+  "open_big_ms": {"max": 7000, "why": "3.6 s for 2 million cells on a laptop, 1.1 s on the runner"},
+  "big_ram_mb": {"max": 550, "why": "371 MB with 2 million cells open on a laptop, 303 MB on the runner"},
+  "scroll_frame_ms": {"max": 60, "why": "25-27 ms per frame"},
+  "leak_after_close_mb": {"max": 50, "why": "memory not given back after closing the big workbook: 0-10 MB on a laptop, 21 MB on the runner"}
  }
 }

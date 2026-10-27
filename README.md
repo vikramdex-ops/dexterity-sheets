@@ -247,6 +247,8 @@ Everything else is in the Server Manager too, so the job can be handed to anyone
 | **App updates** | Fetch new versions of Dexterity Sheets from this GitHub repository automatically, or add an `.msi` by hand; every PC on the network is offered it |
 | **Backup and restore** | One `.zip` with every account, shared workbook, edit history and version; restoring keeps the data it replaces |
 
+<p align="center"><img src="docs/images/server-manager.png" width="100%" alt="Server Manager, Server page: the service running with Start / Stop / Restart, how teammates reach it (name, computer name, addresses, port, firewall), what the server holds, and its log"></p>
+
 Roles: **Editor** (edit, create and share), **Viewer** (read only), **Administrator** (also
 manages shared workbooks). The data lives in `C:\ProgramData\Dexterity Sheets\Server`, readable
 only by administrators; uninstalling never deletes it. Full guide:

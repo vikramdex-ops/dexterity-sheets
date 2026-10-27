@@ -8,6 +8,8 @@ automatically and don't go here.
 
 ## Unreleased
 
+- The server log no longer fills with "login refused" lines every few seconds while the Server Manager is open: its "is the server running" check is no longer counted as a failed sign-in. Real failed sign-ins are still logged and slowed down.
+
 ## 1.2.0 · 27 October 2026
 
 - The office server installs from **DexSheetsServer-Setup.exe** (or the .msi): a Windows service that starts with Windows and restarts itself, the firewall opened for the office network only, the data folder locked to administrators.

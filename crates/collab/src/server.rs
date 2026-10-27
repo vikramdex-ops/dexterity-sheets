@@ -294,6 +294,9 @@ impl Server {
         let Ok(mut reader) = stream.try_clone() else { return };
         let (user, instance, machine) = match self.handshake(&mut reader) {
             Ok(x) => x,
+            // A connection closed before a full hello is a port check (the Server Manager's
+            // "is it running" test, a monitoring tool), not a login: nothing to log or slow down.
+            Err(e) if is_probe(&e) => return,
             Err(e) => {
                 log::info!("login refused from {peer_addr}: {e}");
                 // Slow down password guessing.
@@ -1181,12 +1184,32 @@ pub fn start_on(dir: PathBuf, name: String, port: u16) -> Result<(Arc<Server>, u
     Ok((server, port))
 }
 
+/// True when a connection ended before sending a complete hello.
+fn is_probe(e: &Error) -> bool {
+    matches!(e, Error::Io(io) if io.kind() == std::io::ErrorKind::UnexpectedEof)
+}
+
 #[cfg(test)]
 mod housekeeping_tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
     use gridcraft_engine::core::Value;
     use gridcraft_engine::{DocState, Session, Trust};
+
+    #[test]
+    fn a_port_check_is_not_a_refused_login() {
+        // Connect and hang up (the Server Manager's running check), or hang up mid-header.
+        for sent in [&b""[..], &b"\x00\x00"[..]] {
+            let e = proto::read_frame::<_, ClientMsg>(&mut &sent[..]).expect_err("no hello");
+            assert!(is_probe(&e), "{e}");
+        }
+        // Junk and wrong passwords are still logged and slowed down.
+        let mut junk = 4u32.to_be_bytes().to_vec();
+        junk.extend_from_slice(b"\x00nope");
+        let e = proto::read_frame::<_, ClientMsg>(&mut junk.as_slice()).expect_err("junk");
+        assert!(!is_probe(&e), "{e}");
+        assert!(!is_probe(&Error::Denied("wrong password".into())));
+    }
 
     fn dir(name: &str) -> PathBuf {
         let d = std::env::temp_dir().join(format!("dexsheets-house-{name}-{}", now_ms()));
