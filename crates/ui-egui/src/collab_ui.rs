@@ -51,6 +51,18 @@ pub struct HistoryPane {
 
 #[derive(Default)]
 pub struct Collab {
+    /// Copies of unsaved work kept for crash recovery (`dex_ui::recovery`).
+    pub recovery: crate::dex_ui::recovery::Recovery,
+    /// What's New, problem reports, rollback and the update channel (`dex_ui::releases`).
+    pub releases: crate::dex_ui::releases::Releases,
+    /// The Share dialog, links and notifications (`dex_ui::share`).
+    pub share: crate::dex_ui::share::Share,
+    /// Compare Files, Quality Check, Formula Diagnostics results (`dex_ui::tools`).
+    pub tools: crate::dex_ui::tools::Tools,
+    /// The template library (`dex_ui::templates`).
+    pub templates: crate::dex_ui::templates::Templates,
+    /// Automation rules of the shared workbook (`dex_ui::automation`).
+    pub automation: crate::dex_ui::automation::Automation,
     pub client: Option<Client>,
     pub status: Status,
     pub me: Option<UserInfo>,
@@ -83,7 +95,7 @@ pub struct Collab {
     /// The update dialog is open.
     update_dialog: bool,
     /// Downloading or installing: what the dialog says.
-    update_state: Option<String>,
+    pub(crate) update_state: Option<String>,
     last_update_check: f64,
     /// Shared workbooks that are files on this PC, kept saved with everyone's edits.
     pub links: Vec<LinkedFile>,
@@ -138,9 +150,25 @@ impl Collab {
     pub fn shared(&self, uid: u64) -> Option<&SharedDoc> {
         self.docs.iter().find(|d| d.doc_uid == uid)
     }
-    fn send(&self, m: ClientMsg) {
+    pub(crate) fn send(&self, m: ClientMsg) {
         if let Some(c) = &self.client {
             c.send(m);
+        }
+    }
+    /// The office server as `host:port`, for links.
+    pub(crate) fn server_address(&self) -> String {
+        let s = if self.form_server.trim().is_empty() { load_remembered().server } else { self.form_server.trim().to_string() };
+        if s.contains(':') { s } else { format!("{s}:{}", proto::DEFAULT_PORT) }
+    }
+    pub(crate) fn set_form_server(&mut self, server: &str) {
+        self.form_server = server.trim_end_matches(&format!(":{}", proto::DEFAULT_PORT)).to_string();
+        self.form_loaded = true;
+    }
+    /// Opens a shared workbook by id (the server checks the person's access).
+    pub(crate) fn open_book(&mut self, id: &str) {
+        if !self.opening.iter().any(|b| b == id) {
+            self.opening.push(id.to_string());
+            self.send(ClientMsg::OpenBook { book: id.to_string() });
         }
     }
     pub fn signed_in(&self) -> bool {
@@ -205,6 +233,10 @@ fn sign_out(app: &mut SheetApp) {
 
 /// Each frame: network events in, the person's edits and position out.
 pub fn tick(app: &mut SheetApp, ctx: &egui::Context) {
+    #[cfg(not(target_arch = "wasm32"))]
+    crate::dex_ui::recovery::tick(app);
+    crate::dex_ui::releases::tick(app);
+    crate::dex_ui::share::tick(app);
     if app.collab.client.is_none() && app.collab.docs.is_empty() {
         if let Some(rx) = &app.collab.finding
             && let Ok(found) = rx.try_recv()
@@ -236,7 +268,7 @@ pub fn tick(app: &mut SheetApp, ctx: &egui::Context) {
     // Ask again every four hours, so a long-running window still hears of new versions.
     if app.collab.client.as_ref().is_some_and(Client::online) && crate::now_ms() - app.collab.last_update_check > 4.0 * 3600.0 * 1000.0 {
         app.collab.last_update_check = crate::now_ms();
-        app.collab.send(ClientMsg::CheckUpdate { version: gridcraft_collab::APP_VERSION.trim().into() });
+        app.collab.send(crate::dex_ui::releases::check_msg(app));
     }
     if let Some(rx) = &app.collab.finding
         && let Ok(found) = rx.try_recv()
@@ -309,7 +341,7 @@ fn handle(app: &mut SheetApp, e: Event) {
             app.collab.error = None;
             app.collab.presence = None;
             app.collab.send(ClientMsg::ListBooks);
-            app.collab.send(ClientMsg::CheckUpdate { version: gridcraft_collab::APP_VERSION.trim().into() });
+            app.collab.send(crate::dex_ui::releases::check_msg(app));
             app.collab.last_update_check = crate::now_ms();
             // After a reconnect: fetch every open shared workbook again and resend what the
             // server never ordered.
@@ -363,7 +395,8 @@ fn message(app: &mut SheetApp, m: ServerMsg) {
                     return;
                 }
             };
-            let read_only = app.collab.me.as_ref().is_some_and(|m| !m.role.can_edit());
+            // A view-only account, or a workbook shared with this person as a viewer.
+            let read_only = app.collab.me.as_ref().is_some_and(|m| !m.role.can_edit()) || book.permission == "viewer";
             if let Some(sd) = app.collab.docs.iter_mut().find(|d| d.book.id == book.id) {
                 let mine: Vec<u64> = log.iter().filter_map(|l| proto::own_cseq(l.origin.as_deref(), &instance)).collect();
                 let Some(doc) = app.session.document_mut(sd.doc_uid) else { return };
@@ -389,6 +422,7 @@ fn message(app: &mut SheetApp, m: ServerMsg) {
                     doc.title = sd.book.name.clone();
                     let book = sd.book.clone();
                     arrived(app, &book, &mut doc);
+                    crate::dex_ui::share::opened(app, &book);
                     // Replace an untouched blank Book1, as opening a file does.
                     if app.session.documents().len() == 1
                         && app.collab.docs.is_empty()
@@ -497,8 +531,9 @@ fn message(app: &mut SheetApp, m: ServerMsg) {
             }
             save_record(&book, None);
         }
-        ServerMsg::Update { update } => {
+        ServerMsg::Update { update, current, older, policy } => {
             let update = update.filter(|u| proto::version_newer(&u.version, gridcraft_collab::APP_VERSION.trim()));
+            crate::dex_ui::releases::on_update(app, update.as_ref(), current, older, policy);
             if let Some(u) = &update
                 && app.collab.update.as_ref().map(|o| &o.version) != Some(&u.version)
             {
@@ -506,10 +541,16 @@ fn message(app: &mut SheetApp, m: ServerMsg) {
                     format!("Dexterity Sheets {} is available. Click \"Update\" in the status bar to install it.", u.version),
                     crate::now_ms(),
                 ));
+                let text = format!("Dexterity Sheets {} is available", u.version);
+                crate::dex_ui::share::local(app, "update", &text);
             }
             app.collab.update = update;
         }
         ServerMsg::UpdateFile { info, data } => install_update(app, &info, &data),
+        ServerMsg::Notice { notice } => crate::dex_ui::share::notice(app, notice),
+        ServerMsg::Templates { templates } => crate::dex_ui::templates::on_list(app, templates),
+        ServerMsg::Rules { book, rules } => crate::dex_ui::automation::on_rules(app, book, rules),
+        ServerMsg::Template { info, xlsx, sha256 } => crate::dex_ui::templates::on_template(app, info, &xlsx, &sha256),
         ServerMsg::Ok { what } => app.toast = Some((what, crate::now_ms())),
         ServerMsg::Error { message } => app.message = Some(("Dexterity Sheets".into(), message)),
         ServerMsg::Challenge { .. } | ServerMsg::Welcome { .. } | ServerMsg::Pong => {}
@@ -524,6 +565,9 @@ impl SheetApp {
 
 /// Commands the window handles for sharing. `None` = not a sharing command.
 pub fn run_command(app: &mut SheetApp, id: &str, p: &Json) -> Option<Result<Json, String>> {
+    if let Some(r) = crate::dex_ui::share::run_command(app, id, p) {
+        return Some(r);
+    }
     let r = match id {
         "collab.shared" => {
             app.open_backstage(crate::backstage::Page::Shared);
@@ -556,7 +600,7 @@ pub fn run_command(app: &mut SheetApp, id: &str, p: &Json) -> Option<Result<Json
                 app.open_backstage(crate::backstage::Page::Shared);
                 return Some(Err("Updates come from the office server: sign in first (File > Shared).".into()));
             }
-            app.collab.send(ClientMsg::CheckUpdate { version: gridcraft_collab::APP_VERSION.trim().into() });
+            app.collab.send(crate::dex_ui::releases::check_msg(app));
             app.collab.last_update_check = crate::now_ms();
             app.collab.update_dialog = true;
             Ok(json!({"current": gridcraft_collab::APP_VERSION.trim(), "available": app.collab.update.as_ref().map(|u| u.version.clone())}))
@@ -1199,8 +1243,29 @@ pub fn share_menu(app: &mut SheetApp, ui: &mut Ui) {
     let uid = app.session.active().map(|d| d.uid);
     let shared = active_shared(app).is_some();
     let linked = uid.and_then(|u| linked_file(app, u)).is_some();
-    if !shared && ui.button("Share with my team…").on_hover_text("Everyone edits it live; a saved file keeps everyone's edits").clicked() {
-        app.run_or_alert("collab.share", json!({}));
+    if ui
+        .button(if shared { "Who has access…" } else { "Share…" })
+        .on_hover_text("Everyone at the office or specific people, as editors or viewers; a saved file keeps everyone's edits")
+        .clicked()
+    {
+        app.run_or_alert("collab.shareDialog", json!({}));
+    }
+    if shared && ui.button("Copy link").on_hover_text("A link that opens this spreadsheet in Dexterity Sheets").clicked() {
+        match app.run("collab.copyLink", json!({})) {
+            Ok(_) => app.toast = Some(("Link copied: paste it in a chat or e-mail.".into(), crate::now_ms())),
+            Err(e) => app.message = Some(("Dexterity Sheets".into(), e)),
+        }
+    }
+    if ui.button("Notifications…").clicked() {
+        app.run_or_alert("collab.notifications", json!({}));
+    }
+    if shared
+        && ui
+            .button("Automation rules…")
+            .on_hover_text("Scheduled checks and reports, and what happens when a status changes, run by the office server")
+            .clicked()
+    {
+        app.run_or_alert("automate.rules", json!({}));
     }
     if linked && ui.button("Stop sharing (keep my file)").clicked() {
         app.run_or_alert("collab.stopSharing", json!({}));
@@ -1770,6 +1835,9 @@ pub fn versions_pane(app: &mut SheetApp, ui: &mut Ui) {
 
 /// Saves the installer the server sent, checks it, starts it and closes the app; the installer
 /// replaces this version and opens the new one.
+/// Dexterity Sheets' MSI UpgradeCode (`packaging/windows/gridcraft.wxs`; never changes).
+const UPGRADE_CODE: &str = "FE2AD491-38E3-4E1B-8441-FDF652AB8443";
+
 fn install_update(app: &mut SheetApp, info: &UpdateInfo, data: &str) {
     use sha2::Digest;
     let fail = |app: &mut SheetApp, why: String| {
@@ -1794,8 +1862,22 @@ fn install_update(app: &mut SheetApp, info: &UpdateInfo, data: &str) {
     let exe = std::env::current_exe().map(|p| p.display().to_string()).unwrap_or_default();
     // msiexec replaces the installed version; afterwards the app opens again.
     let log = path.with_extension("log");
-    let script =
+    let install =
         format!("start \"\" /wait msiexec /i \"{}\" /passive /norestart /l*v \"{}\" & start \"\" \"{}\"", path.display(), log.display(), exe);
+    // Rolling back: an older installer refuses to go over a newer version, so the installed one
+    // (found by the fixed UpgradeCode) is removed first. Only the program files change: the
+    // workbooks, settings and recovery copies in the person's folders are not the installer's.
+    let rollback = crate::dex_ui::releases::is_rollback(&info.version);
+    let script = if rollback {
+        format!(
+            "powershell -NoProfile -NonInteractive -Command \"$i = New-Object -ComObject WindowsInstaller.Installer; foreach ($p in $i.RelatedProducts('{{{UPGRADE_CODE}}}')) {{ Start-Process msiexec -ArgumentList '/x', $p, '/passive', '/norestart' -Wait }}\" & {install}"
+        )
+    } else {
+        install
+    };
+    if rollback {
+        crate::dex_ui::releases::rolling_back(app, &info.version);
+    }
     // cmd.exe doesn't understand the backslash-escaped quotes `arg` would add: pass the line raw.
     // No console window (CREATE_NO_WINDOW); msiexec shows its own progress bar.
     #[cfg(windows)]
@@ -1822,6 +1904,23 @@ fn install_update(app: &mut SheetApp, info: &UpdateInfo, data: &str) {
 
 /// The status-bar badge and the update dialog. Drawn whatever workbook is open.
 pub fn update_badge(app: &mut SheetApp, ui: &mut Ui, t: &Tokens) {
+    // Shown in the window in front (each window draws a status bar).
+    // The window in front draws them; with none in front (the app in the background, the
+    // control channel, tests), the main window does.
+    let here = ui.ctx().input(|i| i.viewport().focused == Some(true));
+    let none_focused = ui.ctx().input(|i| i.raw.viewports.values().all(|v| v.focused != Some(true)));
+    if here || (none_focused && ui.ctx().viewport_id() == egui::ViewportId::ROOT) {
+        crate::dex_ui::recovery::dialog(app, ui.ctx());
+        crate::dex_ui::releases::windows(app, ui.ctx());
+        crate::dex_ui::share::windows(app, ui.ctx());
+        crate::dex_ui::tools::windows(app, ui.ctx());
+        crate::dex_ui::templates::window(app, ui.ctx());
+        crate::dex_ui::automation::window(app, ui.ctx());
+    }
+    if app.collab.signed_in() || !app.collab.share.prefs.history.is_empty() {
+        ui.add_space(12.0);
+        crate::dex_ui::share::bell(app, ui);
+    }
     if let Some(u) = app.collab.update.clone() {
         ui.add_space(12.0);
         let r = ui

@@ -64,6 +64,8 @@ impl eframe::App for App {
     }
     fn on_exit(&mut self) {
         print::finish_pending_jobs();
+        // Dexterity Sheets: a normal exit leaves no crash-recovery copies behind.
+        gridcraft_ui_egui::dex_ui::recovery::clean_exit(&mut self.0);
         save_prefs(&self.0);
         // macOS (#117): end the process here, before eframe tears the window down. AccessKit's
         // macOS adapter subclasses the window's content view and restores its class on teardown;
@@ -312,6 +314,8 @@ fn main() -> eframe::Result<()> {
         session.new_workbook();
     }
     let mut app = SheetApp::new(session, services());
+    // Dexterity Sheets: crash recovery, links and notifications belong to the desktop app only.
+    gridcraft_ui_egui::dex_ui::enable_desktop();
     app.watch_desktop_theme();
     app.after_engine(); // Show warnings from the sample.
     let control_port = control_port;

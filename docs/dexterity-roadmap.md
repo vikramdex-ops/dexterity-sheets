@@ -22,15 +22,15 @@ the app; stopping sharing never deletes anyone's own files.
 | # | Request | Status | Notes |
 |---|---|---|---|
 | 13 | P0: blank shared workbook, persistence, real-time collaboration | **done** | root causes, fix, tests A–H: `dexterity-p0-persistence.md` |
-| 5 | Autosave, crash recovery, unsaved-work protection | planned | AutoSave and atomic saves exist; recovery of unsaved work is next |
-| 8 | Compare two spreadsheet versions | planned | |
-| 11 | Spreadsheet quality checks | planned | |
-| 7 | Formula diagnostics and compatibility warnings | planned | Error Checking, Trace and Evaluate Formula exist |
-| 1 | App icon and branding everywhere | planned | the icon is generated from one source (`packaging/dexterity/make_icon.py`) |
-| 3 | Shareable links that open a workbook in the app | planned | |
-| 2 | Rollback, release notes, per-feature problem reports, release status | planned | |
-| 6 | Admin dashboard in the Server Manager | planned | |
-| 4 | Native notifications for shared files | planned | |
-| 9 | Template library and controlled masters | planned | |
-| 10 | Scheduled reports and automation rules | planned | |
+| 5 | Autosave, crash recovery, unsaved-work protection | **done** | AutoSave and atomic saves (upstream); recovery copies of unsaved work, the Recover Unsaved Work dialog (recover, open saved, compare, discard): `crates/ui-egui/src/dex_ui/recovery.rs`. Not done: telling that another program changed an open file before Save overwrites it (shared files already are protected) |
+| 8 | Compare two spreadsheet versions | **done** | Review › Compare Files (`review.compareFiles`): values, formulas, results, formatting, sheets, structure, names; filter; .xlsx/.csv report. Comparing with the server's copy: open the shared workbook and compare it with the file |
+| 11 | Spreadsheet quality checks | **done** | Review › Quality Check (`data.qualityCheck`), automatic checks or explicit rules per register; saved rule profiles are passed as `rules` (no profile library yet) |
+| 7 | Formula diagnostics and compatibility warnings | **done** (diagnostics) | Formulas › Diagnostics and Explain Error (`formulas.diagnostics`, `formulas.explainError`). Preserving features on open/save is the file-format work tracked in `dexterity-parity-audit.md`; opening a file already warns in an info bar about what it cannot keep (upstream's open warnings) |
+| 1 | App icon and branding everywhere | **done** | "linked cells" icon from one source (`make_icon.py`): window, taskbar, exe, installer, file types, Server Manager, notifications (AppUserModelID); start-up splash; About with build, channel, repository. Light and dark themes are upstream's |
+| 3 | Shareable links that open a workbook in the app | **done** | `dexterity://` links (installer registers them), the browser fallback page on the office server, per-workbook access (office / people, editor / viewer, end date, downloads). HTTPS: not on the office LAN (plain HTTP page, no workbook named) |
+| 2 | Rollback, release notes, per-feature problem reports, release status | **done** | Help › What's New, Report a Problem, Roll Back, update channel; server release status (ok / known issue / deprecated / blocked) and channels; feedback to the server; GitHub issues from the Server Manager, labelled by area |
+| 6 | Admin dashboard in the Server Manager | **done** | Installed versions, Releases, Feedback, System health, Feature adoption read the files of [`dexterity-admin-data.md`](dexterity-admin-data.md), which the server writes, and write `updates/releases.json`, which it obeys |
+| 4 | Native notifications for shared files | **done** | Windows notifications, history panel, settings (kinds, mute, hourly summary). Not done: @mention notices |
+| 9 | Template library and controlled masters | **done** | office templates on the server (`templates/`), published by administrators, versioned, "required for" label; personal templates; File › New and the Templates window; new-version notices; creating copies, never links. Enforcing a required template in a workflow is not done (it is shown, not enforced) |
+| 10 | Scheduled reports and automation rules | **done** (first set of steps) | rules per shared workbook (`books/<id>/automation.json`), run by the server: schedule (daily / weekly) or a value change; steps: notify, Quality Check, overdue items, a report workbook, a completion time. Not done: e-mail or chat integrations, duplicate detection as its own step (the Quality Check covers it), formula-based triggers |
 | 12 | Keep updates, document versions and sharing separate | **adopted** | the table above; applied to every item |

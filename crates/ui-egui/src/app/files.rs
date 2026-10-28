@@ -2,6 +2,10 @@ use super::*;
 
 impl SheetApp {
     pub fn open_path(&mut self, path: &str) {
+        // Dexterity Sheets: a dexterity:// link to a shared spreadsheet, not a file.
+        if crate::dex_ui::share::open_link(self, path) {
+            return;
+        }
         match self.run("file.open", json!({"path": path})) {
             Ok(r) => self.after_open(Some(path), &r),
             // A password-protected workbook: ask for the password; the dialog opens it.

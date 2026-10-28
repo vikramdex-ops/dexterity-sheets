@@ -17,6 +17,7 @@ pub(super) fn about(ui: &mut egui::Ui, d: &mut Dialog) {
         _ => {
             ui.heading("Dexterity Sheets");
             ui.label(format!("Version {}", gridcraft_collab::APP_VERSION.trim()));
+            crate::dex_ui::releases::about_details(ui);
             ui.add_space(4.0);
             ui.label("Internal spreadsheet of Dexterity Design Services Pvt. Ltd.");
             ui.add_space(4.0);

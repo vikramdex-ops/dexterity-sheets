@@ -73,6 +73,18 @@ const EXCLUDED: &[(&str, &str)] = &[
     ("formulas.removeDependentArrows", DEX),
     ("view.focusCell", DEX),
     ("review.showChanges", DEX),
+    ("automate.rules", DEX),
+    ("file.newFromTemplate", DEX),
+    ("file.saveAsTemplate", DEX),
+    ("formulas.explainError", DEX),
+    ("formulas.diagnostics", DEX),
+    ("review.compareFiles", DEX),
+    ("data.qualityCheck", DEX),
+    ("help.whatsNew", DEX),
+    ("help.reportProblem", DEX),
+    ("help.rollBack", DEX),
+    ("help.updateChannel", DEX),
+    ("file.recoverUnsaved", DEX),
 ];
 /// Dexterity Sheets keeps its own commands out of the random pool so the sequences stay the same
 /// as upstream GridCraft's, whose CI vets them.

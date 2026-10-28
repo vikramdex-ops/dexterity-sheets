@@ -65,6 +65,8 @@ jobs:
       - name: Three windows editing one shared workbook (end to end)
         # Real app windows on the runner's desktop (software rendering), sharing from a folder included.
         run: python packaging/dexterity/tests/lan_e2e.py target/release
+      - name: Crash recovery with the real app (type, kill, restart, recover)
+        run: python packaging/dexterity/tests/recovery_e2e.py target/release
       - name: Performance gate (start-up, memory, idle CPU, typing, a 2-million-cell file, memory given back)
         run: python packaging/dexterity/tests/perf_gate.py target/release --report tests/out/perf.json
       - uses: actions/upload-artifact@v4

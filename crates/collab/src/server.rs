@@ -22,13 +22,14 @@ use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
-use gridcraft_engine::core::CellRef;
+use gridcraft_engine::core::{CellRef, Value};
 use gridcraft_engine::model::Workbook;
 use serde::{Deserialize, Serialize};
 
 use crate::patch::{self, CellData, WbPatch};
 use crate::proto::{
-    self, BookInfo, Change, ClientMsg, Conflict, FileSource, LastEdit, Logged, Peer, Role, ServerMsg, UpdateInfo, UserInfo, VersionInfo,
+    self, Access, BookInfo, Change, ClientMsg, Conflict, FileSource, LastEdit, Logged, Notice, Peer, Role, Rule, ServerMsg, TemplateInfo, UpdateInfo,
+    UserInfo, VersionInfo,
 };
 use crate::{Error, Result, auth, now_ms};
 
@@ -74,6 +75,11 @@ struct BookMeta {
     seq: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     source: Option<FileSource>,
+    #[serde(default)]
+    access: Access,
+    /// The last edit each person had when they closed it (for "changed while you were away").
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    seen: BTreeMap<String, u64>,
 }
 
 struct Book {
@@ -96,6 +102,10 @@ struct Book {
 struct Conn {
     user: String,
     instance: String,
+    machine: String,
+    /// The app version and update channel it last asked about.
+    version: String,
+    channel: String,
     tx: Sender<Arc<Vec<u8>>>,
     open: Vec<String>,
     peer: HashMap<String, Peer>,
@@ -110,6 +120,9 @@ pub struct State {
     conns: HashMap<u64, Conn>,
     /// The newest installer in `updates/` as last announced, and its file.
     update: Option<(UpdateInfo, PathBuf)>,
+    /// Every installer in `updates/`, newest first, with the administrator's channel and status.
+    available: Vec<(UpdateInfo, PathBuf)>,
+    policy: String,
     /// sha256 of installers already hashed: (path, size, modified) → hash.
     hashes: HashMap<(PathBuf, u64, std::time::SystemTime), String>,
 }
@@ -275,7 +288,18 @@ impl Server {
             }
         }
         fs::create_dir_all(dir.join("updates"))?;
-        let mut state = State { dir, name, users, metas, books: HashMap::new(), conns: HashMap::new(), update: None, hashes: HashMap::new() };
+        let mut state = State {
+            dir,
+            name,
+            users,
+            metas,
+            books: HashMap::new(),
+            conns: HashMap::new(),
+            update: None,
+            available: Vec::new(),
+            policy: String::new(),
+            hashes: HashMap::new(),
+        };
         state.update = state.scan_updates();
         Ok(Server { state: Mutex::new(state), next_conn: AtomicU64::new(1) })
     }
@@ -294,6 +318,13 @@ impl Server {
 
     fn handle(self: Arc<Self>, stream: TcpStream) {
         let peer_addr = stream.peer_addr().map(|a| a.to_string()).unwrap_or_default();
+        // A browser following a shared workbook's web link (same port: no firewall change).
+        let mut head = [0u8; 4];
+        let _ = stream.set_read_timeout(Some(Duration::from_secs(10)));
+        if stream.peek(&mut head).is_ok_and(|n| n == 4) && &head == b"GET " {
+            self.serve_http(stream);
+            return;
+        }
         let _ = stream.set_nodelay(true);
         let _ = stream.set_read_timeout(Some(Duration::from_secs(30)));
         let Ok(mut reader) = stream.try_clone() else { return };
@@ -322,8 +353,24 @@ impl Server {
             let me = st.users.iter().find(|u| u.user == user).map(UserRecord::info);
             let Some(me) = me else { return };
             let users = st.users.iter().filter(|u| !u.disabled).map(UserRecord::info).collect();
-            st.conns.insert(conn, Conn { user: user.clone(), instance, tx: tx.clone(), open: Vec::new(), peer: HashMap::new() });
+            st.conns.insert(
+                conn,
+                Conn {
+                    user: user.clone(),
+                    instance,
+                    machine: machine.clone(),
+                    version: String::new(),
+                    channel: String::new(),
+                    tx: tx.clone(),
+                    open: Vec::new(),
+                    peer: HashMap::new(),
+                },
+            );
             send(&tx, &ServerMsg::Welcome { me, conn, users });
+            let role = st.users.iter().find(|u| u.user == user).map_or(Role::Viewer, |u| u.role);
+            for notice in st.notices_at_sign_in(&user, role) {
+                send(&tx, &ServerMsg::Notice { notice });
+            }
         }
         log::info!("{user} connected from {peer_addr} ({machine})");
         loop {
@@ -441,20 +488,105 @@ impl State {
     }
 
     /// Everyone's workbook list changes together (a new workbook, a rename, who has what open).
+    /// Everyone's list of the shared workbooks they may open.
     fn broadcast_books(&self) {
-        let books = self.metas.values().map(|m| self.info(m)).collect();
-        let Some(frame) = encode(&ServerMsg::Books { books }) else { return };
         for c in self.conns.values() {
-            let _ = c.tx.send(frame.clone());
+            let Some(u) = self.users.iter().find(|u| u.user == c.user) else { continue };
+            let books = self.books_for(&u.user, u.role);
+            if let Some(frame) = encode(&ServerMsg::Books { books }) {
+                let _ = c.tx.send(frame);
+            }
         }
+    }
+
+    fn books_for(&self, user: &str, role: Role) -> Vec<BookInfo> {
+        self.metas.values().filter_map(|m| self.info_for(m, user, role)).collect()
+    }
+
+    /// The workbook as `user` sees it in the list, or `None` when they may not open it.
+    fn info_for(&self, m: &BookMeta, user: &str, role: Role) -> Option<BookInfo> {
+        let permission = permission(m, user, role, now_ms())?;
+        let mut i = self.info(m);
+        i.permission = permission.into();
+        Some(i)
+    }
+
+    /// Fails unless `user` may open the workbook (and, with `edit`, change it).
+    fn require(&self, user: &str, role: Role, book: &str, edit: bool) -> Result<()> {
+        let m = self.metas.get(book).ok_or_else(|| Error::Denied("no such workbook".into()))?;
+        match permission(m, user, role, now_ms()) {
+            Some("editor") => Ok(()),
+            Some(_) if !edit => Ok(()),
+            Some(_) => Err(Error::Denied("you can view this workbook but not change it".into())),
+            None => {
+                let by = self.users.iter().find(|u| u.user == m.created_by).map_or_else(|| m.created_by.clone(), |u| u.display.clone());
+                Err(Error::Denied(format!("you don't have access to \"{}\": ask {by} to share it with you", m.name)))
+            }
+        }
+    }
+
+    /// Tells `user` now if they are connected, otherwise at their next sign-in.
+    fn notify(&self, user: &str, mut n: Notice) {
+        n.time = now_ms();
+        n.id = format!("n-{}-{}", n.time, n.kind);
+        let online: Vec<&Conn> = self.conns.values().filter(|c| c.user == user).collect();
+        if online.is_empty() {
+            let path = self.dir.join("notices").join(format!("{user}.jsonl"));
+            match serde_json::to_value(&n) {
+                Ok(v) => {
+                    if let Err(e) = append_line(&path, &v) {
+                        log::warn!("notice for {user}: {e}");
+                    }
+                }
+                Err(e) => log::warn!("notice for {user}: {e}"),
+            }
+            return;
+        }
+        if let Some(frame) = encode(&ServerMsg::Notice { notice: n }) {
+            for c in online {
+                let _ = c.tx.send(frame.clone());
+            }
+        }
+    }
+
+    /// At sign-in: what was kept for the person while they were away, and a summary of the
+    /// shared workbooks others changed since they last had them open (one notice per workbook,
+    /// never one per edit).
+    fn notices_at_sign_in(&mut self, user: &str, role: Role) -> Vec<Notice> {
+        let path = self.dir.join("notices").join(format!("{user}.jsonl"));
+        let mut out: Vec<Notice> = fs::read_to_string(&path).unwrap_or_default().lines().filter_map(|l| serde_json::from_str(l).ok()).collect();
+        let _ = fs::remove_file(&path);
+        for m in self.metas.values() {
+            let Some(seen) = m.seen.get(user) else { continue };
+            if m.seq > *seen && m.modified_by != user && permission(m, user, role, now_ms()).is_some() {
+                let by = self.users.iter().find(|u| u.user == m.modified_by).map_or_else(|| m.modified_by.clone(), |u| u.display.clone());
+                out.push(Notice {
+                    id: format!("n-{}-changed-{}", now_ms(), m.id),
+                    time: m.modified,
+                    kind: "changed".into(),
+                    book: m.id.clone(),
+                    name: m.name.clone(),
+                    by,
+                    permission: String::new(),
+                    text: format!("{} edit(s) since you last had it open", m.seq - seen),
+                });
+            }
+        }
+        out.truncate(200);
+        out
     }
 
     /// The newest installer in `updates/`. Files are named with their version as a `-`-separated
     /// part (`DexteritySheets-0.13.0-x64.msi`, `dexterity-sheets-0.13.0-windows-x64.msi`); notes
     /// sit next to them as `<same name>.md` or `.txt`.
+    /// Reads `updates/`: every app installer, with the channel and status the administrator gave
+    /// it in `updates/releases.json`. Returns the newest stable version anyone may be offered
+    /// (the announcement for apps that predate channels).
     fn scan_updates(&mut self) -> Option<(UpdateInfo, PathBuf)> {
         let dir = self.dir.join("updates");
-        let mut best: Option<(String, PathBuf, u64, std::time::SystemTime)> = None;
+        let releases: serde_json::Value = fs::read(dir.join("releases.json")).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default();
+        self.policy = releases.pointer("/policy/mode").and_then(serde_json::Value::as_str).unwrap_or("prompt").to_string();
+        let mut found: Vec<(UpdateInfo, PathBuf)> = Vec::new();
         for e in fs::read_dir(&dir).ok()?.flatten() {
             let path = e.path();
             if !path.file_name().is_some_and(|n| is_app_installer(&n.to_string_lossy())) {
@@ -466,24 +598,98 @@ impl State {
             };
             let Ok(meta) = e.metadata() else { continue };
             let modified = meta.modified().unwrap_or(std::time::UNIX_EPOCH);
-            if best.as_ref().is_none_or(|(v, ..)| proto::version_newer(&version, v)) {
-                best = Some((version, path, meta.len(), modified));
+            let key = (path.clone(), meta.len(), modified);
+            let sha256 = match self.hashes.get(&key) {
+                Some(h) => h.clone(),
+                None => {
+                    use sha2::Digest;
+                    let Ok(bytes) = fs::read(&path) else { continue };
+                    let h = auth::hex(&sha2::Sha256::digest(bytes));
+                    self.hashes.insert(key, h.clone());
+                    h
+                }
+            };
+            let notes = ["md", "txt"].iter().find_map(|x| fs::read_to_string(path.with_extension(x)).ok()).unwrap_or_default();
+            let file = path.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default();
+            let rel = releases.get("releases").and_then(|r| r.get(&version));
+            let field = |k: &str, default: &str| rel.and_then(|r| r.get(k)).and_then(serde_json::Value::as_str).unwrap_or(default).to_string();
+            let info = UpdateInfo {
+                version,
+                notes,
+                file,
+                size: meta.len(),
+                sha256,
+                channel: field("channel", "stable"),
+                status: field("status", "ok"),
+                note: field("note", ""),
+            };
+            // Two files of one version: keep one.
+            if !found.iter().any(|(u, _)| u.version == info.version) {
+                found.push((info, path));
             }
         }
-        let (version, path, size, modified) = best?;
-        let key = (path.clone(), size, modified);
-        let sha256 = match self.hashes.get(&key) {
-            Some(h) => h.clone(),
-            None => {
-                use sha2::Digest;
-                let h = auth::hex(&sha2::Sha256::digest(fs::read(&path).ok()?));
-                self.hashes.insert(key, h.clone());
-                h
+        found.sort_by(|a, b| {
+            if proto::version_newer(&a.0.version, &b.0.version) {
+                std::cmp::Ordering::Less
+            } else if proto::version_newer(&b.0.version, &a.0.version) {
+                std::cmp::Ordering::Greater
+            } else {
+                std::cmp::Ordering::Equal
             }
-        };
-        let notes = ["md", "txt"].iter().find_map(|x| fs::read_to_string(path.with_extension(x)).ok()).unwrap_or_default();
-        let file = path.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default();
-        Some((UpdateInfo { version, notes, file, size, sha256 }, path))
+        });
+        self.available = found;
+        self.available.iter().find(|(u, _)| u.channel == "stable" && offerable(u)).cloned()
+    }
+
+    fn default_channel(&self) -> String {
+        let releases: serde_json::Value =
+            fs::read(self.dir.join("updates").join("releases.json")).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default();
+        match releases.pointer("/policy/defaultChannel").and_then(serde_json::Value::as_str) {
+            Some("testing") => "testing".into(),
+            _ => "stable".into(),
+        }
+    }
+
+    /// What an app running `version` on `channel` is told: the newest version it may move to,
+    /// its own version's status, and the older versions it may roll back to.
+    fn offer(&self, version: &str, channel: &str) -> ServerMsg {
+        let on_channel = |u: &UpdateInfo| channel == "testing" || u.channel == "stable";
+        let update =
+            self.available.iter().map(|(u, _)| u).find(|u| offerable(u) && on_channel(u) && proto::version_newer(&u.version, version)).cloned();
+        let current = self.available.iter().map(|(u, _)| u).find(|u| u.version == version).cloned();
+        let older = self
+            .available
+            .iter()
+            .map(|(u, _)| u)
+            .filter(|u| u.status != "blocked" && proto::version_newer(version, &u.version))
+            .take(5)
+            .cloned()
+            .collect();
+        ServerMsg::Update { update, current, older, policy: self.policy.clone() }
+    }
+
+    /// Records the app version a person's PC runs (`clients.json`, for the admin dashboard).
+    fn note_client(&self, conn: u64) {
+        let Some(c) = self.conns.get(&conn) else { return };
+        let path = self.dir.join("clients.json");
+        let mut all: serde_json::Value = fs::read(&path).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_else(|| serde_json::json!({}));
+        if !all.get("clients").is_some_and(serde_json::Value::is_object) {
+            all = serde_json::json!({"clients": {}});
+        }
+        if let Some(map) = all.get_mut("clients").and_then(serde_json::Value::as_object_mut) {
+            map.insert(
+                format!("{}|{}", c.user, c.machine),
+                serde_json::json!({"user": c.user, "machine": c.machine, "version": c.version, "channel": c.channel, "lastSeen": now_ms()}),
+            );
+        }
+        match serde_json::to_vec_pretty(&all) {
+            Ok(b) => {
+                if let Err(e) = write_atomic(&path, &b) {
+                    log::warn!("clients.json: {e}");
+                }
+            }
+            Err(e) => log::warn!("clients.json: {e}"),
+        }
     }
 
     fn book_dir(&self, id: &str) -> PathBuf {
@@ -510,6 +716,8 @@ impl State {
             seq,
             open_by,
             source: m.source.clone().map(Box::new),
+            access: m.access.clone(),
+            permission: String::new(),
         }
     }
 
@@ -684,6 +892,8 @@ impl State {
             modified_by: user.to_string(),
             seq: 0,
             source,
+            access: Access::default(),
+            seen: BTreeMap::new(),
         };
         self.save_meta(&meta)?;
         self.metas.insert(id, meta.clone());
@@ -773,12 +983,19 @@ impl State {
         };
         match msg {
             ClientMsg::Ping => self.reply(conn, &ServerMsg::Pong),
-            ClientMsg::CheckUpdate { version } => {
-                let update = self.update.as_ref().filter(|(u, _)| proto::version_newer(&u.version, &version)).map(|(u, _)| u.clone());
-                self.reply(conn, &ServerMsg::Update { update });
+            ClientMsg::CheckUpdate { version, channel } => {
+                let channel = channel.filter(|c| c == "stable" || c == "testing").unwrap_or_else(|| self.default_channel());
+                if let Some(c) = self.conns.get_mut(&conn) {
+                    c.version = version.clone();
+                    c.channel = channel.clone();
+                }
+                self.note_client(conn);
+                let msg = self.offer(&version, &channel);
+                self.reply(conn, &msg);
             }
             ClientMsg::GetUpdate { version } => {
-                let Some((info, path)) = self.update.clone().filter(|(u, _)| u.version == version) else {
+                // Any installer the server holds, for an update or a rollback, but never a blocked one.
+                let Some((info, path)) = self.available.iter().find(|(u, _)| u.version == version && u.status != "blocked").cloned() else {
                     return Err(Error::Denied(format!("version {version} is not available on this server")));
                 };
                 let data = fs::read(&path)?;
@@ -792,8 +1009,33 @@ impl State {
                 self.users = load_users(&self.dir)?;
                 self.reply(conn, &ServerMsg::Ok { what: "Password changed.".into() });
             }
+            ClientMsg::Feedback { report } => {
+                let machine = self.conns.get(&conn).map(|c| c.machine.clone()).unwrap_or_default();
+                let time = now_ms();
+                let mut v = serde_json::to_value(&report)?;
+                if let Some(o) = v.as_object_mut() {
+                    o.insert("id".into(), serde_json::json!(format!("fb-{time}-{conn}")));
+                    o.insert("time".into(), serde_json::json!(time));
+                    o.insert("user".into(), serde_json::json!(user));
+                    o.insert("machine".into(), serde_json::json!(machine));
+                }
+                append_line(&self.dir.join("feedback").join("feedback.jsonl"), &v)?;
+                log::info!("{user} reported a problem with {} ({})", report.version, report.features.join(", "));
+                self.reply(conn, &ServerMsg::Ok { what: "Thank you: your report reached the administrator.".into() });
+            }
+            ClientMsg::Health { version, kind, detail } => {
+                let machine = self.conns.get(&conn).map(|c| c.machine.clone()).unwrap_or_default();
+                let line =
+                    serde_json::json!({"time": now_ms(), "user": user, "machine": machine, "version": version, "kind": kind, "detail": detail});
+                append_line(&self.dir.join("health.jsonl"), &line)?;
+            }
+            ClientMsg::Usage { version, counts } => {
+                if let Err(e) = add_usage(&self.dir.join("adoption.json"), &version, &counts) {
+                    log::warn!("adoption.json: {e}");
+                }
+            }
             ClientMsg::ListBooks => {
-                let books = self.metas.values().map(|m| self.info(m)).collect();
+                let books = self.books_for(&user, role);
                 self.reply(conn, &ServerMsg::Books { books });
             }
             ClientMsg::CreateBook { name, xlsx, source, sha256 } => {
@@ -817,6 +1059,7 @@ impl State {
                 return self.dispatch(conn, ClientMsg::OpenBook { book: meta.id });
             }
             ClientMsg::OpenBook { book } => {
+                self.require(&user, role, &book, false)?;
                 self.load_book(&book)?;
                 if let Some(b) = self.books.get_mut(&book) {
                     b.touched = now_ms();
@@ -833,8 +1076,10 @@ impl State {
                     .iter()
                     .map(|((sheet, at), (user, time))| LastEdit { sheet: sheet.clone(), r: at.row, c: at.col, user: user.clone(), time: *time })
                     .collect();
+                let mut info = self.info(&b.meta);
+                info.permission = permission(&b.meta, &user, role, now_ms()).unwrap_or("viewer").into();
                 let msg = ServerMsg::Opened {
-                    book: self.info(&b.meta),
+                    book: info,
                     snapshot_seq: b.snapshot_seq,
                     xlsx: proto::b64(&b.snapshot),
                     log: b.tail.clone(),
@@ -847,6 +1092,18 @@ impl State {
                 self.broadcast_books();
             }
             ClientMsg::CloseBook { book } => {
+                let seq = self.books.get(&book).map(|b| b.meta.seq);
+                if let (Some(seq), Some(b)) = (seq, self.books.get_mut(&book)) {
+                    // The loaded copy too: edits write `metas` from it.
+                    b.meta.seen.insert(user.clone(), seq);
+                }
+                if let (Some(seq), Some(m)) = (seq, self.metas.get_mut(&book)) {
+                    m.seen.insert(user.clone(), seq);
+                    let m = m.clone();
+                    if let Err(e) = self.save_meta(&m) {
+                        log::warn!("{book}: {e}");
+                    }
+                }
                 if let Some(c) = self.conns.get_mut(&conn) {
                     c.open.retain(|b| *b != book);
                     c.peer.remove(&book);
@@ -907,6 +1164,7 @@ impl State {
                 self.broadcast(&book, &ServerMsg::PeerMoved { book: book.clone(), peer }, Some(conn));
             }
             ClientMsg::History { book, sheet, cell, user: who, limit } => {
+                self.require(&user, role, &book, false)?;
                 let path = self.book_dir(&book).join("audit.jsonl");
                 let mut changes: Vec<Change> = Vec::new();
                 if let Ok(f) = File::open(path) {
@@ -926,10 +1184,216 @@ impl State {
                 self.reply(conn, &ServerMsg::History { book, changes });
             }
             ClientMsg::Versions { book } => {
+                self.require(&user, role, &book, false)?;
                 let versions = self.versions(&book);
                 self.reply(conn, &ServerMsg::Versions { book, versions });
             }
+            ClientMsg::GetRules { book } => {
+                self.require(&user, role, &book, false)?;
+                let rules = load_rules(&self.book_dir(&book));
+                self.reply(conn, &ServerMsg::Rules { book, rules });
+            }
+            ClientMsg::SetRules { book, rules } => {
+                let m = self.metas.get(&book).cloned().ok_or_else(|| Error::Denied("no such workbook".into()))?;
+                if role != Role::Admin && m.created_by != user {
+                    return Err(Error::Denied("only the workbook's creator or an administrator can change its automation".into()));
+                }
+                let old = load_rules(&self.book_dir(&book));
+                let mut clean = Vec::new();
+                for (i, mut r) in rules.into_iter().take(50).enumerate() {
+                    check_rule(&r, &self.users)?;
+                    if r.id.is_empty() {
+                        r.id = format!("r{}-{i}", now_ms());
+                    }
+                    // The server keeps when it last ran.
+                    r.last_run = old.iter().find(|o| o.id == r.id).and_then(|o| o.last_run);
+                    clean.push(r);
+                }
+                save_rules(&self.book_dir(&book), &clean)?;
+                log::info!("{user} set {} automation rule(s) on \"{}\"", clean.len(), m.name);
+                self.reply(conn, &ServerMsg::Rules { book, rules: clean });
+            }
+            ClientMsg::RunRule { book, id } => {
+                let m = self.metas.get(&book).cloned().ok_or_else(|| Error::Denied("no such workbook".into()))?;
+                if role != Role::Admin && m.created_by != user {
+                    return Err(Error::Denied("only the workbook's creator or an administrator can run its automation".into()));
+                }
+                let rule = load_rules(&self.book_dir(&book)).into_iter().find(|r| r.id == id).ok_or_else(|| Error::Denied("no such rule".into()))?;
+                let summary = self.run_rule(&book, &rule, None)?;
+                self.reply(conn, &ServerMsg::Ok { what: summary });
+            }
+            ClientMsg::ListTemplates => {
+                let templates = list_templates(&self.dir);
+                self.reply(conn, &ServerMsg::Templates { templates });
+            }
+            ClientMsg::GetTemplate { id } => {
+                let dir = self.dir.join("templates");
+                let info = list_templates(&self.dir).into_iter().find(|t| t.id == id).ok_or_else(|| Error::Denied("no such template".into()))?;
+                let bytes = fs::read(dir.join(format!("{id}.xlsx")))?;
+                // Who used it hears about its next approved version.
+                let used = dir.join(format!("{id}.users"));
+                let mut users: Vec<String> = fs::read_to_string(&used).unwrap_or_default().lines().map(str::to_string).collect();
+                if !users.contains(&user) && users.len() < 10_000 {
+                    users.push(user.clone());
+                    let _ = write_atomic(&used, users.join("\n").as_bytes());
+                }
+                self.reply(conn, &ServerMsg::Template { info, sha256: proto::sha256_hex(&bytes), xlsx: proto::b64(&bytes) });
+            }
+            ClientMsg::PublishTemplate { id, name, category, description, mandatory, xlsx, sha256 } => {
+                if role != Role::Admin {
+                    return Err(Error::Denied(
+                        "only an administrator publishes office templates: ask yours, or keep it as a personal template".into(),
+                    ));
+                }
+                let name = name.trim().to_string();
+                if name.is_empty() {
+                    return Err(Error::Denied("give the template a name".into()));
+                }
+                let bytes = proto::unb64_checked(&xlsx, sha256.as_deref().unwrap_or(""))?;
+                // Must open as a workbook: a template nobody can use is refused here, not later.
+                gridcraft_engine::io::open_bytes("template.xlsx", &bytes)?;
+                let dir = self.dir.join("templates");
+                fs::create_dir_all(&dir)?;
+                let existing = id.as_ref().and_then(|i| list_templates(&self.dir).into_iter().find(|t| &t.id == i));
+                let id = existing.as_ref().map_or_else(|| slug(&name), |t| t.id.clone());
+                let info = TemplateInfo {
+                    id: id.clone(),
+                    name: name.clone(),
+                    category: category.trim().to_string(),
+                    description: description.trim().to_string(),
+                    mandatory: mandatory.trim().to_string(),
+                    version: existing.as_ref().map_or(1, |t| t.version.saturating_add(1)),
+                    updated: now_ms(),
+                    updated_by: display.clone(),
+                    size: bytes.len() as u64,
+                };
+                write_atomic(&dir.join(format!("{id}.xlsx")), &bytes)?;
+                write_atomic(&dir.join(format!("{id}.json")), &serde_json::to_vec_pretty(&info)?)?;
+                log::info!("{user} published template \"{name}\" version {}", info.version);
+                // A new version: tell those who used the old one (their spreadsheets are not touched).
+                if existing.is_some() {
+                    let users: Vec<String> =
+                        fs::read_to_string(dir.join(format!("{id}.users"))).unwrap_or_default().lines().map(str::to_string).collect();
+                    for u in users.iter().filter(|u| **u != user) {
+                        self.notify(u, Notice {
+                            kind: "template".into(),
+                            name: name.clone(),
+                            by: display.clone(),
+                            text: format!("A new approved version (v{}) of the template \"{name}\" is available. Spreadsheets already made from it are not changed.", info.version),
+                            ..Notice::default()
+                        });
+                    }
+                }
+                let templates = list_templates(&self.dir);
+                if let Some(frame) = encode(&ServerMsg::Templates { templates }) {
+                    for c in self.conns.values() {
+                        let _ = c.tx.send(frame.clone());
+                    }
+                }
+            }
+            ClientMsg::DeleteTemplate { id } => {
+                if role != Role::Admin {
+                    return Err(Error::Denied("only an administrator removes office templates".into()));
+                }
+                let dir = self.dir.join("templates");
+                let trash = self.dir.join("trash").join("templates");
+                fs::create_dir_all(&trash)?;
+                for ext in ["xlsx", "json", "users"] {
+                    let from = dir.join(format!("{id}.{ext}"));
+                    if from.exists() {
+                        fs::rename(&from, trash.join(format!("{id}-{}.{ext}", now_ms())))?;
+                    }
+                }
+                let templates = list_templates(&self.dir);
+                self.reply(conn, &ServerMsg::Templates { templates });
+            }
+            ClientMsg::SetAccess { book, access } => {
+                let m = self.metas.get(&book).cloned().ok_or_else(|| Error::Denied("no such workbook".into()))?;
+                if role != Role::Admin && m.created_by != user {
+                    return Err(Error::Denied("only the workbook's creator or an administrator can change who has access".into()));
+                }
+                let clean = |p: &str| if p == "viewer" { "viewer".to_string() } else { "editor".to_string() };
+                let access = Access {
+                    mode: if access.mode == "people" { "people".into() } else { "office".into() },
+                    everyone: clean(&access.everyone),
+                    people: access
+                        .people
+                        .iter()
+                        .map(|(u, p)| (u.trim().to_ascii_lowercase(), clean(p)))
+                        .filter(|(u, _)| self.users.iter().any(|r| r.user == *u))
+                        .take(1000)
+                        .collect(),
+                    expires: access.expires,
+                    download: access.download,
+                };
+                let now = now_ms();
+                let before: Vec<(String, Option<&'static str>)> =
+                    self.users.iter().filter(|u| u.user != user).map(|u| (u.user.clone(), permission(&m, &u.user, u.role, now))).collect();
+                let mut next = m.clone();
+                next.access = access;
+                self.save_meta(&next)?;
+                self.metas.insert(book.clone(), next.clone());
+                if let Some(b) = self.books.get_mut(&book) {
+                    b.meta.access = next.access.clone();
+                }
+                // Tell the people whose access changed: newly shared, a different permission,
+                // or no longer shared (they keep any copy of their own).
+                for (who, was) in before {
+                    let role_of = self.users.iter().find(|u| u.user == who).map_or(Role::Viewer, |u| u.role);
+                    let now_p = permission(&next, &who, role_of, now);
+                    // Only the people it concerns: named before or now, or who have had it open.
+                    let involved = m.access.people.contains_key(&who) || next.access.people.contains_key(&who) || m.seen.contains_key(&who);
+                    // Access they never used (the whole office could open it) counts as newly shared.
+                    let fresh = !m.seen.contains_key(&who) && !m.access.people.contains_key(&who);
+                    let was = if fresh && now_p.is_some() { None } else { was };
+                    if was == now_p || !involved {
+                        continue;
+                    }
+                    let (kind, text) = match (was, now_p) {
+                        (None, Some(p)) => {
+                            ("shared", format!("{display} shared a spreadsheet with you · {}", if p == "editor" { "can edit" } else { "can view" }))
+                        }
+                        (Some(_), Some(p)) => {
+                            ("permission", format!("You can now {} {}", if p == "editor" { "edit" } else { "only view" }, next.name))
+                        }
+                        (Some(_), None) => ("revoked", format!("Your access to {} has changed: it is no longer shared with you", next.name)),
+                        (None, None) => continue,
+                    };
+                    self.notify(
+                        &who,
+                        Notice {
+                            kind: kind.into(),
+                            book: book.clone(),
+                            name: next.name.clone(),
+                            by: display.clone(),
+                            permission: now_p.unwrap_or("").into(),
+                            text,
+                            ..Notice::default()
+                        },
+                    );
+                }
+                // Anyone who lost access and has it open: it closes for them.
+                let gone: Vec<u64> = self
+                    .conns
+                    .iter()
+                    .filter(|(_, c)| c.open.contains(&book))
+                    .filter(|(_, c)| self.users.iter().find(|u| u.user == c.user).is_none_or(|u| permission(&next, &u.user, u.role, now).is_none()))
+                    .map(|(id, _)| *id)
+                    .collect();
+                for id in gone {
+                    if let Some(c) = self.conns.get_mut(&id) {
+                        c.open.retain(|b| *b != book);
+                        if let Some(frame) = encode(&ServerMsg::BookGone { book: book.clone(), by: Some(display.clone()), stopped: false }) {
+                            let _ = c.tx.send(frame);
+                        }
+                    }
+                }
+                log::info!("{user} changed who has access to \"{}\"", next.name);
+                self.broadcast_books();
+                self.reply(conn, &ServerMsg::Ok { what: "Sharing updated.".into() });
+            }
             ClientMsg::SaveVersion { book, label } => {
+                self.require(&user, role, &book, true)?;
                 self.load_book(&book)?;
                 let v = self.save_version(&book, &user, &label)?;
                 log::info!("{user} saved a version of {book} at edit {}", v.seq);
@@ -937,10 +1401,12 @@ impl State {
                 self.reply(conn, &ServerMsg::Versions { book, versions });
             }
             ClientMsg::GetVersion { book, version } => {
+                self.require(&user, role, &book, false)?;
                 let bytes = fs::read(self.version_path(&book, &version)?)?;
                 self.reply(conn, &ServerMsg::Version { book, version, xlsx: proto::b64(&bytes) });
             }
             ClientMsg::RestoreVersion { book, version } => {
+                self.require(&user, role, &book, true)?;
                 if !role.can_edit() {
                     return Err(Error::Denied("view-only accounts can't restore versions".into()));
                 }
@@ -992,6 +1458,7 @@ impl State {
         if !role.can_edit() {
             return Err(Error::Denied("view-only account".into()));
         }
+        self.require(user, role, book, true)?;
         self.load_book(book)?;
         let instance = self.conns.get(&conn).map(|c| c.instance.clone()).unwrap_or_default();
         let b = self.books.get_mut(book).ok_or_else(|| Error::Denied("no such workbook".into()))?;
@@ -1045,6 +1512,28 @@ impl State {
         if !conflicts.is_empty() {
             log::info!("{book}: {user}'s edit {seq} replaced {} cell(s) changed meanwhile by others", conflicts.len());
         }
+        // Change rules see people's edits (never the automation's own, so rules can't loop).
+        let fired: Vec<(Rule, Change)> = if user == AUTOMATION {
+            Vec::new()
+        } else {
+            let first = self.books.get(book).and_then(|b| b.wb.sheets.first().map(|s| s.name.clone())).unwrap_or_default();
+            load_rules(&self.book_dir(book))
+                .into_iter()
+                .filter(|r| r.enabled)
+                .flat_map(|r| {
+                    changes
+                        .iter()
+                        .filter(|c| {
+                            c.sheet == first
+                                && matches!(&r.trigger, proto::Trigger::Change { column, equals }
+                                    if column_of(&c.cell).eq_ignore_ascii_case(column.trim()) && norm(&c.new) == norm(equals) && norm(&c.old) != norm(equals))
+                        })
+                        .map(|c| (r.clone(), c.clone()))
+                        .collect::<Vec<_>>()
+                })
+                .take(20)
+                .collect()
+        };
         let msg =
             ServerMsg::Patched { book: book.to_string(), seq, time, user: user.to_string(), origin: entry.origin, patch: entry.patch, conflicts };
         self.broadcast(book, &msg, None);
@@ -1062,7 +1551,148 @@ impl State {
             }
             self.metas.insert(book.to_string(), m);
         }
+        for (rule, change) in fired {
+            if let Err(e) = self.run_rule(book, &rule, Some((&change, display))) {
+                log::warn!("{book}: rule \"{}\": {e}", rule.name);
+            }
+        }
         Ok(())
+    }
+
+    /// Schedule rules whose time has come (housekeeping, every half minute).
+    fn run_due_rules(&mut self) {
+        use chrono::{Datelike, Timelike};
+        let now = chrono::Local::now();
+        let ids: Vec<String> = self.metas.keys().cloned().collect();
+        for id in ids {
+            let dir = self.book_dir(&id);
+            let mut rules = load_rules(&dir);
+            let mut ran = false;
+            for i in 0..rules.len() {
+                let Some(r) = rules.get(i).cloned() else { continue };
+                let proto::Trigger::Schedule { every, day, time } = &r.trigger else { continue };
+                if !r.enabled {
+                    continue;
+                }
+                let (h, m) =
+                    time.split_once(':').and_then(|(h, m)| Some((h.trim().parse::<u32>().ok()?, m.trim().parse::<u32>().ok()?))).unwrap_or((9, 0));
+                let Some(today_at) = now.with_hour(h.min(23)).and_then(|t| t.with_minute(m.min(59))).and_then(|t| t.with_second(0)) else { continue };
+                let due = now >= today_at
+                    && r.last_run.is_none_or(|t| t < today_at.timestamp_millis())
+                    && (every != "weekly" || now.weekday().num_days_from_monday() == u32::from(*day));
+                if !due {
+                    continue;
+                }
+                match self.run_rule(&id, &r, None) {
+                    Ok(s) => log::info!("{id}: rule \"{}\" ran: {s}", r.name),
+                    Err(e) => log::warn!("{id}: rule \"{}\": {e}", r.name),
+                }
+                if let Some(x) = rules.get_mut(i) {
+                    x.last_run = Some(now_ms());
+                }
+                ran = true;
+            }
+            if ran && let Err(e) = save_rules(&dir, &rules) {
+                log::warn!("{id}: automation.json: {e}");
+            }
+        }
+    }
+
+    /// Runs a rule's steps on the server's copy of the workbook; returns what it found.
+    fn run_rule(&mut self, book: &str, rule: &Rule, change: Option<(&Change, &str)>) -> Result<String> {
+        self.load_book(book)?;
+        let (name, wb) = self.books.get(book).map(|b| (b.meta.name.clone(), b.wb.clone())).ok_or_else(|| Error::Denied("no such workbook".into()))?;
+        let mut found: Vec<String> = Vec::new();
+        let mut rows: Vec<Vec<String>> = Vec::new();
+        if let Some((c, by)) = change {
+            found.push(format!("{} changed {}!{} to \"{}\"", by, c.sheet, c.cell, c.new));
+        }
+        for a in &rule.actions {
+            match a {
+                proto::Action::QualityCheck => {
+                    let mut s = gridcraft_engine::Session::new();
+                    s.add_document(gridcraft_engine::DocState::new(wb.clone(), None, name.clone(), gridcraft_engine::Trust::FromFile));
+                    match s.execute("data.qualityCheck", serde_json::json!({"limit": 500})) {
+                        Ok(r) => {
+                            let total = r.get("total").and_then(serde_json::Value::as_u64).unwrap_or(0);
+                            found.push(format!("{total} quality issue(s)"));
+                            for i in r.get("issues").and_then(serde_json::Value::as_array).into_iter().flatten().take(500) {
+                                let g = |k: &str| i.get(k).and_then(serde_json::Value::as_str).unwrap_or("").to_string();
+                                rows.push(vec!["Quality".into(), g("cell"), g("message"), g("suggestion")]);
+                            }
+                        }
+                        Err(e) => found.push(format!("quality check could not run ({e})")),
+                    }
+                }
+                proto::Action::Overdue { date_column, status_column, done } => {
+                    let over = overdue(&wb, date_column, status_column, done);
+                    found.push(format!("{} overdue item(s)", over.len()));
+                    for (row, date, status) in over.into_iter().take(500) {
+                        rows.push(vec!["Overdue".into(), format!("row {row}"), format!("due {date}"), format!("status \"{status}\"")]);
+                    }
+                }
+                proto::Action::Stamp { column } => {
+                    if let Some((c, _)) = change
+                        && let (Some(at), Some(col)) = (CellRef::parse(&c.cell), col_index(column))
+                    {
+                        let stamp = chrono::Local::now().format("%Y-%m-%d %H:%M").to_string();
+                        let patch = WbPatch {
+                            sheets: vec![patch::SheetPatch {
+                                name: c.sheet.clone(),
+                                cells: vec![patch::CellChange {
+                                    r: at.row,
+                                    c: col,
+                                    cell: Some(CellData { v: Value::Text(stamp.into()), f: None, s: None }),
+                                }],
+                                ..Default::default()
+                            }],
+                            ..Default::default()
+                        };
+                        self.take_patch(0, AUTOMATION, "Automation", Role::Admin, book, 0, patch, None)?;
+                        found.push(format!("completion time written in {column}{}", at.row + 1));
+                    }
+                }
+                proto::Action::Report | proto::Action::Notify { .. } => {}
+            }
+        }
+        let summary = format!("{}: {}", rule.name, if found.is_empty() { "nothing to report".into() } else { found.join("; ") });
+        let people: Vec<String> =
+            rule.actions.iter().flat_map(|a| if let proto::Action::Notify { people } = a { people.clone() } else { Vec::new() }).collect();
+        // The report: a new shared workbook only the rule's people (and its creator) can open.
+        let mut report_id = String::new();
+        if rule.actions.iter().any(|a| matches!(a, proto::Action::Report)) {
+            let mut csv = String::from("Step,Where,Found,Detail\r\n");
+            csv.push_str(&format!("Summary,,\"{}\",\r\n", summary.replace('"', "\"\"")));
+            for r in &rows {
+                csv.push_str(&r.iter().map(|x| format!("\"{}\"", x.replace('"', "\"\""))).collect::<Vec<_>>().join(","));
+                csv.push_str("\r\n");
+            }
+            let (report, _) = gridcraft_engine::io::open_bytes_with("report.csv", csv.as_bytes(), None, true)?;
+            let bytes = gridcraft_engine::io::save_bytes(&report, "report.xlsx")?;
+            let title = format!("{} report {} ({})", name, chrono::Local::now().format("%Y-%m-%d %H%M"), rule.name);
+            let owner = self.metas.get(book).map(|m| m.created_by.clone()).unwrap_or_default();
+            let mut meta = self.create_book(&owner, &title, Some(&bytes), None)?;
+            meta.access =
+                Access { mode: "people".into(), people: people.iter().map(|p| (p.clone(), "viewer".to_string())).collect(), ..Access::default() };
+            self.save_meta(&meta)?;
+            report_id = meta.id.clone();
+            self.metas.insert(meta.id.clone(), meta);
+            self.broadcast_books();
+        }
+        for p in people {
+            self.notify(
+                &p,
+                Notice {
+                    kind: "automation".into(),
+                    book: if report_id.is_empty() { book.to_string() } else { report_id.clone() },
+                    name: name.clone(),
+                    by: "Automation".into(),
+                    text: summary.clone(),
+                    ..Notice::default()
+                },
+            );
+        }
+        Ok(summary)
     }
 
     /// Writes metadata and a final snapshot of every loaded workbook (shutdown).
@@ -1087,21 +1717,83 @@ impl Server {
 
     /// Housekeeping, every half minute: workbooks nobody has open leave memory.
     pub fn unload_idle(&self) {
-        lock(&self.state).unload_idle();
+        let mut st = lock(&self.state);
+        st.run_due_rules();
+        st.unload_idle();
     }
 
     /// Looks for a new installer in `updates/` and tells everyone connected about it.
+    /// The web link's page: opens the app on the shared workbook, or offers the installer. It
+    /// names nothing (no sign-in here): the app checks the person's access when it opens.
+    fn serve_http(&self, mut stream: TcpStream) {
+        let mut buf = vec![0u8; 8192];
+        let n = stream.read(&mut buf).unwrap_or(0);
+        let req = String::from_utf8_lossy(buf.get(..n).unwrap_or_default()).to_string();
+        let path = req.split_whitespace().nth(1).unwrap_or("/").to_string();
+        let host = req
+            .lines()
+            .find_map(|l| l.strip_prefix("Host:").or_else(|| l.strip_prefix("host:")))
+            .map(|h| h.trim().to_string())
+            .filter(|h| h.chars().all(|c| c.is_ascii_alphanumeric() || "-._:[]".contains(c)))
+            .unwrap_or_default();
+        let respond = |stream: &mut TcpStream, status: &str, kind: &str, extra: &str, body: &[u8]| {
+            let head = format!(
+                "HTTP/1.1 {status}\r\nContent-Type: {kind}\r\nContent-Length: {}\r\n{extra}Cache-Control: no-store\r\nConnection: close\r\n\r\n",
+                body.len()
+            );
+            let _ = stream.write_all(head.as_bytes());
+            let _ = stream.write_all(body);
+        };
+        if let Some(book) = path.strip_prefix("/open/").filter(|b| !b.is_empty() && b.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')) {
+            let app_link = proto::link(&host, book);
+            let page = format!(
+                "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width\"><title>Open in Dexterity Sheets</title>\
+<style>body{{font-family:Segoe UI,Arial,sans-serif;max-width:34rem;margin:4rem auto;padding:0 1rem;color:#1b1f2a}}a.b{{display:inline-block;background:#1e2a78;color:#fff;padding:.7rem 1.2rem;border-radius:.4rem;text-decoration:none;margin:.3rem 0}}p{{line-height:1.5}}</style></head>\
+<body><h1>A shared spreadsheet</h1><p>Someone shared a spreadsheet with you on the office server. It opens in Dexterity Sheets, which checks that you have access.</p>\
+<p><a class=\"b\" href=\"{app_link}\">Open in Dexterity Sheets</a></p><p>Not installed yet? <a href=\"/download\">Get Dexterity Sheets</a> from this server, install it, sign in, then open the link again.</p>\
+<script>location.href={app_json};</script></body></html>",
+                app_json = serde_json::to_string(&app_link).unwrap_or_default()
+            );
+            respond(&mut stream, "200 OK", "text/html; charset=utf-8", "", page.as_bytes());
+        } else if path == "/download" {
+            let offer = lock(&self.state).update.clone();
+            match offer.and_then(|(u, p)| fs::read(p).ok().map(|b| (u, b))) {
+                Some((u, bytes)) => {
+                    let name: String = u.file.chars().filter(|c| c.is_ascii_alphanumeric() || ".-_".contains(*c)).collect();
+                    respond(&mut stream, "200 OK", "application/x-msi", &format!("Content-Disposition: attachment; filename=\"{name}\"\r\n"), &bytes);
+                }
+                None => respond(&mut stream, "404 Not Found", "text/plain; charset=utf-8", "", b"No installer on this server yet: ask IT."),
+            }
+        } else {
+            respond(&mut stream, "404 Not Found", "text/plain; charset=utf-8", "", b"Not found");
+        }
+    }
+
     pub fn poll_updates(&self) {
         let mut st = lock(&self.state);
+        let before: Vec<(String, String, String)> =
+            st.available.iter().map(|(u, _)| (u.version.clone(), u.channel.clone(), u.status.clone())).collect();
+        let policy = st.policy.clone();
         let found = st.scan_updates();
-        let changed = found.as_ref().map(|(u, _)| &u.version) != st.update.as_ref().map(|(u, _)| &u.version);
         st.update = found;
-        if changed && let Some((u, _)) = &st.update {
+        let after: Vec<(String, String, String)> =
+            st.available.iter().map(|(u, _)| (u.version.clone(), u.channel.clone(), u.status.clone())).collect();
+        if before == after && policy == st.policy {
+            return;
+        }
+        if let Some((u, _)) = &st.update {
             log::info!("update {} is available to clients", u.version);
-            if let Some(frame) = encode(&ServerMsg::Update { update: Some(u.clone()) }) {
-                for c in st.conns.values() {
-                    let _ = c.tx.send(frame.clone());
-                }
+        }
+        // Each app hears what applies to its own version and channel (a release marked blocked
+        // reaches the people running it at once).
+        for c in st.conns.values() {
+            let msg = if c.version.is_empty() {
+                ServerMsg::Update { update: st.update.as_ref().map(|(u, _)| u.clone()), current: None, older: Vec::new(), policy: st.policy.clone() }
+            } else {
+                st.offer(&c.version, &c.channel)
+            };
+            if let Some(frame) = encode(&msg) {
+                let _ = c.tx.send(frame);
             }
         }
     }
@@ -1232,6 +1924,174 @@ pub fn start_on(dir: PathBuf, name: String, port: u16) -> Result<(Arc<Server>, u
         }
     })?;
     Ok((server, port))
+}
+
+/// Who automation edits are attributed to.
+const AUTOMATION: &str = "automation";
+
+fn load_rules(dir: &Path) -> Vec<Rule> {
+    fs::read(dir.join("automation.json")).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()
+}
+
+fn save_rules(dir: &Path, rules: &[Rule]) -> Result<()> {
+    write_atomic(&dir.join("automation.json"), &serde_json::to_vec_pretty(rules)?)
+}
+
+/// A rule is refused if it names a column that doesn't exist or a person who isn't an account.
+fn check_rule(r: &Rule, users: &[UserRecord]) -> Result<()> {
+    let col = |c: &str| col_index(c).is_some();
+    match &r.trigger {
+        proto::Trigger::Schedule { every, day, time } => {
+            if every != "daily" && every != "weekly"
+                || *day > 6
+                || !time
+                    .split_once(':')
+                    .is_some_and(|(h, m)| h.trim().parse::<u32>().is_ok_and(|h| h < 24) && m.trim().parse::<u32>().is_ok_and(|m| m < 60))
+            {
+                return Err(Error::Denied(format!("rule \"{}\": the schedule needs daily or weekly, a day 0-6 and a time like 09:00", r.name)));
+            }
+        }
+        proto::Trigger::Change { column, .. } => {
+            if !col(column) {
+                return Err(Error::Denied(format!("rule \"{}\": \"{column}\" is not a column", r.name)));
+            }
+        }
+    }
+    for a in &r.actions {
+        match a {
+            proto::Action::Notify { people } => {
+                if let Some(p) = people.iter().find(|p| !users.iter().any(|u| &u.user == *p)) {
+                    return Err(Error::Denied(format!("rule \"{}\": no account \"{p}\"", r.name)));
+                }
+            }
+            proto::Action::Overdue { date_column, status_column, .. } if !col(date_column) || !col(status_column) => {
+                return Err(Error::Denied(format!("rule \"{}\": the overdue check needs two columns such as D and F", r.name)));
+            }
+            proto::Action::Stamp { column } if !col(column) || !matches!(r.trigger, proto::Trigger::Change { .. }) => {
+                return Err(Error::Denied(format!("rule \"{}\": a completion time needs a column and a change trigger", r.name)));
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+/// Column index of "F" / "AB" (0-based), up to XFD.
+fn col_index(c: &str) -> Option<u32> {
+    let c = c.trim();
+    if c.is_empty() || c.len() > 3 || !c.chars().all(|x| x.is_ascii_alphabetic()) {
+        return None;
+    }
+    let n = c.chars().try_fold(0u32, |n, x| n.checked_mul(26)?.checked_add(u32::from(x.to_ascii_uppercase() as u8 - b'A') + 1))?;
+    (1..=16_384).contains(&n).then(|| n - 1)
+}
+
+fn column_of(a1: &str) -> String {
+    a1.chars().take_while(char::is_ascii_alphabetic).collect()
+}
+
+fn norm(s: &str) -> String {
+    s.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase()
+}
+
+/// (row number, due date, status) of rows on the first sheet whose date has passed and whose
+/// status is not `done`. Dates are cell serial numbers (formatted as dates).
+fn overdue(wb: &Workbook, date_col: &str, status_col: &str, done: &str) -> Vec<(u32, String, String)> {
+    let (Some(dc), Some(sc), Some(sh)) = (col_index(date_col), col_index(status_col), wb.sheets.first()) else { return Vec::new() };
+    let today = (now_ms() as f64 / 86_400_000.0).floor() + 25_569.0;
+    let mut out = Vec::new();
+    for (at, cell) in sh.cells.iter() {
+        if at.col != dc || out.len() >= 10_000 {
+            continue;
+        }
+        let Value::Number(d) = cell.value else { continue };
+        if d >= today || d < 1.0 {
+            continue;
+        }
+        let status = sh.cell(CellRef::new(at.row, sc)).map(|c| patch::value_text(&c.value)).unwrap_or_default();
+        if norm(&status) == norm(done) {
+            continue;
+        }
+        let date = chrono::NaiveDate::from_ymd_opt(1899, 12, 30)
+            .and_then(|b| b.checked_add_days(chrono::Days::new(d as u64)))
+            .map(|x| x.format("%Y-%m-%d").to_string())
+            .unwrap_or_default();
+        out.push((at.row + 1, date, status));
+    }
+    out.sort();
+    out
+}
+
+/// The template library (`templates/<id>.json` beside `<id>.xlsx`), by category then name.
+fn list_templates(dir: &Path) -> Vec<TemplateInfo> {
+    let mut out: Vec<TemplateInfo> = fs::read_dir(dir.join("templates"))
+        .map(|rd| {
+            rd.flatten()
+                .filter(|e| e.path().extension().is_some_and(|x| x == "json"))
+                .filter_map(|e| fs::read(e.path()).ok().and_then(|b| serde_json::from_slice::<TemplateInfo>(&b).ok()))
+                .filter(|t| dir.join("templates").join(format!("{}.xlsx", t.id)).is_file())
+                .take(5000)
+                .collect()
+        })
+        .unwrap_or_default();
+    out.sort_by_key(|t| (t.category.to_lowercase(), t.name.to_lowercase()));
+    out
+}
+
+/// What `user` may do with a workbook: `editor`, `viewer`, or nothing (`None`). The creator and
+/// administrators always edit; a view-only account never edits; a link past its expiry date
+/// opens for nobody else.
+fn permission(m: &BookMeta, user: &str, role: Role, now: i64) -> Option<&'static str> {
+    if role == Role::Admin || m.created_by == user {
+        return Some("editor");
+    }
+    if m.access.expires.is_some_and(|t| now > t) {
+        return None;
+    }
+    let granted = if m.access.mode == "people" { m.access.people.get(user).map(String::as_str)? } else { m.access.everyone.as_str() };
+    Some(if granted == "editor" && role.can_edit() { "editor" } else { "viewer" })
+}
+
+/// Offered as an update: not blocked or deprecated.
+fn offerable(u: &UpdateInfo) -> bool {
+    u.status != "blocked" && u.status != "deprecated"
+}
+
+/// Appends one JSON line (feedback, health), creating the folder.
+fn append_line(path: &Path, v: &serde_json::Value) -> Result<()> {
+    if let Some(dir) = path.parent() {
+        fs::create_dir_all(dir)?;
+    }
+    let mut f = fs::OpenOptions::new().create(true).append(true).open(path)?;
+    writeln!(f, "{}", serde_json::to_string(v)?)?;
+    f.sync_data()?;
+    Ok(())
+}
+
+/// Adds an app's command counts to `adoption.json` (per day and version; 90 days kept).
+fn add_usage(path: &Path, version: &str, counts: &std::collections::BTreeMap<String, u64>) -> Result<()> {
+    let mut all: serde_json::Value = fs::read(path).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_else(|| serde_json::json!({}));
+    if !all.get("days").is_some_and(serde_json::Value::is_object) {
+        all = serde_json::json!({"days": {}});
+    }
+    let today = chrono::Local::now().date_naive();
+    let day = today.format("%Y-%m-%d").to_string();
+    if let Some(days) = all.get_mut("days").and_then(serde_json::Value::as_object_mut) {
+        let oldest = (today - chrono::Duration::days(90)).format("%Y-%m-%d").to_string();
+        days.retain(|d, _| *d >= oldest);
+        let per_day = days.entry(day).or_insert_with(|| serde_json::json!({}));
+        if let Some(per_day) = per_day.as_object_mut() {
+            let per_version = per_day.entry(version.to_string()).or_insert_with(|| serde_json::json!({}));
+            if let Some(m) = per_version.as_object_mut() {
+                // At most 2000 distinct commands per version and day: the catalogue is smaller.
+                for (id, n) in counts.iter().take(2000) {
+                    let was = m.get(id).and_then(serde_json::Value::as_u64).unwrap_or(0);
+                    m.insert(id.clone(), serde_json::json!(was.saturating_add(*n)));
+                }
+            }
+        }
+    }
+    write_atomic(path, &serde_json::to_vec_pretty(&all)?)
 }
 
 /// True when a connection ended before sending a complete hello.

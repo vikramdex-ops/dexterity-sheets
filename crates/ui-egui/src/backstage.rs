@@ -571,6 +571,7 @@ fn home(app: &mut SheetApp, ui: &mut Ui, bs: &mut Backstage, out: &mut Outcome) 
 
 fn new_page(app: &mut SheetApp, ui: &mut Ui, out: &mut Outcome) {
     new_tiles(app, ui, out);
+    crate::dex_ui::templates::new_page(app, ui, &mut out.close);
 }
 
 fn open_page(app: &mut SheetApp, ui: &mut Ui, bs: &mut Backstage, out: &mut Outcome) {

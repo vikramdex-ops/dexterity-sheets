@@ -11,6 +11,10 @@ use serde_json::{Value as Json, json};
 use super::*;
 use crate::outline;
 
+mod compare;
+mod diagnostics;
+mod quality;
+
 /// Excel draws at most this many validation circles at a time.
 pub const MAX_CIRCLES: usize = 255;
 /// Auto Outline reads at most this many formulas on a sheet.
@@ -28,6 +32,9 @@ pub struct DexState {
     pub focus_color: Option<String>,
     /// Data ▸ Circle Invalid Data: (document uid, sheet index, cell) for each circle.
     pub circles: Vec<(u64, usize, CellRef)>,
+    /// How many times each command ran (ids only, never parameters), for the office server's
+    /// feature-adoption report; the desktop app takes and resets it about once an hour.
+    pub usage: std::collections::BTreeMap<String, u64>,
 }
 
 /// Parameters that say where a command ran. Repeat drops them so the command runs on the
@@ -46,6 +53,11 @@ fn repeatable(id: &str) -> bool {
 /// document's (uid, revision) before it ran: a new revision means it made an undo step.
 pub fn after_command(s: &mut Session, id: &str, params: &Json, result: &Result<Json>, before: Option<(u64, u64)>) {
     let Ok(value) = result else { return };
+    // Bounded by the command catalogue (unknown ids fail before they get here).
+    if s.dex.usage.len() < 4096 || s.dex.usage.contains_key(id) {
+        let n = s.dex.usage.entry(id.to_string()).or_insert(0);
+        *n = n.saturating_add(1);
+    }
     if id == "data.circleInvalid" {
         if let Some(d) = s.active() {
             let (uid, sheet) = (d.uid, d.wb.active_sheet());
@@ -90,7 +102,7 @@ pub fn validation_circles(s: &Session) -> Vec<CellRef> {
 }
 
 pub fn specs() -> Vec<CommandSpec> {
-    vec![
+    let mut v = vec![
         cmd!(
             "edit.repeat",
             "Repeat",
@@ -122,8 +134,76 @@ pub fn specs() -> Vec<CommandSpec> {
         cmd!(noundo "formulas.removePrecedentArrows", "Remove Precedent Arrows", ["Formulas", "Formula Auditing", "Remove Arrows"], None, "{} → {removed: \"precedents\"}", has_doc, |_, _| Ok(json!({"removed": "precedents"}))),
         cmd!(noundo "formulas.removeDependentArrows", "Remove Dependent Arrows", ["Formulas", "Formula Auditing", "Remove Arrows"], None, "{} → {removed: \"dependents\"}", has_doc, |_, _| Ok(json!({"removed": "dependents"}))),
         cmd!(noundo "view.focusCell", "Focus Cell", ["View", "Show"], None, "{on?: bool (toggles without it), color?: \"#RRGGBB\"} → {on, color}", always, focus_cell),
+        cmd!(
+            query "file.recoverUnsaved",
+            "Recover Unsaved Work",
+            ["File", "Info", "Manage Workbook"],
+            None,
+            "{action?: list|recover|openSaved|compare|discard|discardAll, index?} — the desktop app's copies of unsaved work left by a crash (the app window handles it)",
+            always,
+            |_, _| Ok(json!({"items": [], "note": "recovery copies are kept by the desktop app"}))
+        ),
+        cmd!(
+            query "file.newFromTemplate",
+            "New from Template",
+            ["File", "New"],
+            None,
+            "{id? (office template), personal? (name)} — a new, unsaved spreadsheet with the template's content; without either, the Templates window (the desktop app)",
+            always,
+            |_, _| Err(bad("file.newFromTemplate", "templates are kept by the desktop app and the office server"))
+        ),
+        cmd!(
+            query "file.saveAsTemplate",
+            "Save as Template",
+            ["File", "Save As"],
+            None,
+            "{name?, office?: bool (administrators: the office library), category?, description?, mandatory?} — the open workbook as a template (the desktop app)",
+            has_doc,
+            |_, _| Err(bad("file.saveAsTemplate", "templates are kept by the desktop app and the office server"))
+        ),
+        cmd!(
+            query "automate.rules",
+            "Automation Rules",
+            ["Automate", "Automation"],
+            None,
+            "{rules?: [{name, enabled, trigger: {kind: schedule, every: daily|weekly, day, time} | {kind: change, column, equals}, actions: [{kind: notify, people} | {kind: qualityCheck} | {kind: overdue, dateColumn, statusColumn, done} | {kind: report} | {kind: stamp, column}]}], run?: rule id} — a shared workbook's rules, run by the office server (the desktop app)",
+            has_doc,
+            |_, _| Err(bad("automate.rules", "automation rules belong to shared workbooks on the office server (the desktop app)"))
+        ),
+        cmd!(query "help.whatsNew", "What's New", ["Help"], None, "{} — this version's release notes, with Report a Problem below (the app window shows them)", always, |_, _| Ok(json!({}))),
+        cmd!(
+            query "help.reportProblem",
+            "Report a Problem",
+            ["Help"],
+            None,
+            "{features?: [opening|saving|formulas|formatting|importExport|sharing|notifications|startup|performance|other], description?, expected?, actual?, severity?: low|medium|high|blocking, afterUpdate?, rolledBack?, logs?: bool, send?: bool} — a problem report to the office server's administrator (the app window sends it)",
+            always,
+            |_, _| Err(bad("help.reportProblem", "problem reports are sent by the desktop app, signed in to the office server"))
+        ),
+        cmd!(
+            query "help.rollBack",
+            "Roll Back to an Earlier Version",
+            ["Help"],
+            None,
+            "{version?} — installs an earlier Dexterity Sheets from the office server (lists them without `version`); workbooks are not touched",
+            always,
+            |_, _| Err(bad("help.rollBack", "rolling back is done by the desktop app, signed in to the office server"))
+        ),
+        cmd!(
+            query "help.updateChannel",
+            "Update Channel",
+            ["Help"],
+            None,
+            "{channel?: stable|testing} → {channel}: which versions the office server offers this PC",
+            always,
+            |_, _| Err(bad("help.updateChannel", "the update channel is the desktop app's setting"))
+        ),
         cmd!(noundo "review.showChanges", "Show Changes", ["Review", "Changes"], None, "{} — opens the shared workbook's edit history in the app window (Review ▸ Edit History)", has_doc, show_changes),
-    ]
+    ];
+    v.extend(compare::specs());
+    v.extend(diagnostics::specs());
+    v.extend(quality::specs());
+    v
 }
 
 fn can_repeat(s: &Session) -> std::result::Result<(), String> {

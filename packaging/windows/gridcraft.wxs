@@ -195,7 +195,10 @@
         <File Id="GridcraftExe" Source="$(var.BinDir)\DexteritySheets.exe">
           <Shortcut Id="StartMenuShortcut" Directory="ProgramMenuFolder" Name="Dexterity Sheets"
               Description="Dexterity Sheets spreadsheet" WorkingDirectory="INSTALLFOLDER" Advertise="no"
-              Icon="GridcraftIcon.ico" IconIndex="0" />
+              Icon="GridcraftIcon.ico" IconIndex="0">
+            <!-- The identity Windows notifications show (name and icon) and group by. -->
+            <ShortcutProperty Key="System.AppUserModel.ID" Value="DexterityDesign.DexteritySheets" />
+          </Shortcut>
         </File>
 
         <RegistryValue Root="HKCU" Key="Software\Microsoft\Windows\CurrentVersion\App Paths\DexteritySheets.exe" Value="[#GridcraftExe]" Type="string" />
@@ -208,6 +211,12 @@
         <RegistryValue Root="HKCU" Key="Software\Classes\DexteritySheets.TextData" Value="Dexterity Sheets Text Data" Type="string" />
         <RegistryValue Root="HKCU" Key="Software\Classes\DexteritySheets.TextData\DefaultIcon" Value="&quot;[#GridcraftExe]&quot;,0" Type="string" />
         <RegistryValue Root="HKCU" Key="Software\Classes\DexteritySheets.TextData\shell\open\command" Value="&quot;[#GridcraftExe]&quot; &quot;%1&quot;" Type="string" />
+
+        <!-- dexterity:// links (Share › Copy link, notifications): open the shared workbook in the app. -->
+        <RegistryValue Root="HKCU" Key="Software\Classes\dexterity" Value="URL:Dexterity Sheets link" Type="string" />
+        <RegistryValue Root="HKCU" Key="Software\Classes\dexterity" Name="URL Protocol" Value="dexterity" Type="string" />
+        <RegistryValue Root="HKCU" Key="Software\Classes\dexterity\DefaultIcon" Value="&quot;[#GridcraftExe]&quot;,0" Type="string" />
+        <RegistryValue Root="HKCU" Key="Software\Classes\dexterity\shell\open\command" Value="&quot;[#GridcraftExe]&quot; &quot;%1&quot;" Type="string" />
 
         <!-- "Open with": Windows reads only the value names under OpenWithProgids; the data is
              ignored (WiX rejects an empty Value, so it repeats the ProgId). -->

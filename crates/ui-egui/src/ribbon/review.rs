@@ -28,6 +28,7 @@ pub(super) fn review(app: &mut SheetApp, ui: &mut Ui) {
     if __k.clicked() {
         app.open_dialog("accessibility", json!({}));
     }
+    crate::dex_ui::tools::review_buttons(app, ui);
     sep(ui);
     let __k = big_button(ui, Icon::Comment, "New\nComment", "New Comment", false);
     control_keytip(app, ui, &__k, "dialog:comment");

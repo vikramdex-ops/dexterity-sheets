@@ -1,0 +1,88 @@
+name: Feedback triage
+
+# A problem report from the office (Server Manager › Feedback › Open GitHub issue) arrives as an
+# issue labelled `feedback` and `area:<feature>`. This runs the tests that cover that feature on
+# the current main and says on the issue what passed or failed, so the person who reviews it
+# starts from evidence. It never changes code: a fix is still made, reviewed and approved by a
+# developer. The issue's text is never run or interpolated into a command.
+on:
+  issues:
+    types: [opened, labeled]
+  workflow_dispatch:
+    inputs:
+      area:
+        description: Feature area (opening, saving, formulas, formatting, importExport, sharing, notifications, startup, performance, other)
+        required: true
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: triage-${{ github.event.issue.number || inputs.area }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    if: github.event_name == 'workflow_dispatch' || contains(join(github.event.issue.labels.*.name, ','), 'area:')
+    runs-on: windows-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Pick the checks for the area
+        id: pick
+        shell: bash
+        env:
+          LABELS: ${{ join(github.event.issue.labels.*.name, ',') }}
+          INPUT_AREA: ${{ inputs.area }}
+        run: |
+          areas="$INPUT_AREA"
+          IFS=',' read -ra ls <<< "$LABELS"
+          for l in "${ls[@]}"; do
+            case "$l" in area:*) areas="$areas ${l#area:}";; esac
+          done
+          pkgs=""
+          for a in $areas; do
+            case "$a" in
+              opening|saving|importExport) pkgs="$pkgs -p gridcraft-xlsx -p gridcraft-engine";;
+              formulas) pkgs="$pkgs -p gridcraft-formula -p gridcraft-functions -p gridcraft-calc";;
+              formatting) pkgs="$pkgs -p gridcraft-numfmt -p gridcraft-engine";;
+              sharing|notifications) pkgs="$pkgs -p gridcraft-collab";;
+              startup|performance|other) pkgs="$pkgs -p gridcraft-engine -p gridcraft-collab";;
+            esac
+          done
+          pkgs=$(echo "$pkgs" | tr ' ' '\n' | paste -sd' ' | sed 's/-p -p/-p/g')
+          [ -z "$pkgs" ] && pkgs="-p gridcraft-engine"
+          echo "pkgs=$pkgs" >> "$GITHUB_OUTPUT"
+          echo "areas=$areas" >> "$GITHUB_OUTPUT"
+      - name: Run them
+        id: run
+        shell: bash
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          cargo test --release --locked ${{ steps.pick.outputs.pkgs }} 2>&1 | tee test.log
+      - name: Report on the issue
+        if: github.event_name == 'issues'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE: ${{ github.event.issue.number }}
+          OUTCOME: ${{ steps.run.outcome }}
+          AREAS: ${{ steps.pick.outputs.areas }}
+          PKGS: ${{ steps.pick.outputs.pkgs }}
+        run: |
+          summary=$(grep -E "^test result:|^failures:|FAILED|panicked" test.log | head -40)
+          if [ "$OUTCOME" = "success" ]; then verdict="The tests for **${AREAS}** pass on main. The problem is not covered by them yet: a developer should reproduce it and add a test."; else verdict="Tests for **${AREAS}** fail on main: see below. A developer should review before any fix."; fi
+          {
+            echo "Automatic check (\`cargo test ${PKGS}\`, commit ${GITHUB_SHA::8}): ${verdict}"
+            echo
+            echo '```'
+            echo "$summary"
+            echo '```'
+            echo
+            echo "[Full log](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID})"
+          } > comment.md
+          gh issue comment "$ISSUE" --body-file comment.md -R "$GITHUB_REPOSITORY"

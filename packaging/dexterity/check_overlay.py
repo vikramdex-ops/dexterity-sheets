@@ -60,6 +60,13 @@ HOOKS = [
     ("crates/xlsx/src/fmla.rs", "pub(crate) struct TableNames", "bare table names written as Table[] (Excel reads a bare name as #NAME?)"),
     ("crates/xlsx/src/fmla.rs", "Expr::Name(n) => is_table(n)", "the formula writer's fast path still rewrites bare table names"),
     ("crates/xlsx/src/fmla.rs", "Expr::Name(s.table)", "Table[] reads back as the bare table name it was written from"),
+    ("apps/gridcraft/src/main.rs", "gridcraft_ui_egui::dex_ui::recovery::clean_exit(&mut self.0);", "a normal exit removes the crash-recovery copies"),
+    ("apps/gridcraft/src/main.rs", "gridcraft_ui_egui::dex_ui::enable_desktop();", "crash recovery, links and notifications run in the desktop app only (never in tests)"),
+    ("crates/ui-egui/src/{dialogs.rs,dialogs/*.rs}", "crate::dex_ui::releases::about_details(ui);", "About shows the build, update channel and repository"),
+    ("crates/ui-egui/src/{lib.rs,app.rs,app/*.rs}", "crate::dex_ui::share::open_link(self, path)", "dexterity:// links open shared spreadsheets"),
+    ("crates/ui-egui/src/{ribbon.rs,ribbon/*.rs}", "crate::dex_ui::tools::auditing_buttons(app, ui)", "Formulas: Diagnostics and Explain Error"),
+    ("crates/ui-egui/src/{ribbon.rs,ribbon/*.rs}", "crate::dex_ui::tools::review_buttons(app, ui);", "Review: Compare Files and Quality Check"),
+    ("crates/ui-egui/src/backstage.rs", "crate::dex_ui::templates::new_page(app, ui, &mut out.close);", "File › New: office and personal templates"),
 ]
 
 # Strings that must not come back into the shipped app's code from upstream.

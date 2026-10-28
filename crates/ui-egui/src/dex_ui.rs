@@ -11,6 +11,27 @@ use serde_json::{Value as Json, json};
 
 use crate::SheetApp;
 use crate::grid::Geo;
+
+/// Set by the desktop app's `main` only: the side effects that belong to a person's own PC (crash
+/// recovery copies, settings files, the local port links arrive on, Windows notifications) run
+/// only then, so tests and other hosts of `SheetApp` never touch the user's folders or desktop.
+static DESKTOP: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// The desktop app is running (called once from `apps/gridcraft`'s `main`).
+pub fn enable_desktop() {
+    DESKTOP.store(true, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub(crate) fn desktop() -> bool {
+    DESKTOP.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+pub mod automation;
+pub mod recovery;
+pub mod releases;
+pub mod share;
+pub mod templates;
+pub mod tools;
 use crate::icons::Icon;
 use crate::widgets::{small_button, small_split_button};
 
@@ -141,6 +162,12 @@ pub fn outline_buttons(app: &mut SheetApp, ui: &mut Ui) {
 /// Returns `None` for every other command.
 pub fn run_command(app: &mut SheetApp, id: &str, p: &Json) -> Option<Result<Json, String>> {
     match id {
+        // The engine command is the catalogue entry; the copies and the dialog are the window's.
+        "file.recoverUnsaved" => return Some(recovery::run_command(app, p)),
+        "automate.rules" => return Some(automation::run_command(app, p)),
+        "file.newFromTemplate" | "file.saveAsTemplate" => return templates::run_command(app, id, p),
+        "review.compareFiles" | "data.qualityCheck" | "formulas.diagnostics" | "formulas.explainError" => return tools::run_command(app, id, p),
+        "help.whatsNew" | "help.reportProblem" | "help.rollBack" | "help.updateChannel" => return releases::run_command(app, id, p),
         // The panes these open are UI state the ribbon buttons set; from the command search, a
         // key tip or the control channel the command alone left nothing on screen.
         "formulas.watchWindow" => {

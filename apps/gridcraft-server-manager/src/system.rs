@@ -215,6 +215,26 @@ pub fn open_in_explorer(path: &Path) {
     };
 }
 
+/// Opens a web address in the default browser, as Dexterity Sheets opens links: only `http` and
+/// `https` addresses that pass the app's link check are handed to the system.
+pub fn open_url(url: &str) -> Result<(), String> {
+    let gridcraft_engine::links::LinkKind::External(url) = gridcraft_engine::links::classify(url) else {
+        return Err("That address can't be opened.".into());
+    };
+    let lower = url.to_ascii_lowercase();
+    if !(lower.starts_with("https://") || lower.starts_with("http://")) {
+        return Err("Only web addresses are opened.".into());
+    }
+    let cmd = if cfg!(windows) {
+        std::env::var_os("SystemRoot").map_or_else(|| PathBuf::from("explorer.exe"), |r| PathBuf::from(r).join("explorer.exe"))
+    } else if cfg!(target_os = "macos") {
+        PathBuf::from("open")
+    } else {
+        PathBuf::from("xdg-open")
+    };
+    Command::new(&cmd).arg(&url).spawn().map(|_| ()).map_err(|e| format!("The browser could not be opened: {e}"))
+}
+
 /// The last `lines` lines of the server log.
 pub fn log_tail(dir: &Path, lines: usize) -> String {
     let Ok(mut f) = std::fs::File::open(dir.join("server.log")) else { return String::new() };

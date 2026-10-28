@@ -176,7 +176,10 @@ insert(
 FUZZ = "crates/engine/tests/it/command_sequence_fuzz.rs"
 s = read(FUZZ)
 if '("edit.repeat", DEX)' not in s:
-    dex_ids = re.findall(r'cmd!\((?:noundo |query )?"([A-Za-z.]+)"', read("crates/engine/src/cmd/dex.rs"))
+    dex_src = read("crates/engine/src/cmd/dex.rs") + "".join(
+        read(os.path.relpath(p, ROOT)) for p in sorted(glob.glob(os.path.join(ROOT, "crates", "engine", "src", "cmd", "dex", "*.rs")))
+    )
+    dex_ids = re.findall(r'cmd!\(\s*(?:noundo |query )?"([A-Za-z.]+)"', dex_src)
     s2 = s.replace(
         "const EXCLUDED: &[(&str, &str)] = &[\n",
         "/// Dexterity Sheets keeps its own commands out of the random pool so the sequences stay the same\n"
@@ -219,6 +222,48 @@ insert(
     "crate::dex_ui::run_command(self, id, p)",
     "        if let Some(r) = crate::collab_ui::run_command(self, id, p) {\n            return Some(r);\n        }\n",
     "        if let Some(r) = crate::dex_ui::run_command(self, id, p) {\n            return Some(r);\n        }\n",
+)
+insert(
+    f"{UI}/backstage.rs",
+    "dex_ui::templates::new_page(",
+    "    new_tiles(app, ui, out);\n",
+    "    crate::dex_ui::templates::new_page(app, ui, &mut out.close);\n",
+)
+insert(
+    f"{UI}/ribbon/formulas.rs",
+    "dex_ui::tools::auditing_buttons(",
+    "        crate::dex_ui::remove_arrows_button(app, ui);\n    });\n",
+    "    ui.vertical(|ui| crate::dex_ui::tools::auditing_buttons(app, ui));\n",
+)
+insert(
+    f"{UI}/ribbon/review.rs",
+    "dex_ui::tools::review_buttons(",
+    '        app.open_dialog("accessibility", json!({}));\n    }\n',
+    "    crate::dex_ui::tools::review_buttons(app, ui);\n",
+)
+insert(
+    f"{UI}/app/files.rs",
+    "dex_ui::share::open_link(",
+    "    pub fn open_path(&mut self, path: &str) {\n",
+    "        // Dexterity Sheets: a dexterity:// link to a shared spreadsheet, not a file.\n        if crate::dex_ui::share::open_link(self, path) {\n            return;\n        }\n",
+)
+insert(
+    f"{UI}/dialogs/about.rs",
+    "dex_ui::releases::about_details(",
+    '            ui.label(format!("Version {}", gridcraft_collab::APP_VERSION.trim()));\n',
+    "            crate::dex_ui::releases::about_details(ui);\n",
+)
+insert(
+    "apps/gridcraft/src/main.rs",
+    "dex_ui::enable_desktop(",
+    "    let mut app = SheetApp::new(session, services());\n",
+    "    // Dexterity Sheets: crash recovery, links and notifications belong to the desktop app only.\n    gridcraft_ui_egui::dex_ui::enable_desktop();\n",
+)
+insert(
+    "apps/gridcraft/src/main.rs",
+    "dex_ui::recovery::clean_exit(",
+    "    fn on_exit(&mut self) {\n        print::finish_pending_jobs();\n",
+    "        // Dexterity Sheets: a normal exit leaves no crash-recovery copies behind.\n        gridcraft_ui_egui::dex_ui::recovery::clean_exit(&mut self.0);\n",
 )
 insert(
     f"{UI}/grid/show.rs",

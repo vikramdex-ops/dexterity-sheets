@@ -5,10 +5,11 @@
 //!
 //! ```text
 //! DexSheetsServerManager [--data DIR] [--no-elevate] [--import PEOPLE.xlsx|.csv]
-//!                        [--shot overview|people|add-many|updates|backup OUT.png]
+//!                        [--shot overview|people|add-many|updates|backup|versions|releases|feedback|health|adoption OUT.png]
 //! ```
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod admin;
 mod roster;
 mod system;
 
@@ -35,10 +36,29 @@ enum Page {
     AddMany,
     Updates,
     Backup,
+    // The dashboard (admin.rs).
+    Versions,
+    Releases,
+    Feedback,
+    Health,
+    Adoption,
 }
 
 impl Page {
-    const ALL: [Page; 5] = [Page::Overview, Page::People, Page::AddMany, Page::Updates, Page::Backup];
+    const ALL: [Page; 10] = [
+        Page::Overview,
+        Page::People,
+        Page::AddMany,
+        Page::Updates,
+        Page::Backup,
+        Page::Versions,
+        Page::Releases,
+        Page::Feedback,
+        Page::Health,
+        Page::Adoption,
+    ];
+    /// The first page of the dashboard group in the page list.
+    const DASHBOARD: Page = Page::Versions;
     fn label(self) -> &'static str {
         match self {
             Page::Overview => "Server",
@@ -46,6 +66,11 @@ impl Page {
             Page::AddMany => "Add many people",
             Page::Updates => "App updates",
             Page::Backup => "Backup and restore",
+            Page::Versions => "Installed versions",
+            Page::Releases => "Releases",
+            Page::Feedback => "Feedback",
+            Page::Health => "System health",
+            Page::Adoption => "Feature adoption",
         }
     }
     fn id(self) -> &'static str {
@@ -55,6 +80,11 @@ impl Page {
             Page::AddMany => "add-many",
             Page::Updates => "updates",
             Page::Backup => "backup",
+            Page::Versions => "versions",
+            Page::Releases => "releases",
+            Page::Feedback => "feedback",
+            Page::Health => "health",
+            Page::Adoption => "adoption",
         }
     }
 }
@@ -128,6 +158,8 @@ struct App {
     with_installers: bool,
     job: Option<Job>,
     shot: Option<(Page, PathBuf, u32)>,
+    // Installed versions, Releases, Feedback, System health, Feature adoption
+    dash: admin::Dashboard,
 }
 
 fn role_label(r: Role) -> &'static str {
@@ -170,6 +202,7 @@ impl App {
             with_installers: false,
             job: None,
             shot: shot.map(|(p, path)| (p, path, 0)),
+            dash: admin::Dashboard::default(),
         };
         app.reload();
         app.check_network();
@@ -1049,6 +1082,10 @@ impl eframe::App for App {
         egui::Panel::left("nav").exact_size(190.0).resizable(false).show(ui, |ui| {
             ui.add_space(10.0);
             for p in Page::ALL {
+                if p == Page::DASHBOARD {
+                    ui.add_space(10.0);
+                    ui.label(RichText::new("Dashboard").color(DIM).small().strong());
+                }
                 let r = ui.add_sized(vec2(174.0, 34.0), egui::Button::selectable(self.page == p, RichText::new(p.label()).size(14.5)));
                 if r.clicked() && self.page != p {
                     self.page = p;
@@ -1067,6 +1104,11 @@ impl eframe::App for App {
                 Page::AddMany => self.add_many(ui),
                 Page::Updates => self.updates(ui),
                 Page::Backup => self.backup(ui),
+                Page::Versions => self.versions_page(ui),
+                Page::Releases => self.releases_page(ui),
+                Page::Feedback => self.feedback_page(ui),
+                Page::Health => self.health_page(ui),
+                Page::Adoption => self.adoption_page(ui),
             });
         });
         self.take_shot(&ctx);

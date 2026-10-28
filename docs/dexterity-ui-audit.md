@@ -13,7 +13,7 @@ missing. Kept current: a change that adds or alters a screen updates its row.
 |---|---|---|
 | Control channel driver | Opens each ribbon tab, Backstage page, dialog and task pane in a running app (`--sample sales --control`), reads `ui.inspect`, saves a screenshot of each; the screenshots were then looked at one by one | `python -I D:\GridCraft\ui-audit\drive.py target\debug <out>` (kept outside the repository) |
 | Offscreen snapshots | The new ribbon controls, Focus Cell and validation circles with real data | `cargo run -p gridcraft-ui-egui --example snapshot -- --sample sales --tab Data --cmd 'data.circleInvalid={}' out.png` |
-| Server Manager `--shot` | Server, People, Add many people, App updates, Backup and restore, on a throw-away data folder | `python packaging/dexterity/tests/server_manager_shots.py target/release <out>` plus `--shot backup` |
+| Server Manager `--shot` | Server, People, Add many people, App updates, Backup and restore, and the dashboard (Installed versions, Releases, Feedback, System health, Feature adoption) with example files, on a throw-away data folder | `python packaging/dexterity/tests/server_manager_shots.py target/release <out>` plus `--shot backup` |
 | Static scans | Placeholder wording in shipped UI strings; ribbon buttons whose click is never handled; engine dialog requests the UI does not know; commands fired from controls whose result is thrown away | `docs_check.py` (placeholder words); the scans are described in the findings below |
 | UI tests | Each fix below has a test in `crates/ui-egui/tests/it/dex_parity.rs`; key tips are regenerated and tested (`cargo xtask keytips`) | `cargo test -p gridcraft-ui-egui --test it dex_parity` |
 
@@ -40,6 +40,9 @@ Draw tab's pen strokes, and printing to a real printer.
 | Backstage: Home, New, Open, Shared, Info, Save As, Print, Export, Options, Account | each page opened and photographed | real; "No recent workbooks yet" is an honest empty state | — |
 | Task panes: Edit History, Versions, Comments, Watch Window | opened | real; Edit History and Versions explain that they need a shared workbook | — |
 | Server Manager: Server, People, Add many people, App updates, Backup and restore | `--shot` of each page, with and without an installed server and accounts | real; Start / Stop / Restart are disabled with the reason shown ("The server is not installed") | — |
+| 2026-10-29 additions: Review › Compare Files and Quality Check, Formulas › Diagnostics and Explain Error, Share…, Notifications, Quality Check results | release build driven over the control channel and photographed (Review and Formulas ribbons, Quality Check results with cell links, the Share dialog signed out) | real; Share is disabled with the reason when not signed in; the result windows say so when nothing is found | the windows drew only in a focused window, so they never showed with the app in the background: now the main window draws them then |
+| Not photographed yet: Templates, Automation rules, Recover Unsaved Work, What's New, Report a Problem, Roll Back, About's new lines | covered by their command tests and, for recovery, `recovery_e2e.py` with real app processes | — | — |
+| Server Manager dashboard: Installed versions, Releases, Feedback, System health, Feature adoption | `--shot` of each page with example files and with an empty data folder | real; each page says plainly when nothing has been reported yet; Releases editing is disabled with "Needs administrator rights." when not run as administrator | — |
 
 ## Left, with the reason
 

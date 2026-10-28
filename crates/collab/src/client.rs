@@ -23,6 +23,8 @@ pub struct Config {
 }
 
 #[derive(Debug)]
+// A handful of events a second, each moved once: boxing every message would cost more than it saves.
+#[allow(clippy::large_enum_variant)]
 pub enum Event {
     /// Logged in (again, after a reconnect: reopen shared workbooks).
     Connected {

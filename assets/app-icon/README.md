@@ -1,23 +1,28 @@
 # Dexterity Sheets app icon
 
 Original artwork by Dexterity Design Services Pvt. Ltd., drawn entirely in code by
-[`packaging/dexterity/make_icon.py`](../../packaging/dexterity/make_icon.py): a deep-blue rounded
-tile, a faint white spreadsheet grid and a bold white "D" made of plain geometry (a stem and a
-half-ellipse bowl; no font, no third-party art). It replaces the upstream GridCraft placeholder
-icon.
+[`packaging/dexterity/make_icon.py`](../../packaging/dexterity/make_icon.py), the single source
+every size and format is generated from. The "linked cells" mark: a rounded tile shading from
+deep indigo to teal, a 3 × 3 grid of spreadsheet cells, and three cells lit and joined by an amber
+line with a node in each, rising like a tick: a spreadsheet, connected data, work done. Plain
+geometry only (no font, no third-party art). It replaced the earlier blue "D" tile on 28 October
+2026, and the upstream GridCraft icon before that.
 
 ## Palette
 
 | Colour | Hex | Used for |
 |---|---|---|
-| Deep blue | `#0d3b8c` → `#082866` | The tile (vertical gradient) |
-| White | `#ffffff` | The "D"; the grid at 36 % opacity |
+| Indigo → teal | `#1e2a78` → `#0e8c8c` | The tile (diagonal gradient, top left to bottom right) |
+| White | `#ffffff` | The three lit cells and the node centres; the other cells at 22 % opacity |
+| Amber | `#ffb020` | The line and its nodes |
 
 ## Geometry
 
-A 512 × 512 design space, clipped to a rounded square with `rx=112`. Windows and Linux use the
-full tile; sizes below 32 px drop the grid so the "D" stays legible. The macOS icons (`.icns`,
-`dexterity-sheets-macos-512.png`) sit on Apple's grid: an 824/1024 body with a transparent margin.
+A 512 × 512 design space, a rounded square with `rx=112`. Cells are 96 px with 24 px gaps from 88
+to 424 (`rx=20`); the lit cells are column 1 row 2, column 2 row 3 and column 3 row 1, joined in
+that order by a 30 px line with 25 px nodes. Sizes below 32 px drop the faint cells and the node
+centres so the tick stays legible. The macOS icons (`.icns`, `dexterity-sheets-macos-512.png`) sit
+on Apple's grid: an 824/1024 body with a transparent margin.
 
 ## Files
 

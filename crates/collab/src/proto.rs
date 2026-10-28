@@ -79,6 +79,50 @@ pub enum ClientMsg {
         book: String,
         name: String,
     },
+    /// A shared workbook's automation rules.
+    GetRules {
+        book: String,
+    },
+    /// Replaces them (its creator or an administrator).
+    SetRules {
+        book: String,
+        rules: Vec<Rule>,
+    },
+    /// Runs one rule now, whatever its trigger (to try it).
+    RunRule {
+        book: String,
+        id: String,
+    },
+    /// The office's approved templates.
+    ListTemplates,
+    /// One template's workbook, to create a new spreadsheet from (a copy: never linked to it).
+    GetTemplate {
+        id: String,
+    },
+    /// Adds or replaces (same `id`) an approved template: administrators only.
+    PublishTemplate {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        name: String,
+        #[serde(default)]
+        category: String,
+        #[serde(default)]
+        description: String,
+        /// Workflows this template is required for ("Document register for client submissions").
+        #[serde(default)]
+        mandatory: String,
+        xlsx: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        sha256: Option<String>,
+    },
+    DeleteTemplate {
+        id: String,
+    },
+    /// Who may open a shared workbook and what they may do (its creator or an administrator).
+    SetAccess {
+        book: String,
+        access: Access,
+    },
     /// Deletes a shared workbook (kept in the server's trash folder). `stopped`: its file was
     /// shared and the person stops sharing it; the file stays where it is.
     DeleteBook {
@@ -128,9 +172,28 @@ pub enum ClientMsg {
         book: String,
         version: String,
     },
-    /// Is there a newer Dexterity Sheets than `version`?
+    /// Is there a newer Dexterity Sheets than `version` on `channel` (stable when not given)?
+    /// The answer also says whether `version` itself is known to be broken, and which older
+    /// versions it can be rolled back to.
     CheckUpdate {
         version: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        channel: Option<String>,
+    },
+    /// A problem report about this app version (Help › Report a Problem).
+    Feedback {
+        report: Feedback,
+    },
+    /// An update that failed, or a start after a run that did not end normally.
+    Health {
+        version: String,
+        kind: String,
+        detail: String,
+    },
+    /// How many times each command ran since the last report (command ids only).
+    Usage {
+        version: String,
+        counts: std::collections::BTreeMap<String, u64>,
     },
     /// The installer for `version`.
     GetUpdate {
@@ -148,6 +211,40 @@ pub struct UpdateInfo {
     pub file: String,
     pub size: u64,
     pub sha256: String,
+    /// `stable` or `testing` (see `docs/dexterity-admin-data.md`).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub channel: String,
+    /// `ok`, `knownIssue`, `deprecated` or `blocked`, as the administrator marked it.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub status: String,
+    /// The administrator's note for people running this version.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub note: String,
+}
+
+/// A problem report: what the person ticked and typed in Report a Problem.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Feedback {
+    pub version: String,
+    pub os: String,
+    /// `opening`, `saving`, `formulas`, `formatting`, `importExport`, `sharing`,
+    /// `notifications`, `startup`, `performance`, `other`.
+    pub features: Vec<String>,
+    pub description: String,
+    #[serde(default)]
+    pub expected: String,
+    #[serde(default)]
+    pub actual: String,
+    /// `low`, `medium`, `high`, `blocking`.
+    pub severity: String,
+    #[serde(default)]
+    pub after_update: bool,
+    #[serde(default)]
+    pub rolled_back: bool,
+    /// The end of the app's log, only when the person agreed to send it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub logs: Option<String>,
 }
 
 /// Where a shared workbook lives as a file: shared from a folder on someone's PC or a network
@@ -193,6 +290,143 @@ pub struct BookInfo {
     /// The file it was shared from, if any.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source: Option<Box<FileSource>>,
+    /// Who may open it.
+    #[serde(default)]
+    pub access: Access,
+    /// What the person this list is for may do: `editor` or `viewer`.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub permission: String,
+}
+
+/// Who may open a shared workbook. Its creator and administrators always may, as editors.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct Access {
+    /// `office`: everyone signed in to this server; `people`: only those in `people`.
+    pub mode: String,
+    /// With `office`: what everyone may do, `editor` or `viewer`.
+    pub everyone: String,
+    /// With `people`: user name → `editor` or `viewer`.
+    pub people: std::collections::BTreeMap<String, String>,
+    /// After this (ms since 1970) only the creator and administrators may open it.
+    pub expires: Option<i64>,
+    /// Viewers may save a copy or export it. Enforced by the app (Save As, Export, copy out).
+    pub download: bool,
+}
+
+impl Default for Access {
+    fn default() -> Access {
+        Access { mode: "office".into(), everyone: "editor".into(), people: Default::default(), expires: None, download: true }
+    }
+}
+
+/// An automation rule of a shared workbook, run by the office server (so nobody needs to have
+/// the workbook open). Only these fixed, deterministic steps exist: no macros or scripts.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct Rule {
+    pub id: String,
+    pub name: String,
+    pub enabled: bool,
+    pub trigger: Trigger,
+    pub actions: Vec<Action>,
+    /// When it last ran (ms since 1970), kept by the server.
+    pub last_run: Option<i64>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum Trigger {
+    /// `every`: `daily` or `weekly` (`day`: 0 = Monday … 6 = Sunday) at `time` ("09:00", the
+    /// server's clock).
+    Schedule {
+        every: String,
+        #[serde(default)]
+        day: u8,
+        time: String,
+    },
+    /// A cell of `column` (first sheet) changes to `equals` (case and spaces ignored).
+    Change { column: String, equals: String },
+}
+
+impl Default for Trigger {
+    fn default() -> Trigger {
+        Trigger::Schedule { every: "weekly".into(), day: 0, time: "09:00".into() }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum Action {
+    /// Tell these people (user names) what the rule found.
+    Notify { people: Vec<String> },
+    /// Run the Quality Check and count the issues.
+    QualityCheck,
+    /// Rows whose date in `date_column` has passed while `status_column` is not `done`.
+    #[serde(rename_all = "camelCase")]
+    Overdue { date_column: String, status_column: String, done: String },
+    /// Write what was found as a new shared report workbook the notified people can open.
+    Report,
+    /// With a change trigger: write the date and time in this column of the changed row.
+    Stamp { column: String },
+}
+
+/// An approved template in the office library.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct TemplateInfo {
+    pub id: String,
+    pub name: String,
+    pub category: String,
+    pub description: String,
+    /// Required for these workflows (empty: optional).
+    pub mandatory: String,
+    /// Each publish of the same template counts up.
+    pub version: u32,
+    pub updated: i64,
+    pub updated_by: String,
+    pub size: u64,
+}
+
+/// Something worth telling a person about: a workbook shared with them, their access changed,
+/// changes made while they were away, a new app version, unsaved work to recover.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct Notice {
+    pub id: String,
+    pub time: i64,
+    /// `shared`, `permission`, `revoked`, `mention`, `changed`, `update`, `recovery`.
+    pub kind: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub book: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub name: String,
+    /// Display name of who did it.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub by: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub permission: String,
+    pub text: String,
+}
+
+/// A `dexterity://` link to a shared workbook on `server` (`host:port`), which opens it in the
+/// app after the person's own permissions are checked. It carries no secret.
+pub fn link(server: &str, book: &str) -> String {
+    format!("dexterity://open/{server}/{book}")
+}
+
+/// The browser fallback for [`link`]: a page on the office server that opens the app or offers
+/// the installer.
+pub fn web_link(server: &str, book: &str) -> String {
+    format!("http://{server}/open/{book}")
+}
+
+/// `(server, book)` of a `dexterity://open/<server>/<book>` link.
+pub fn parse_link(s: &str) -> Option<(String, String)> {
+    let rest = s.trim().trim_end_matches('/').strip_prefix("dexterity://open/").or_else(|| s.trim().strip_prefix("dexterity:open/"))?;
+    let (server, book) = rest.rsplit_once('/')?;
+    let ok = |x: &str| !x.is_empty() && x.len() <= 200 && x.chars().all(|c| c.is_ascii_alphanumeric() || "-._:[]".contains(c));
+    (ok(server) && ok(book)).then(|| (server.to_string(), book.to_string()))
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -356,10 +590,35 @@ pub enum ServerMsg {
         #[serde(default)]
         stopped: bool,
     },
+    Notice {
+        notice: Notice,
+    },
+    Templates {
+        templates: Vec<TemplateInfo>,
+    },
+    Rules {
+        book: String,
+        rules: Vec<Rule>,
+    },
+    Template {
+        info: TemplateInfo,
+        xlsx: String,
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        sha256: String,
+    },
     /// Sent after `CheckUpdate`, and to everyone when the server gets a newer version. `None`:
     /// the app is up to date.
     Update {
         update: Option<UpdateInfo>,
+        /// The asking app's own version as the server knows it (its status and note).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        current: Option<UpdateInfo>,
+        /// Older versions it can roll back to, newest first (none blocked).
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        older: Vec<UpdateInfo>,
+        /// `prompt`, `auto` or `manual` (the administrator's update policy).
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        policy: String,
     },
     /// The installer, base64.
     UpdateFile {

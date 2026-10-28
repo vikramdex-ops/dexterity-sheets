@@ -130,6 +130,7 @@ pub(super) fn formulas(app: &mut SheetApp, ui: &mut Ui) {
         }
         crate::dex_ui::remove_arrows_button(app, ui);
     });
+    ui.vertical(|ui| crate::dex_ui::tools::auditing_buttons(app, ui));
     ui.vertical(|ui| {
         let __k = small_button(ui, Icon::Fx, "Show Formulas", "Show Formulas", false);
         control_keytip(app, ui, &__k, "formulas.showFormulas");

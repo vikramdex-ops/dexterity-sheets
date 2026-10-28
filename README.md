@@ -48,7 +48,7 @@
 2. **Sign in.** Open Dexterity Sheets and go to **File › Shared**. The office server is found on
    its own; enter the user name and password IT gave you.
 3. **Share and edit together.** Open any workbook from wherever you keep it (your `D:` drive, a
-   project folder, the network drive) and click **Share › Share with my team**. The file stays
+   project folder, the network drive) and click **Share › Share…**. The file stays
    where it is and keeps everyone's edits; your team sees each other's changes almost instantly.
 
 ## What it does for you
@@ -62,7 +62,12 @@
 <tr>
 <td width="33%" valign="top"><img src="docs/readme/feature-versions.svg" width="100%" alt="Versions kept every hour and on Save, each one restorable"><p><b>Nothing gets lost.</b> Versions are kept every hour and on every save. Open any of them as a copy, or bring one back for everyone.</p></td>
 <td width="33%" valign="top"><img src="docs/readme/feature-excel.svg" width="100%" alt="An .xlsx file going in and coming out intact"><p><b>Excel in, Excel out.</b> Clients send <code>.xlsx</code>, you send <code>.xlsx</code> back. Formulas, formats, charts and tables survive the trip.</p></td>
-<td width="33%" valign="top"><img src="docs/readme/feature-updates.svg" width="100%" alt="An update arriving and installing itself"><p><b>Always up to date.</b> When there's a new version, the status bar says so. One click and it installs itself and reopens.</p></td>
+<td width="33%" valign="top"><img src="docs/readme/feature-updates.svg" width="100%" alt="An update arriving and installing itself"><p><b>Always up to date.</b> When there's a new version, the status bar says so. One click and it installs itself and reopens. Trouble with a new version? <b>Help › Roll Back</b>, and tell IT which feature broke.</p></td>
+</tr>
+<tr>
+<td width="33%" valign="top"><p><b>Share with the right people.</b> The whole office or named colleagues, as editors or viewers, until a date you pick. Copy a link into a chat; a Windows notification tells them it was shared.</p></td>
+<td width="33%" valign="top"><p><b>Check and compare.</b> <b>Compare Files</b> lists what changed between Rev A and Rev B. <b>Quality Check</b> and <b>Formula Diagnostics</b> find duplicates, blanks, bad dates and broken formulas, each with its cell.</p></td>
+<td width="33%" valign="top"><p><b>Never lose unsaved work.</b> If the app or Windows stops unexpectedly, the next start offers to recover each workbook, open its saved version, or compare the two.</p></td>
 </tr>
 </table>
 
@@ -142,7 +147,7 @@ lost: it writes every change to disk before anyone else sees it.
 <summary><b>Can I share a file that's on my own PC or in a project folder?</b></summary>
 
 Yes, and that's the normal way to work. Open the file from wherever it is saved (`D:\Projects\…`,
-your Desktop, the network drive), then click **Share › Share with my team**. Nothing is moved or
+your Desktop, the network drive), then click **Share › Share…**. Nothing is moved or
 copied anywhere for you to look after:
 
 - Your teammates find it in **File › Shared**, listed as your file, and edit it with you live.
@@ -241,6 +246,11 @@ Everything else is in the Server Manager too, so the job can be handed to anyone
 | **Add many people** | The bulk list described above |
 | **App updates** | Fetch new versions of Dexterity Sheets from this GitHub repository automatically, or add an `.msi` by hand; every PC on the network is offered it |
 | **Backup and restore** | One `.zip` with every account, shared workbook, edit history and version; restoring keeps the data it replaces |
+| **Installed versions** | Which Dexterity Sheets version each PC runs, its channel and when it was last seen, with a count per version |
+| **Releases** | Each installer's channel (stable or testing), status (OK, known issue, deprecated, blocked) and the note people running it see; which version stable and testing PCs are offered and where a blocked version rolls back to; whether updates are offered, installed on their own or never offered |
+| **Feedback** | Problem reports sent with Help › Report a Problem, grouped by version and feature, each readable in full (with its logs when included); **Open GitHub issue** fills in a new issue without names of people or PCs |
+| **System health** | Failed updates, starts after a crash or forced shutdown, and errors, per version over 7 and 30 days, and the latest 50 |
+| **Feature adoption** | The 30 most used commands and the rarely used ones over 7, 30 or 90 days, for all versions or one (command names only) |
 
 <p align="center"><img src="docs/images/server-manager.png" width="100%" alt="Server Manager, Server page: the service running with Start / Stop / Restart, how teammates reach it (name, computer name, addresses, port, firewall), what the server holds, and its log"></p>
 
@@ -255,7 +265,7 @@ only by administrators; uninstalling never deletes it. Full guide:
 
 | | |
 |---|---|
-| **Share** | Open the file from wherever it is saved and click **Share › Share with my team** (or *File › Shared › Share the current workbook*). The file stays where it is: the app of the person who shared it saves everyone's edits into it a second after each change, and on Ctrl+S. *File › Shared › New shared workbook* starts an empty one. |
+| **Share** | Open the file from wherever it is saved and click **Share › Share…** (or *File › Shared › Share the current workbook*). The file stays where it is: the app of the person who shared it saves everyone's edits into it a second after each change, and on Ctrl+S. *File › Shared › New shared workbook* starts an empty one. |
 | **Opening a shared file** | Opening a file that is being shared joins the live workbook, so a file on the network drive never splits into two versions. Reopening your own shared file rejoins it and brings the file up to date. |
 | **Stop sharing** | *Share › Stop sharing (keep my file)*: the file gets every edit and is just a file again; everyone else is told and keeps a copy in their window. If another program changed the file while it was shared, it is never overwritten: the app says so and the edits stay in the shared workbook (Save As keeps them). |
 | **See each other** | Other people's selections are outlined in their colour with their name; "(typing)" while they edit a cell. Click a name in the status bar to jump to them. |

@@ -34,7 +34,42 @@ app.
   the cell's Edit History. Edits to different cells never conflict.
 - **Roles.** `admin` (everything, including deleting any shared workbook), `editor` (edit, create,
   share; delete only their own workbooks), `viewer` (read only).
-- **Share a file from where it is.** Open it and click Share › Share with my team. The file is
+- **Who may open it.** Share › Share… (or Who has access…) chooses: **everyone at the office**
+  or **specific people**, each as an **Editor** or a **Viewer**; an optional end date after which
+  only the creator and administrators can open it; and whether viewers may save a copy or export
+  it. The server checks access on every open and every edit; a person removed while it is open
+  sees it close. A view-only account never edits, whatever a workbook allows. "Allow downloading"
+  is enforced by the app (Save As and Export are refused for a viewer); nothing stops someone
+  copying cells by hand or taking a screenshot.
+- **Links.** Share › Copy link gives `dexterity://open/<server>/<id>`: paste it in a chat or an
+  e-mail; clicking it opens the workbook in Dexterity Sheets (installed with the app), which
+  checks the reader's own access, so the link itself grants nothing. A second copy of the app hands
+  the link to the one already running. In a browser, `http://<server>:47810/open/<id>` opens the
+  app or offers the installer from the office server (plain HTTP on the office network; it names
+  no workbook). Links work whether the workbook was shared from a PC's own disk or from a network
+  drive: the content comes from the office server, so the reader needs no access to the folder.
+- **Notifications.** Windows tells you, under the Dexterity Sheets name and icon, when a
+  spreadsheet is shared with you (with your permission), when your access changes or is removed,
+  when others changed a shared spreadsheet while you were away (one summary per workbook at
+  sign-in, never one per edit), when a new version is ready, and when unsaved work can be
+  recovered. Clicking one opens the spreadsheet. Notices for someone who is not signed in wait on
+  the server (`notices/<user>.jsonl`). The status bar's **Notifications** lists them; its
+  settings turn notifications off, pick the kinds, mute single workbooks, or collect them into one
+  summary an hour. Not done yet: @mentions in comments.
+- **Templates.** File › New lists the office's approved templates (from the server's
+  `templates/` folder) and your own (`%APPDATA%\Dexterity Sheets\Templates`). Creating from a
+  template makes a new, unsaved copy; a template's next version never changes it. Administrators
+  publish (Templates window › Save as template › Office library), give a category, a description
+  and optionally what it is required for, and remove templates (kept in `trash/templates`).
+- **Automation rules.** Share › Automation rules… on a shared workbook (its creator or an
+  administrator). The server keeps them in `books/<id>/automation.json` and runs them itself:
+  on a schedule (every day or one weekday, at a time on the server's clock, checked every half
+  minute) or when a cell in a column of the first sheet becomes a value. Steps: Quality Check,
+  overdue items (a date column past today while a status column is not the "done" value), a
+  report (a new shared workbook only the notified people and the creator can open), a completion
+  time written in the changed row (an edit by "automation", which never triggers rules), and
+  notifying people. Run now tries a rule at once.
+- **Share a file from where it is.** Open it and click Share › Share…. The file is
   not moved: the sharer's app saves everyone's edits into it about a second after each change
   (Ctrl+S saves at once and keeps a version), so the file in the folder is always the team's
   latest. `.xlsx`, `.xlsm`, `.csv` and `.tsv` are written back; an `.xls` or `.ods` can be shared

@@ -88,6 +88,8 @@ fn book() -> BookInfo {
         seq: 0,
         open_by: vec![],
         source: None,
+        access: Default::default(),
+        permission: String::new(),
     }
 }
 
@@ -668,4 +670,371 @@ fn a_large_workbook_and_a_burst_of_edits_arrive_complete_and_in_order() {
     }
     assert!(!ra.sd.has_pending(), "every edit acknowledged");
     assert!(sync::content_differences(&ra.wb(), &lab.on_disk(&ra.sd.book.id), 5).is_empty());
+}
+
+// ---------------------------------------------------------------------------------------------
+// Sharing with specific people, notifications, web links, releases and feedback.
+
+fn notice(c: &Client) -> crate::proto::Notice {
+    match recv(c, |e| matches!(e, crate::client::Event::Message(ServerMsg::Notice { .. }))) {
+        crate::client::Event::Message(ServerMsg::Notice { notice }) => notice,
+        _ => unreachable!(),
+    }
+}
+
+fn books(c: &Client) -> Vec<BookInfo> {
+    // Lists the server broadcast earlier are stale: only the answer to this request counts.
+    while c.events.try_recv().is_ok() {}
+    c.send(ClientMsg::ListBooks);
+    match recv(c, |e| matches!(e, crate::client::Event::Message(ServerMsg::Books { .. }))) {
+        crate::client::Event::Message(ServerMsg::Books { books }) => books,
+        _ => unreachable!(),
+    }
+}
+
+fn error_or_opened(c: &Client) -> Result<(), String> {
+    match recv(c, |e| matches!(e, crate::client::Event::Message(ServerMsg::Error { .. } | ServerMsg::Opened { .. }))) {
+        crate::client::Event::Message(ServerMsg::Error { message }) => Err(message),
+        _ => Ok(()),
+    }
+}
+
+#[test]
+fn specific_people_see_and_edit_only_what_they_are_given() {
+    let lab = Lab::new("people");
+    crate::server::set_user(&lab.dir, "userc", "User C", "pass-c-444", crate::proto::Role::Editor).expect("user");
+    let a = lab.connect("usera", "pass-a-111");
+    let b = lab.connect("userb", "pass-b-222");
+    let c = lab.connect("userc", "pass-c-444");
+    share(&a, "Project_Tracker", &rich_workbook());
+    let ra = Replica::opened(&a);
+    let id = ra.sd.book.id.clone();
+    let mut people = std::collections::BTreeMap::new();
+    people.insert("userb".to_string(), "viewer".to_string());
+    let access = crate::proto::Access { mode: "people".into(), people, ..Default::default() };
+    a.send(ClientMsg::SetAccess { book: id.clone(), access: access.clone() });
+
+    // B is told, by name, with the permission; C is told nothing and can't see or open it.
+    let n = notice(&b);
+    assert_eq!((n.kind.as_str(), n.book.as_str(), n.by.as_str(), n.permission.as_str()), ("shared", id.as_str(), "User A", "viewer"));
+    assert!(books(&c).iter().all(|x| x.id != id), "not in C's list");
+    c.send(ClientMsg::OpenBook { book: id.clone() });
+    let e = error_or_opened(&c).expect_err("C may not open it");
+    assert!(e.contains("ask User A"), "{e}");
+    // B opens it as a viewer: content yes, edits no.
+    let bl = books(&b);
+    assert_eq!(bl.iter().find(|x| x.id == id).map(|x| x.permission.as_str()), Some("viewer"));
+    b.send(ClientMsg::OpenBook { book: id.clone() });
+    let mut rb = Replica::opened(&b);
+    assert_eq!(rb.sd.book.permission, "viewer");
+    assert_eq!(rb.text("Sheet1", "A1"), "Distinctive text 7Q-Persist");
+    b.send(rb.edit("cell.set", json!({"sheet": "Sheet1", "cell": "A9", "input": "viewer edit"})));
+    assert!(matches!(
+        recv(&b, |e| matches!(e, crate::client::Event::Message(ServerMsg::Rejected { .. } | ServerMsg::Patched { .. }))),
+        crate::client::Event::Message(ServerMsg::Rejected { .. })
+    ));
+    // Made an editor: told, and edits go through.
+    let mut access = access;
+    access.people.insert("userb".into(), "editor".into());
+    a.send(ClientMsg::SetAccess { book: id.clone(), access: access.clone() });
+    let n = notice(&b);
+    assert_eq!((n.kind.as_str(), n.permission.as_str()), ("permission", "editor"));
+    // Removed: told, and the open copy is closed by the server.
+    access.people.clear();
+    a.send(ClientMsg::SetAccess { book: id.clone(), access });
+    let n = notice(&b);
+    assert_eq!(n.kind, "revoked");
+    assert!(matches!(
+        recv(&b, |e| matches!(e, crate::client::Event::Message(ServerMsg::BookGone { .. }))),
+        crate::client::Event::Message(ServerMsg::BookGone { .. })
+    ));
+    // Only the creator (or an administrator) changes access.
+    b.send(ClientMsg::SetAccess { book: id.clone(), access: crate::proto::Access::default() });
+    assert!(matches!(
+        recv(&b, |e| matches!(e, crate::client::Event::Message(ServerMsg::Error { .. }))),
+        crate::client::Event::Message(ServerMsg::Error { .. })
+    ));
+}
+
+#[test]
+fn an_expired_link_opens_for_nobody_but_the_owner_and_changes_are_summarised_at_sign_in() {
+    let lab = Lab::new("expiry");
+    let a = lab.connect("usera", "pass-a-111");
+    let b = lab.connect("userb", "pass-b-222");
+    share(&a, "Register", &rich_workbook());
+    let mut ra = Replica::opened(&a);
+    let id = ra.sd.book.id.clone();
+    // B opens and closes it (the server remembers where B left it).
+    b.send(ClientMsg::OpenBook { book: id.clone() });
+    let _ = Replica::opened(&b);
+    b.send(ClientMsg::CloseBook { book: id.clone() });
+    std::thread::sleep(Duration::from_millis(200));
+    drop(b);
+    // A edits while B is away: B hears one summary at the next sign-in, not one per edit.
+    for i in 0..5 {
+        a.send(ra.edit("cell.set", json!({"sheet": "Sheet1", "cell": format!("H{}", i + 1), "input": "x"})));
+    }
+    ra.catch_up(&a, 5);
+    let b = lab.connect("userb", "pass-b-222");
+    let n = notice(&b);
+    assert_eq!((n.kind.as_str(), n.book.as_str(), n.by.as_str()), ("changed", id.as_str(), "User A"));
+    assert!(n.text.starts_with("5 edit"), "{}", n.text);
+    // Expired yesterday: B can no longer open it; A still can.
+    let access = crate::proto::Access { expires: Some(crate::now_ms() - 86_400_000), ..Default::default() };
+    a.send(ClientMsg::SetAccess { book: id.clone(), access });
+    std::thread::sleep(Duration::from_millis(200));
+    b.send(ClientMsg::OpenBook { book: id.clone() });
+    assert!(error_or_opened(&b).is_err());
+    a.send(ClientMsg::OpenBook { book: id });
+    assert!(error_or_opened(&a).is_ok());
+}
+
+#[test]
+fn the_web_link_page_opens_the_app_and_offers_the_installer() {
+    use std::io::{Read, Write};
+    let lab = Lab::new("http");
+    let get = |path: &str| {
+        let mut s = std::net::TcpStream::connect(("127.0.0.1", lab.port)).expect("connect");
+        s.set_read_timeout(Some(Duration::from_secs(10))).expect("timeout");
+        write!(s, "GET {path} HTTP/1.1\r\nHost: office-srv:{}\r\n\r\n", lab.port).expect("send");
+        let mut out = String::new();
+        let _ = s.read_to_string(&mut out);
+        out
+    };
+    let page = get("/open/project-tracker-383b13");
+    assert!(page.starts_with("HTTP/1.1 200"), "{page}");
+    assert!(page.contains(&format!("dexterity://open/office-srv:{}/project-tracker-383b13", lab.port)));
+    assert!(get("/download").starts_with("HTTP/1.1 404"), "no installer yet");
+    assert!(get("/open/<script>").starts_with("HTTP/1.1 404"));
+    // The protocol port still works for the app afterwards.
+    let _a = lab.connect("usera", "pass-a-111");
+}
+
+#[test]
+fn releases_follow_channels_and_status_and_offer_a_rollback() {
+    let lab = Lab::new("releases");
+    let up = lab.dir.join("updates");
+    for v in ["1.0.0", "1.1.0", "1.2.0", "1.3.0"] {
+        std::fs::write(up.join(format!("DexteritySheets-{v}-x64.msi")), format!("installer {v}")).expect("msi");
+    }
+    std::fs::write(
+        up.join("releases.json"),
+        r#"{"policy": {"mode": "prompt", "defaultChannel": "stable"},
+            "releases": {"1.3.0": {"channel": "testing"}, "1.2.0": {"status": "blocked", "note": "crashes on start"}, "1.1.0": {"status": "knownIssue", "note": "slow export"}}}"#,
+    )
+    .expect("releases");
+    lab._server.poll_updates();
+    let a = lab.connect("usera", "pass-a-111");
+    let ask = |version: &str, channel: Option<&str>| {
+        a.send(ClientMsg::CheckUpdate { version: version.into(), channel: channel.map(str::to_string) });
+        match recv(&a, |e| matches!(e, crate::client::Event::Message(ServerMsg::Update { .. }))) {
+            crate::client::Event::Message(ServerMsg::Update { update, current, older, policy }) => (update, current, older, policy),
+            _ => unreachable!(),
+        }
+    };
+    // Stable PCs on 1.0.0 get 1.1.0 (1.2.0 is blocked, 1.3.0 is testing).
+    let (update, _, older, policy) = ask("1.0.0", None);
+    assert_eq!(update.map(|u| u.version).as_deref(), Some("1.1.0"));
+    assert!(older.is_empty());
+    assert_eq!(policy, "prompt");
+    // Testing PCs get 1.3.0.
+    assert_eq!(ask("1.0.0", Some("testing")).0.map(|u| u.version).as_deref(), Some("1.3.0"));
+    // A PC on the blocked 1.2.0 hears so, and may roll back to 1.1.0 or 1.0.0 (newest first).
+    let (_, current, older, _) = ask("1.2.0", None);
+    let current = current.expect("known");
+    assert_eq!((current.status.as_str(), current.note.as_str()), ("blocked", "crashes on start"));
+    assert_eq!(older.iter().map(|u| u.version.as_str()).collect::<Vec<_>>(), ["1.1.0", "1.0.0"]);
+    // A blocked installer is never handed out; an older one is (the rollback).
+    a.send(ClientMsg::GetUpdate { version: "1.2.0".into() });
+    assert!(matches!(
+        recv(&a, |e| matches!(e, crate::client::Event::Message(ServerMsg::Error { .. } | ServerMsg::UpdateFile { .. }))),
+        crate::client::Event::Message(ServerMsg::Error { .. })
+    ));
+    a.send(ClientMsg::GetUpdate { version: "1.0.0".into() });
+    match recv(&a, |e| matches!(e, crate::client::Event::Message(ServerMsg::Error { .. } | ServerMsg::UpdateFile { .. }))) {
+        crate::client::Event::Message(ServerMsg::UpdateFile { info, data }) => {
+            assert_eq!(crate::proto::unb64(&data).expect("b64"), b"installer 1.0.0");
+            assert_eq!(info.sha256, crate::proto::sha256_hex(b"installer 1.0.0"));
+        }
+        _ => panic!("the rollback installer is offered"),
+    }
+    // The dashboard sees which version this PC runs.
+    let clients = std::fs::read_to_string(lab.dir.join("clients.json")).expect("clients.json");
+    assert!(clients.contains("\"version\": \"1.2.0\"") && clients.contains("usera|test"), "{clients}");
+}
+
+#[test]
+fn problem_reports_health_and_usage_reach_the_server_files() {
+    let lab = Lab::new("feedback");
+    let a = lab.connect("usera", "pass-a-111");
+    let report = crate::proto::Feedback {
+        version: "1.2.2".into(),
+        os: "windows".into(),
+        features: vec!["sharing".into(), "saving".into()],
+        description: "Shared workbook opened blank".into(),
+        severity: "high".into(),
+        after_update: true,
+        ..Default::default()
+    };
+    a.send(ClientMsg::Feedback { report });
+    assert!(matches!(
+        recv(&a, |e| matches!(e, crate::client::Event::Message(ServerMsg::Ok { .. }))),
+        crate::client::Event::Message(ServerMsg::Ok { .. })
+    ));
+    let fb = std::fs::read_to_string(lab.dir.join("feedback").join("feedback.jsonl")).expect("feedback");
+    let line: serde_json::Value = serde_json::from_str(fb.lines().next().expect("a line")).expect("json");
+    assert_eq!(line["user"], "usera");
+    assert_eq!(line["features"], json!(["sharing", "saving"]));
+    assert_eq!(line["afterUpdate"], true);
+    assert!(line["id"].as_str().is_some_and(|s| s.starts_with("fb-")));
+    a.send(ClientMsg::Health { version: "1.2.2".into(), kind: "recovered".into(), detail: "2 workbook(s)".into() });
+    let mut counts = std::collections::BTreeMap::new();
+    counts.insert("home.bold".to_string(), 3u64);
+    a.send(ClientMsg::Usage { version: "1.2.2".into(), counts: counts.clone() });
+    a.send(ClientMsg::Usage { version: "1.2.2".into(), counts });
+    // A round trip: everything sent before it has been handled.
+    let _ = books(&a);
+    let health = std::fs::read_to_string(lab.dir.join("health.jsonl")).expect("health");
+    assert!(health.contains("\"kind\":\"recovered\""), "{health}");
+    let adoption: serde_json::Value = serde_json::from_slice(&std::fs::read(lab.dir.join("adoption.json")).expect("adoption")).expect("json");
+    let day = adoption["days"].as_object().and_then(|d| d.values().next()).expect("a day");
+    assert_eq!(day["1.2.2"]["home.bold"], 6);
+}
+
+// ---------------------------------------------------------------------------------------------
+// Templates and automation rules.
+
+#[test]
+fn only_administrators_publish_templates_and_users_hear_of_new_versions() {
+    let lab = Lab::new("templates");
+    crate::server::set_user(&lab.dir, "boss", "Boss", "pass-boss-1", crate::proto::Role::Admin).expect("admin");
+    let admin = lab.connect("boss", "pass-boss-1");
+    let a = lab.connect("usera", "pass-a-111");
+    let bytes = gridcraft_engine::io::save_bytes(&rich_workbook(), "t.xlsx").expect("save");
+    let publish = |c: &Client, id: Option<String>| {
+        c.send(ClientMsg::PublishTemplate {
+            id,
+            name: "Document register".into(),
+            category: "Registers".into(),
+            description: "Doc no, revision, status, responsible".into(),
+            mandatory: "Client submissions".into(),
+            sha256: Some(crate::proto::sha256_hex(&bytes)),
+            xlsx: crate::proto::b64(&bytes),
+        });
+    };
+    // An editor may not publish.
+    publish(&a, None);
+    assert!(matches!(
+        recv(&a, |e| matches!(e, crate::client::Event::Message(ServerMsg::Error { .. }))),
+        crate::client::Event::Message(ServerMsg::Error { .. })
+    ));
+    publish(&admin, None);
+    let list = match recv(&a, |e| matches!(e, crate::client::Event::Message(ServerMsg::Templates { .. }))) {
+        crate::client::Event::Message(ServerMsg::Templates { templates }) => templates,
+        _ => unreachable!(),
+    };
+    assert_eq!(list.len(), 1);
+    let t = list[0].clone();
+    assert_eq!((t.name.as_str(), t.category.as_str(), t.version, t.mandatory.as_str()), ("Document register", "Registers", 1, "Client submissions"));
+    // A user takes it: the content is the template's.
+    a.send(ClientMsg::GetTemplate { id: t.id.clone() });
+    match recv(&a, |e| matches!(e, crate::client::Event::Message(ServerMsg::Template { .. }))) {
+        crate::client::Event::Message(ServerMsg::Template { info, xlsx, sha256 }) => {
+            let b = crate::proto::unb64_checked(&xlsx, &sha256).expect("intact");
+            let (wb, _) = gridcraft_engine::io::open_bytes("t.xlsx", &b).expect("opens");
+            assert!(sync::content_differences(&rich_workbook(), &wb, 5).is_empty());
+            assert_eq!(info.id, t.id);
+        }
+        _ => unreachable!(),
+    }
+    // A new approved version: the user who used it is told; nothing else changes for them.
+    publish(&admin, Some(t.id.clone()));
+    let n = notice(&a);
+    assert_eq!(n.kind, "template");
+    assert!(n.text.contains("v2") && n.text.contains("not changed"), "{}", n.text);
+}
+
+#[test]
+fn a_change_rule_stamps_the_row_and_tells_people_and_a_schedule_rule_writes_a_report() {
+    let lab = Lab::new("automation");
+    let a = lab.connect("usera", "pass-a-111");
+    let b = lab.connect("userb", "pass-b-222");
+    let mut s = Session::new();
+    s.new_workbook();
+    // A tracker: task, due date (serial numbers in the past and future), status.
+    s.execute(
+        "range.setValues",
+        json!({"range": "A1", "values": [["Task", "Due", "Status", "Done at"], ["Pipe rack", 40000, "Open", ""], ["Valves", 90000, "Open", ""]]}),
+    )
+    .expect("values");
+    share(&a, "Tracker", &wb(&s));
+    let not_today = {
+        use chrono::Datelike;
+        ((chrono::Local::now().weekday().num_days_from_monday() + 3) % 7) as u8
+    };
+    let mut ra = Replica::opened(&a);
+    let id = ra.sd.book.id.clone();
+    let rules = vec![
+        crate::proto::Rule {
+            name: "Completion".into(),
+            enabled: true,
+            trigger: crate::proto::Trigger::Change { column: "C".into(), equals: "Completed".into() },
+            actions: vec![crate::proto::Action::Stamp { column: "D".into() }, crate::proto::Action::Notify { people: vec!["userb".into()] }],
+            ..Default::default()
+        },
+        crate::proto::Rule {
+            name: "Weekly check".into(),
+            enabled: true,
+            // Not today, so the server's own half-minute round never runs it during the test.
+            trigger: crate::proto::Trigger::Schedule { every: "weekly".into(), day: not_today, time: "09:00".into() },
+            actions: vec![
+                crate::proto::Action::Overdue { date_column: "B".into(), status_column: "C".into(), done: "Completed".into() },
+                crate::proto::Action::Report,
+                crate::proto::Action::Notify { people: vec!["userb".into()] },
+            ],
+            ..Default::default()
+        },
+    ];
+    a.send(ClientMsg::SetRules { book: id.clone(), rules });
+    let saved = match recv(&a, |e| matches!(e, crate::client::Event::Message(ServerMsg::Rules { .. }))) {
+        crate::client::Event::Message(ServerMsg::Rules { rules, .. }) => rules,
+        _ => unreachable!(),
+    };
+    assert_eq!(saved.len(), 2);
+    assert!(saved.iter().all(|r| !r.id.is_empty()));
+    // A rule naming someone who has no account is refused.
+    let bad =
+        crate::proto::Rule { name: "x".into(), actions: vec![crate::proto::Action::Notify { people: vec!["nobody".into()] }], ..Default::default() };
+    a.send(ClientMsg::SetRules { book: id.clone(), rules: vec![bad] });
+    assert!(matches!(
+        recv(&a, |e| matches!(e, crate::client::Event::Message(ServerMsg::Error { .. }))),
+        crate::client::Event::Message(ServerMsg::Error { .. })
+    ));
+
+    // Valves become Completed: the server writes the time in D3 (an edit everyone receives)
+    // and tells B.
+    a.send(ra.edit("cell.set", json!({"sheet": "Sheet1", "cell": "C3", "input": "Completed"})));
+    ra.catch_up(&a, 2);
+    assert!(ra.text("Sheet1", "D3").starts_with("20"), "time written: {:?}", ra.text("Sheet1", "D3"));
+    let n = notice(&b);
+    assert_eq!(n.kind, "automation");
+    assert!(n.text.contains("Completed") && n.text.contains("D3"), "{}", n.text);
+
+    // The weekly check, run now: one overdue row (row 2), a report workbook B can open.
+    a.send(ClientMsg::RunRule { book: id.clone(), id: saved[1].id.clone() });
+    let n = notice(&b);
+    assert!(n.text.contains("1 overdue item"), "{}", n.text);
+    assert_ne!(n.book, id, "the notice opens the report");
+    b.send(ClientMsg::OpenBook { book: n.book.clone() });
+    let rep = Replica::opened(&b);
+    assert!(rep.sd.book.name.starts_with("Tracker report"), "{}", rep.sd.book.name);
+    assert_eq!(rep.sd.book.permission, "viewer");
+    let all: String = rep
+        .wb()
+        .sheets
+        .iter()
+        .flat_map(|sh| sh.cells.iter().map(|(_, c)| patch::value_text(&c.value)).collect::<Vec<_>>())
+        .collect::<Vec<_>>()
+        .join("|");
+    assert!(all.contains("row 2") && all.contains("Overdue"), "{all}");
 }
