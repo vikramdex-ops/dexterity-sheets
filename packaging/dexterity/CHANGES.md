@@ -8,6 +8,13 @@ automatically and don't go here.
 
 ## Unreleased
 
+- **F4** repeats your last action (formatting, inserting rows, typing an entry…) on the cells now selected, as in Excel. **Ctrl+Y** does the same when there is nothing to redo.
+- Fixed: **Data › Data Validation › Circle Invalid Data** found the cells but drew nothing. It now circles them in red; a circle goes away when the value is corrected, and the new **Clear Validation Circles** removes them all.
+- **Formulas › Remove Arrows** now also offers **Remove Precedent Arrows** and **Remove Dependent Arrows**.
+- **Data › Auto Outline** groups the rows (and columns) that your SUM and subtotal formulas add up, with a grand total one level up; **Clear Outline** removes the outline.
+- **View › Focus Cell** highlights the active cell's row and column so it is easy to follow across a wide sheet; pick the colour from its arrow.
+- **Review › Show Changes** (the name Excel uses) opens Edit History.
+
 ## 1.2.2 · 27 October 2026
 
 - Fixed: the server's log file was missing its own lines (when it started, its port, where app updates come from, and why a start failed). They are written again, so the Server Manager's log shows what the server is doing.

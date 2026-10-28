@@ -15,6 +15,7 @@ pub mod collab_ui;
 pub mod control;
 mod craft_fonts_policy;
 pub mod credits;
+pub mod dex_ui;
 pub mod dialogs;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod doc_windows;

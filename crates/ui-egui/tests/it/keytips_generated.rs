@@ -1626,10 +1626,10 @@ fn keytip_maa_() {
 fn keytip_map_() {
     let mut h = harness(blank());
     sequence(&mut h, "MAP", false);
-    assert!(h.state().dialog.is_none(), "MAP must not open a dialog");
-    assert!(h.state().message.is_none(), "MAP must not open a message box");
-    assert!(h.state().toast.is_none(), "MAP must not raise a toast");
-    assert!(h.state().session.journal.is_empty(), "MAP must not journal");
+    assert!(
+        h.state().session.journal.iter().any(|(id, _)| id == "formulas.removePrecedentArrows"),
+        "MAP must journal formulas.removePrecedentArrows"
+    );
 }
 
 #[test]
@@ -2001,10 +2001,7 @@ fn keytip_ag_() {
 fn keytip_aga_() {
     let mut h = harness(blank());
     sequence(&mut h, "AGA", false);
-    assert!(h.state().dialog.is_none(), "AGA must not open a dialog");
-    assert!(h.state().message.is_none(), "AGA must not open a message box");
-    assert!(h.state().toast.is_none(), "AGA must not raise a toast");
-    assert!(h.state().session.journal.is_empty(), "AGA must not journal");
+    assert!(h.state().message.is_some() || h.state().toast.is_some(), "AGA must invoke data.autoOutline and surface its missing-params error");
 }
 
 #[test]
@@ -2254,10 +2251,7 @@ fn keytip_au_() {
 fn keytip_auc_() {
     let mut h = harness(blank());
     sequence(&mut h, "AUC", false);
-    assert!(h.state().dialog.is_none(), "AUC must not open a dialog");
-    assert!(h.state().message.is_none(), "AUC must not open a message box");
-    assert!(h.state().toast.is_none(), "AUC must not raise a toast");
-    assert!(h.state().session.journal.is_empty(), "AUC must not journal");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "data.clearOutline"), "AUC must journal data.clearOutline");
 }
 
 #[test]
@@ -2285,10 +2279,7 @@ fn keytip_avi_() {
 fn keytip_avr_() {
     let mut h = harness(blank());
     sequence(&mut h, "AVR", false);
-    assert!(h.state().dialog.is_none(), "AVR must not open a dialog");
-    assert!(h.state().message.is_none(), "AVR must not open a message box");
-    assert!(h.state().toast.is_none(), "AVR must not raise a toast");
-    assert!(h.state().session.journal.is_empty(), "AVR must not journal");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "data.clearValidationCircles"), "AVR must journal data.clearValidationCircles");
 }
 
 #[test]
@@ -2375,10 +2366,7 @@ fn keytip_rd_() {
 fn keytip_rg_() {
     let mut h = harness(blank());
     sequence(&mut h, "RG", false);
-    assert!(h.state().dialog.is_none(), "RG must not open a dialog");
-    assert!(h.state().message.is_none(), "RG must not open a message box");
-    assert!(h.state().toast.is_none(), "RG must not raise a toast");
-    assert!(h.state().session.journal.is_empty(), "RG must not journal");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "review.showChanges"), "RG must journal review.showChanges");
 }
 
 #[test]
@@ -2605,10 +2593,7 @@ fn keytip_wu_() {
 fn keytip_wvc_() {
     let mut h = harness(blank());
     sequence(&mut h, "WVC", false);
-    assert!(h.state().dialog.is_none(), "WVC must not open a dialog");
-    assert!(h.state().message.is_none(), "WVC must not open a message box");
-    assert!(h.state().toast.is_none(), "WVC must not raise a toast");
-    assert!(h.state().session.journal.is_empty(), "WVC must not journal");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "view.focusCell"), "WVC must journal view.focusCell");
 }
 
 #[test]

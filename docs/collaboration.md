@@ -14,7 +14,7 @@ app.
 - **Named accounts only.** There is no anonymous or guest access. Every edit is stored with the
   account that made it.
 - **Who changed what.** The status bar shows who last changed the active cell and when; click it
-  (or Review › Edit History) for the full history of that cell, or of the whole workbook,
+  (or Review › Edit History, also reached as Excel's Review › Show Changes) for the full history of that cell, or of the whole workbook,
   filterable by person: old value → new value, time, user.
 - **Nothing to save, nothing to lose.** Every edit is written to the server's disk (and flushed)
   before anyone else sees it. If the network drops, edits are kept and sent when it comes back

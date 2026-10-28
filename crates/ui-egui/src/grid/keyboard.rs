@@ -142,7 +142,10 @@ pub(super) fn keyboard(app: &mut SheetApp, ctx: &egui::Context, resp: &egui::Res
                         app.open_dialog("macros", json!({}));
                     }
                     Key::F9 => app.run_or_alert("formulas.calculateNow", json!({})),
-                    Key::F4 if !cmd => {}
+                    // Repeat the last action (Dexterity Sheets); nothing happens when there is none.
+                    Key::F4 if !cmd => {
+                        let _ = app.run("edit.repeat", json!({}));
+                    }
                     _ if cmd && !crate::keymap::altgr_text(ctx, m, ctx.os() == egui::os::OperatingSystem::Mac) => {
                         crate::ribbon::shortcut(app, key, m)
                     }

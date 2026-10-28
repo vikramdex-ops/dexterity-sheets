@@ -145,6 +145,107 @@ insert(
     '# Regional settings (`regional.rs`): HKCU\\Control Panel\\International. Already in the tree.\nwindows-registry = "0.6"\n',
 )
 
+# ---- Excel parity additions: cmd/dex.rs and dex_ui.rs (docs/dexterity-parity-audit.md) ---------
+insert("crates/engine/src/cmd.rs", "pub mod dex;", "pub mod data;\n", "pub mod dex;\n")
+insert(
+    "crates/engine/src/cmd.rs",
+    "dex::specs().into_iter().filter(",
+    "        v.extend(print::specs());\n",
+    "        // Dexterity Sheets additions; an id upstream GridCraft registers itself is left to upstream's.\n"
+    "        let dex: Vec<CommandSpec> = dex::specs().into_iter().filter(|d| !v.iter().any(|c| c.id == d.id)).collect();\n"
+    "        v.extend(dex);\n",
+)
+insert(
+    "crates/engine/src/lib.rs",
+    "pub dex: cmd::dex::DexState,",
+    "    pub comments_pane: bool,\n",
+    "    /// Dexterity Sheets command state (Repeat, Focus Cell, validation circles).\n    pub dex: cmd::dex::DexState,\n",
+)
+insert(
+    "crates/engine/src/lib.rs",
+    "let dex_before =",
+    "        let before = self.active().map(|d| (d.uid, d.wb.clone(), d.selection.clone()));\n",
+    "        let dex_before = self.active().map(|d| (d.uid, d.revision));\n",
+)
+insert(
+    "crates/engine/src/lib.rs",
+    "cmd::dex::after_command(",
+    "            self.bound_tail(uid);\n        }\n",
+    "        if self.depth == 0 {\n            cmd::dex::after_command(self, id, &params, &result, dex_before);\n        }\n",
+)
+FUZZ = "crates/engine/tests/it/command_sequence_fuzz.rs"
+s = read(FUZZ)
+if '("edit.repeat", DEX)' not in s:
+    dex_ids = re.findall(r'cmd!\((?:noundo |query )?"([A-Za-z.]+)"', read("crates/engine/src/cmd/dex.rs"))
+    s2 = s.replace(
+        "const EXCLUDED: &[(&str, &str)] = &[\n",
+        "/// Dexterity Sheets keeps its own commands out of the random pool so the sequences stay the same\n"
+        "/// as upstream GridCraft's, whose CI vets them.\n"
+        'const DEX: &str = "Dexterity Sheets command, tested in cmd/dex.rs; kept out so sequences match upstream";\n'
+        "const EXCLUDED: &[(&str, &str)] = &[\n"
+        "    // Dexterity Sheets commands (crates/engine/src/cmd/dex.rs, tested there).\n"
+        + "".join(f'    ("{i}", DEX),\n' for i in dex_ids),
+        1,
+    )
+    if s2 == s:
+        problems.append(f"{FUZZ}: EXCLUDED list not found")
+    else:
+        write(FUZZ, s2)
+insert(f"{UI}/lib.rs", "pub mod dex_ui;", "pub mod collab_ui;\n", "pub mod dex_ui;\n")
+insert("crates/ui-egui/tests/it/main.rs", "mod dex_parity;", "mod control_timeout;\n", "mod dex_parity;\n")
+insert(
+    f"{UI}/app/commands.rs",
+    "crate::dex_ui::run_command(self, id, p)",
+    "        if let Some(r) = crate::collab_ui::run_command(self, id, p) {\n            return Some(r);\n        }\n",
+    "        if let Some(r) = crate::dex_ui::run_command(self, id, p) {\n            return Some(r);\n        }\n",
+)
+insert(
+    f"{UI}/grid/show.rs",
+    "crate::dex_ui::paint(",
+    "        paint_selection(&p, geo, sh, sel, outline, t, app, *rows, *cols);\n",
+    "        crate::dex_ui::paint(&p, geo, sh, app, *rows, *cols);\n",
+    after=False,
+)
+replace(
+    f"{UI}/grid/keyboard.rs",
+    "                    Key::F4 if !cmd => {}\n",
+    "                    // Repeat the last action (Dexterity Sheets); nothing happens when there is none.\n"
+    "                    Key::F4 if !cmd => {\n                        let _ = app.run(\"edit.repeat\", json!({}));\n                    }\n",
+    required=False,
+)
+insert(
+    f"{UI}/ribbon/shortcuts.rs",
+    '("edit.repeat", json!({}))',
+    '        Key::Y => Some(("edit.redo", json!({}))),\n',
+    "        // Ctrl+Y redoes, or repeats the last action when there is nothing to redo (Dexterity Sheets).\n"
+    '        Key::Y if app.session.active().is_some_and(|d| d.redo.is_empty()) => Some(("edit.repeat", json!({}))),\n',
+    after=False,
+)
+replace(
+    f"{UI}/ribbon/formulas.rs",
+    '        if small_button(ui, Icon::Close, "Remove Arrows", "Remove Arrows", false).clicked() {\n            app.grid.trace = None;\n        }\n',
+    "        crate::dex_ui::remove_arrows_button(app, ui);\n",
+    required=False,
+)
+insert(
+    f"{UI}/ribbon/data.rs",
+    '"data.clearValidationCircles"',
+    '                ("Circle Invalid Data", "data.circleInvalid", json!({})),\n',
+    '                ("Clear Validation Circles", "data.clearValidationCircles", json!({})),\n',
+)
+insert(
+    f"{UI}/ribbon/data.rs",
+    "crate::dex_ui::outline_buttons(app, ui);",
+    '            app.open_dialog("outlineSettings", json!({}));\n        }\n    });\n',
+    "    crate::dex_ui::outline_buttons(app, ui);\n",
+)
+insert(
+    f"{UI}/ribbon/view.rs",
+    "crate::dex_ui::focus_cell_button(app, ui);",
+    '            act(app, "view.headings", json!({"on": h}));\n        }\n    });\n',
+    "    ui.add_space(6.0);\n    crate::dex_ui::focus_cell_button(app, ui);\n",
+)
+
 # ---- UI test: File › Account shows Dexterity Sheets' own version -------------------------------
 replace(
     "crates/ui-egui/tests/it/file_menu.rs",
@@ -161,6 +262,17 @@ insert(
     "            Expr::Struct(_) => true,\n",
     "            // Dexterity Sheets: a bare table name is written `Table[]` (see [`TableNames`]).\n"
     "            Expr::Name(n) => is_table(n),\n",
+)
+insert(
+    "crates/xlsx/src/fmla.rs",
+    "Expr::Name(s.table)",
+    "            Expr::Call(n, args) => Expr::Call(strip_param_prefix(n), args),\n",
+    "            // Dexterity Sheets: `Table[]` is how a bare table name is spelled in a file (see\n"
+    "            // [`TableNames`]); it reads back as the bare name, the same range, so a formula keeps\n"
+    "            // the text it was typed with. Tables and defined names share one namespace.\n"
+    "            Expr::Struct(s) if !s.table.is_empty() && s.specifiers.is_empty() && s.col_start.is_none() && s.col_end.is_none() => {\n"
+    "                Expr::Name(s.table)\n"
+    "            }\n",
 )
 
 # ---- Windows packaging: upstream's install-policy check is for GridCraft's identity -----------

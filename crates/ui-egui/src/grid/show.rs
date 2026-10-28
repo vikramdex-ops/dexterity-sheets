@@ -322,6 +322,7 @@ fn paint_panes(
         }
         let p = painter.with_clip_rect(*clip);
         paint_quadrant(&p, geo, wb, si, sh, *rows, *cols, cf, t);
+        crate::dex_ui::paint(&p, geo, sh, app, *rows, *cols);
         paint_selection(&p, geo, sh, sel, outline, t, app, *rows, *cols);
         crate::collab_ui::paint_peers(&p, geo, sh, app, *rows, *cols);
     }

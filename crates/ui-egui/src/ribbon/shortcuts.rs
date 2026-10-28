@@ -9,6 +9,8 @@ pub fn shortcut(app: &mut SheetApp, key: Key, m: Modifiers) {
         Key::U => Some(("home.underline", json!({}))),
         Key::Z if shift => Some(("edit.redo", json!({}))),
         Key::Z => Some(("edit.undo", json!({}))),
+        // Ctrl+Y redoes, or repeats the last action when there is nothing to redo (Dexterity Sheets).
+        Key::Y if app.session.active().is_some_and(|d| d.redo.is_empty()) => Some(("edit.repeat", json!({}))),
         Key::Y => Some(("edit.redo", json!({}))),
         Key::A => Some(("edit.selectAll", json!({}))),
         Key::D => Some(("edit.fillDown", json!({}))),

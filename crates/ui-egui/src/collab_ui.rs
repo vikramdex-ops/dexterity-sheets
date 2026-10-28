@@ -511,14 +511,16 @@ pub fn run_command(app: &mut SheetApp, id: &str, p: &Json) -> Option<Result<Json
             app.open_backstage(crate::backstage::Page::Shared);
             Ok(Json::Null)
         }
-        // {cell?: true} shows the active cell's history, otherwise the whole workbook's.
-        "collab.history" => {
+        // {cell?: true} shows the active cell's history, otherwise the whole workbook's. Excel's
+        // Review › Show Changes is the same list.
+        "collab.history" | "review.showChanges" => {
             if let Some(c) = p.get("cell").and_then(Json::as_bool) {
                 app.collab.history.this_cell = c;
             }
             app.grid.pane = Some("history".into());
             app.collab.history.asked = None;
-            Ok(Json::Null)
+            // Excel's name is an engine command too, so it is journaled and recorded.
+            if id == "review.showChanges" { app.session.run(id, json!({})) } else { Ok(Json::Null) }
         }
         "collab.versions" => {
             app.grid.pane = Some("versions".into());

@@ -187,6 +187,10 @@ pub fn from_file(text: &str) -> String {
         Ok(e) => gridcraft_formula::print(&e.map(&mut |x| match x {
             Expr::Name(n) => Expr::Name(strip_param_prefix(n)),
             Expr::Call(n, args) => Expr::Call(strip_param_prefix(n), args),
+            // Dexterity Sheets: `Table[]` is how a bare table name is spelled in a file (see
+            // [`TableNames`]); it reads back as the bare name, the same range, so a formula keeps
+            // the text it was typed with. Tables and defined names share one namespace.
+            Expr::Struct(s) if !s.table.is_empty() && s.specifiers.is_empty() && s.col_start.is_none() && s.col_end.is_none() => Expr::Name(s.table),
             other => other,
         })),
         Err(_) => body.to_string(),
@@ -227,12 +231,12 @@ mod tests {
             let _t = TableNames::of(&wb);
             assert_eq!(to_file(&f), "VLOOKUP(\"Tee eq\",MTO[],4,FALSE)+ROWS(mto[])+SUM(MTO[Qty])+Other");
             assert_eq!(text_to_file("=COUNTA(MTO)"), "COUNTA(MTO[])");
-            assert_eq!(from_file("VLOOKUP(\"Tee eq\",MTO[],4,FALSE)"), "VLOOKUP(\"Tee eq\",MTO[],4,FALSE)");
+            assert_eq!(from_file("VLOOKUP(\"Tee eq\",MTO[],4,FALSE)"), "VLOOKUP(\"Tee eq\",MTO,4,FALSE)");
         }
         assert_eq!(text_to_file("=COUNTA(MTO)"), "COUNTA(MTO)");
     }
 
-    /// The same through a whole file: the sheet XML holds `MTO[]`, and it reads back as the table.
+    /// The same through a whole file: the sheet XML holds `MTO[]`, and it reads back as `MTO`.
     #[test]
     fn bare_table_name_round_trips_through_xlsx() {
         use gridcraft_core::{CellRef, Value};
@@ -277,7 +281,7 @@ mod tests {
         );
         let (back, _) = crate::read_xlsx(&bytes).unwrap();
         let f = back.sheet(0).unwrap().cell(CellRef::new(4, 0)).unwrap().formula.clone().unwrap();
-        assert_eq!(f.text, "VLOOKUP(\"Tee eq\",MTO[],4,FALSE)");
+        assert_eq!(f.text, "VLOOKUP(\"Tee eq\",MTO,4,FALSE)", "reads back as typed");
         assert_eq!(back.sheet(0).unwrap().tables.first().map(|t| t.name.as_str()), Some("MTO"));
     }
 

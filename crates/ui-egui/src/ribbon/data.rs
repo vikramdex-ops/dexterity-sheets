@@ -74,6 +74,7 @@ pub(super) fn data(app: &mut SheetApp, ui: &mut Ui) {
             &[
                 ("Data Validation…", "dialog:dataValidation", json!({})),
                 ("Circle Invalid Data", "data.circleInvalid", json!({})),
+                ("Clear Validation Circles", "data.clearValidationCircles", json!({})),
                 ("Clear Validation", "data.validation", json!({"clear": true})),
             ],
         );
@@ -128,6 +129,7 @@ pub(super) fn data(app: &mut SheetApp, ui: &mut Ui) {
             app.open_dialog("outlineSettings", json!({}));
         }
     });
+    crate::dex_ui::outline_buttons(app, ui);
     sep(ui);
     if big_button(ui, Icon::ChartBar, "Data\nAnalysis", "Data Analysis", false).clicked() {
         app.open_dialog("analysisToolPak", json!({}));

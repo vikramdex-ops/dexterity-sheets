@@ -38,8 +38,25 @@ HOOKS = [
     ("apps/gridcraft/src/main.rs", "regional::apply();", "Windows regional settings (dates, grouping) like Excel"),
     ("packaging/windows/gridcraft.wxs", 'UpgradeCode="FE2AD491-38E3-4E1B-8441-FDF652AB8443"', "installer identity (never change)"),
     ("packaging/windows/gridcraft.wxs", 'Scope="perUser"', "per-user install so updates need no admin"),
+    # Excel parity additions (docs/dexterity-parity-audit.md): commands in cmd/dex.rs, UI in dex_ui.rs.
+    ("crates/engine/src/cmd.rs", "pub mod dex;", "Dexterity commands module"),
+    ("crates/engine/src/cmd.rs", "dex::specs().into_iter().filter(", "Dexterity commands registered (upstream's own id wins)"),
+    ("crates/engine/src/{lib.rs,session.rs,session/*.rs}", "pub dex: cmd::dex::DexState,", "Dexterity command state on the session"),
+    ("crates/engine/src/{lib.rs,session.rs,session/*.rs}", "cmd::dex::after_command(self, id, &params, &result, dex_before);", "Repeat and validation circles see every command"),
+    ("crates/engine/tests/it/command_sequence_fuzz.rs", '("edit.repeat", DEX)', "fuzzer keeps Dexterity commands out of its random pool (sequences match upstream)"),
+    ("crates/ui-egui/src/lib.rs", "pub mod dex_ui;", "Dexterity UI module"),
+    ("crates/ui-egui/tests/it/main.rs", "mod dex_parity;", "UI tests of the Dexterity additions"),
+    ("crates/ui-egui/src/{lib.rs,app.rs,app/*.rs}", "crate::dex_ui::run_command(self, id, p)", "Remove Arrows variants clear the trace arrows"),
+    ("crates/ui-egui/src/{grid.rs,grid/*.rs}", "crate::dex_ui::paint(&p, geo, sh, app, *rows, *cols);", "Focus Cell and validation circles on the grid"),
+    ("crates/ui-egui/src/{grid.rs,grid/*.rs}", '"edit.repeat"', "F4 repeats the last action"),
+    ("crates/ui-egui/src/{ribbon.rs,ribbon/*.rs}", '("edit.repeat", json!({}))', "Ctrl+Y repeats when there is nothing to redo"),
+    ("crates/ui-egui/src/{ribbon.rs,ribbon/*.rs}", "crate::dex_ui::remove_arrows_button(app, ui);", "Formulas: Remove Arrows menu"),
+    ("crates/ui-egui/src/{ribbon.rs,ribbon/*.rs}", '"data.clearValidationCircles"', "Data Validation menu: Clear Validation Circles"),
+    ("crates/ui-egui/src/{ribbon.rs,ribbon/*.rs}", "crate::dex_ui::outline_buttons(app, ui);", "Data: Auto Outline and Clear Outline"),
+    ("crates/ui-egui/src/{ribbon.rs,ribbon/*.rs}", "crate::dex_ui::focus_cell_button(app, ui);", "View: Focus Cell"),
     ("crates/xlsx/src/fmla.rs", "pub(crate) struct TableNames", "bare table names written as Table[] (Excel reads a bare name as #NAME?)"),
     ("crates/xlsx/src/fmla.rs", "Expr::Name(n) => is_table(n)", "the formula writer's fast path still rewrites bare table names"),
+    ("crates/xlsx/src/fmla.rs", "Expr::Name(s.table)", "Table[] reads back as the bare table name it was written from"),
 ]
 
 # Strings that must not come back into the shipped app's code from upstream.
@@ -77,6 +94,20 @@ def main() -> int:
             continue
         if bad in text:
             missing.append(f"{path}: came back from upstream: {what}  [{bad}]")
+    # Not a failure: a Dexterity command that upstream now has itself gives way to upstream's at
+    # run time (cmd.rs), but the Dexterity copy and its UI should then be removed.
+    try:
+        dex = open(os.path.join(root, "crates/engine/src/cmd/dex.rs"), encoding="utf-8").read()
+        ids = re.findall(r'cmd!\((?:noundo |query )?"([A-Za-z.]+)"', dex)
+        theirs = ""
+        for f in glob.glob(os.path.join(root, "crates/engine/src/cmd/**/*.rs"), recursive=True):
+            if not f.endswith("dex.rs"):
+                theirs += open(f, encoding="utf-8").read()
+        for i in ids:
+            if re.search(r'cmd!\(\s*(?:noundo |query )?"' + re.escape(i) + '"', theirs):
+                print(f"NOTE: upstream GridCraft now registers {i}; its version is used. Remove the Dexterity copy from cmd/dex.rs and dex_ui.rs.")
+    except OSError:
+        pass
     for m in missing:
         print("OVERLAY:", m)
     if missing:

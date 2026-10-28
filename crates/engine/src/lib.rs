@@ -466,6 +466,8 @@ pub struct Session {
     pub draw_width: f32,
     /// Review › Show Comments: the Comments pane is open.
     pub comments_pane: bool,
+    /// Dexterity Sheets command state (Repeat, Focus Cell, validation circles).
+    pub dex: cmd::dex::DexState,
     /// Review › Notes › Show All Notes: every note is displayed. An application display setting
     /// (like Excel's comment indicator option), so it's not saved in the file.
     pub show_all_notes: bool,
@@ -604,6 +606,7 @@ impl Session {
             return Err(EngineError::Disabled(id.to_string(), why));
         }
         let before = self.active().map(|d| (d.uid, d.wb.clone(), d.selection.clone()));
+        let dex_before = self.active().map(|d| (d.uid, d.revision));
         let params = if params.is_null() { Json::Object(Default::default()) } else { params };
         let (first_group, group_epoch) = (self.next_group, self.group_epoch);
         // Whether a group was open on the document before the command, and how long its history was.
@@ -766,6 +769,9 @@ impl Session {
             self.group_step = None;
         } else if let Some(uid) = doc_uid {
             self.bound_tail(uid);
+        }
+        if self.depth == 0 {
+            cmd::dex::after_command(self, id, &params, &result, dex_before);
         }
         result
     }

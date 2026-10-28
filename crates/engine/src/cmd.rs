@@ -3,6 +3,7 @@
 
 pub mod analysis;
 pub mod data;
+pub mod dex;
 pub mod draw;
 pub mod edit;
 pub mod extra;
@@ -152,6 +153,9 @@ pub fn command_specs() -> &'static [CommandSpec] {
         v.extend(forecast::specs());
         v.extend(analysis::specs());
         v.extend(print::specs());
+        // Dexterity Sheets additions; an id upstream GridCraft registers itself is left to upstream's.
+        let dex: Vec<CommandSpec> = dex::specs().into_iter().filter(|d| !v.iter().any(|c| c.id == d.id)).collect();
+        v.extend(dex);
         v
     })
 }

@@ -50,7 +50,7 @@ is used.
 | 514 worksheet functions incl. dynamic arrays, LAMBDA family, GROUPBY, PIVOTBY, PERCENTOF, REGEX*, TRIMRANGE | present | `gridcraft-cli functions --json`; `crates/functions/src/dynamic.rs`, `text.rs` | — | |
 | Trim-reference operators `.:` `:.` `.:.` | present | `crates/formula/src/lexer.rs:200` | — | |
 | GETPIVOTDATA | missing | not in `gridcraft-cli functions`; only in the `.xls` token table `crates/xlsx/src/xls/ftab.rs:354` | H (engineering summaries pull figures out of PivotTables) | |
-| XLOOKUP / XMATCH regex match mode (`match_mode` 3) | missing | `gridcraft-cli eval '=XMATCH("^ban",{"apple";"banana"},3)'` → `#VALUE!`; `crates/functions/src/lookup.rs:234` accepts only -1..2 | M | |
+| XLOOKUP / XMATCH regex match mode (`match_mode` 3) | n/a for now: announced for Insiders in Aug 2024, but Microsoft's XLOOKUP reference (checked 2026-10-28) still lists only modes -1, 0, 1 and 2, so there is no public behaviour to match | `gridcraft-cli eval '=XMATCH("^ban",{"apple";"banana"},3)'` → `#VALUE!` (`crates/functions/src/lookup.rs:234`) | L (re-check when the reference documents it) | |
 | IMAGE | n/a: fetches pictures from web addresses and the app never contacts the internet; pictures in cells (Insert ▸ Pictures ▸ Place in Cell) cover local images | `crates/ui-egui/src/cell_pictures.rs` | L | |
 | TRANSLATE, DETECTLANGUAGE, STOCKHISTORY | n/a: Microsoft online services | Microsoft function pages ("requires internet") | L | |
 | RTD, CALL, REGISTER.ID | n/a: COM servers and DLL calls; macros and add-ins never run here | `docs/function-parity.md` | L | |
@@ -125,7 +125,7 @@ is used.
 | Feature | Status | Evidence | Priority | Done |
 |---|---|---|---|---|
 | Ribbon (11 tabs plus contextual tabs), backstage, task panes, key tips | present | `cargo xtask parity`; `crates/ui-egui/src/ribbon/` | — | |
-| Search / Tell Me box (Alt+Q) | missing | `keytip_table/generated.rs:373` (`ui.search` reserved, issue #49) | **H** (finding a command by name is how people cope with an unfamiliar ribbon) | |
+| Search / Tell Me box (Alt+Q) | partial: a command search opens from the title bar's search icon and Automate tab, but not from Alt+Q, and it matches only exact substrings | `crates/ui-egui/src/dialogs/command_search.rs`; `keytip_table/generated.rs:373` (`ui.search` reserved) | **H** (finding a command by name is how people cope with an unfamiliar ribbon) | |
 | Focus Cell (View ▸ Focus Cell, Excel Dec 2024) | missing | `keytip_table/generated.rs:354` reserved | M | |
 | Formulas ▸ Remove Arrows ▸ Remove Precedent / Dependent Arrows | partial: only Remove Arrows (all) | `formulas.removeArrows` present; `keytip_table/generated.rs:226` reserved | M | |
 | Fill ▸ Across Worksheets, grouped sheets | missing | `keytip_table/generated.rs:82` | L | |
@@ -149,13 +149,24 @@ is used.
 
 ## Work order (phase 2)
 
-Highest priority first, in batches of related features:
+Highest priority first, in batches of related features. Before building anything, upstream
+GridCraft's open pull requests were searched (`gh pr list -R storytold/gridcraft --search …`):
+where upstream already has the feature in review, taking that pull request keeps the automatic
+sync clean (upstream merges with merge commits, so the same commits arrive again without a
+conflict), and building a second version would make every later sync conflict.
 
 1. Bring upstream GridCraft in (fix the blocked sync: re-place the four overlay hooks).
 2. Repeat last action (F4 / Ctrl+Y); Circle Invalid Data drawn on the sheet plus Clear Validation
-   Circles; Remove Precedent / Dependent Arrows; Auto Outline and Clear Outline; Focus Cell.
-3. Chart axis bounds, major unit and logarithmic scale (model, drawing, XLSX, Format pane).
-4. GETPIVOTDATA; XLOOKUP / XMATCH regex match mode.
-5. Search box (Alt+Q); Review ▸ Show Changes.
+   Circles; Remove Precedent / Dependent Arrows; Auto Outline and Clear Outline; Focus Cell;
+   Review ▸ Show Changes. Built in Dexterity's own files (`crates/engine/src/cmd/dex.rs`,
+   `crates/ui-egui/src/dex_ui.rs`). Upstream's F4 (#2087) and Focus Cell (#1376, #1884) pull
+   requests are hundreds of commits behind and conflict, so they could not be taken; a Dexterity
+   command whose id upstream later registers gives way to upstream's automatically.
+3. GETPIVOTDATA from upstream pull request #290 and the Alt+Q search box from #1339: both merge
+   cleanly onto current upstream.
+4. Chart axis bounds, major unit and logarithmic scale: **not built here**. Upstream pull request
+   #1290 (fixed axis bounds and units) is in review and issue #937 (log scale) is open; both
+   change the shared `Chart` model, which 15 upstream files construct, so a fork-only version
+   would conflict on every upstream chart change. Taken when upstream merges it.
 
 Medium and low items stay listed above with their reason until they are taken up.

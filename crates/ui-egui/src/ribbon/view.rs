@@ -52,6 +52,8 @@ pub(super) fn view(app: &mut SheetApp, ui: &mut Ui) {
             act(app, "view.headings", json!({"on": h}));
         }
     });
+    ui.add_space(6.0);
+    crate::dex_ui::focus_cell_button(app, ui);
     sep(ui);
     let __k = big_button(ui, Icon::Zoom, "Zoom", "Zoom…", false);
     control_keytip(app, ui, &__k, "dialog:zoom");

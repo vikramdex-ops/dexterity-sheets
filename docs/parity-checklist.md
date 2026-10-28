@@ -4,7 +4,7 @@
 
 Each entry is an Excel ribbon or menu command (feature names only). It counts as implemented when GridCraft registers a command with the same id. This measures breadth only; the overall assessment (depth, fidelity, effort) is in [target-app-parity.md](target-app-parity.md).
 
-**Overall: 275 / 291 commands implemented (94.5%).**
+**Overall: 276 / 291 commands implemented (94.8%).**
 
 | Tab | Implemented | Total | Parity |
 |---|---|---|---|
@@ -15,7 +15,7 @@ Each entry is an Excel ribbon or menu command (feature names only). It counts as
 | Page Layout | 23 | 23 | 100% |
 | Formulas | 23 | 23 | 100% |
 | Data | 23 | 28 | 82% |
-| Review | 15 | 18 | 83% |
+| Review | 16 | 18 | 89% |
 | View | 20 | 20 | 100% |
 | Automate | 4 | 4 | 100% |
 | Table Design | 13 | 13 | 100% |
@@ -273,7 +273,7 @@ Missing:
 - `data.relationships` Relationships (Data Tools)
 - `data.analyzeData` Analyze Data (Analysis)
 
-## Review (15 / 18, 83%)
+## Review (16 / 18, 89%)
 
 Implemented:
 
@@ -292,12 +292,12 @@ Implemented:
 - `review.unprotectSheet` Unprotect Sheet (Protect)
 - `review.protectWorkbook` Protect Workbook (Protect)
 - `review.allowEditRanges` Allow Edit Ranges (Protect)
+- `review.showChanges` Show Changes (Changes)
 
 Missing:
 
 - `review.smartLookup` Smart Lookup (Insights)
 - `review.translate` Translate (Language)
-- `review.showChanges` Show Changes (Changes)
 
 ## View (20 / 20, 100%)
 

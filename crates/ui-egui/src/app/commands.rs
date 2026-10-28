@@ -126,6 +126,9 @@ impl SheetApp {
         if let Some(r) = crate::collab_ui::run_command(self, id, p) {
             return Some(r);
         }
+        if let Some(r) = crate::dex_ui::run_command(self, id, p) {
+            return Some(r);
+        }
         let r = match id {
             "app.checkForUpdates" | "help.checkForUpdates" => {
                 self.check_for_updates();

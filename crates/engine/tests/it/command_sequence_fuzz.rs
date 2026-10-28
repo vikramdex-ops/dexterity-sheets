@@ -64,7 +64,19 @@ const EXCLUDED: &[(&str, &str)] = &[
     ("insert.picture", "reads files"),
     ("pageLayout.background", "reads files"),
     ("formulas.calculationOptions", "manual and iterative calculation differ from a full recalc by design"),
+    // Dexterity Sheets commands (crates/engine/src/cmd/dex.rs, tested there).
+    ("edit.repeat", DEX),
+    ("data.clearValidationCircles", DEX),
+    ("data.autoOutline", DEX),
+    ("data.clearOutline", DEX),
+    ("formulas.removePrecedentArrows", DEX),
+    ("formulas.removeDependentArrows", DEX),
+    ("view.focusCell", DEX),
+    ("review.showChanges", DEX),
 ];
+/// Dexterity Sheets keeps its own commands out of the random pool so the sequences stay the same
+/// as upstream GridCraft's, whose CI vets them.
+const DEX: &str = "Dexterity Sheets command, tested in cmd/dex.rs; kept out so sequences match upstream";
 
 // ---------------------------------------------------------------- deterministic randomness
 

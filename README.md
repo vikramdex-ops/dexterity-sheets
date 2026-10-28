@@ -259,7 +259,7 @@ only by administrators; uninstalling never deletes it. Full guide:
 | **Opening a shared file** | Opening a file that is being shared joins the live workbook, so a file on the network drive never splits into two versions. Reopening your own shared file rejoins it and brings the file up to date. |
 | **Stop sharing** | *Share › Stop sharing (keep my file)*: the file gets every edit and is just a file again; everyone else is told and keeps a copy in their window. If another program changed the file while it was shared, it is never overwritten: the app says so and the edits stay in the shared workbook (Save As keeps them). |
 | **See each other** | Other people's selections are outlined in their colour with their name; "(typing)" while they edit a cell. Click a name in the status bar to jump to them. |
-| **Who changed it** | The status bar shows who last changed the active cell. Click it, or *Review › Edit History*, for that cell's history or the whole workbook's, filterable by person. |
+| **Who changed it** | The status bar shows who last changed the active cell. Click it, or *Review › Edit History* (Excel's *Show Changes*), for that cell's history or the whole workbook's, filterable by person. |
 | **Versions** | *Review › Versions*: keep a labelled version ("Issued for review Rev B"), open any version as a separate copy, or restore one for everyone (the current state is kept first). Ctrl+S keeps a version too. |
 | **Offline** | Edits made while the server can't be reached are kept and sent on reconnect; the status bar shows how many are waiting. |
 | **Conflicts** | Two people changing the same cell at the same moment: the server's order decides, everyone ends up identical. Different cells never conflict. |
