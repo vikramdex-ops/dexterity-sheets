@@ -194,6 +194,27 @@ if '("edit.repeat", DEX)' not in s:
 insert(f"{UI}/lib.rs", "pub mod dex_ui;", "pub mod collab_ui;\n", "pub mod dex_ui;\n")
 insert("crates/ui-egui/tests/it/main.rs", "mod dex_parity;", "mod control_timeout;\n", "mod dex_parity;\n")
 insert(
+    f"{UI}/dialogs/cond_format_rules.rs",
+    "crate::dex_ui::new_rule_button(app, ui);",
+    '    let rules = list["rules"].as_array().cloned().unwrap_or_default();\n',
+    "    crate::dex_ui::new_rule_button(app, ui);\n",
+)
+replace(
+    f"{UI}/dialogs/show.rs",
+    "                    egui::ScrollArea::vertical().max_height(360.0).show(ui, |ui| {\n"
+    "                        ui.monospace(serde_json::to_string_pretty(&r.unwrap_or(Json::Null)).unwrap_or_default());\n"
+    "                    });\n",
+    "                    // Dexterity Sheets: readable tables and cell links instead of the raw result.\n"
+    "                    crate::dex_ui::result_view(app, ui, &d.name, &r.unwrap_or(Json::Null));\n",
+    required=False,
+)
+insert(
+    f"{UI}/app/commands.rs",
+    "crate::dex_ui::dialog_alias(name)",
+    "    pub fn open_dialog(&mut self, name: &str, params: Json) {\n",
+    "        if let Some((alias, p)) = crate::dex_ui::dialog_alias(name) {\n            return self.open_dialog(alias, p);\n        }\n",
+)
+insert(
     f"{UI}/app/commands.rs",
     "crate::dex_ui::run_command(self, id, p)",
     "        if let Some(r) = crate::collab_ui::run_command(self, id, p) {\n            return Some(r);\n        }\n",

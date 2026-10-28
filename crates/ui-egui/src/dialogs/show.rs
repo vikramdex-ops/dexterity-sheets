@@ -183,9 +183,8 @@ pub fn show(app: &mut SheetApp, ctx: &egui::Context) {
                     } else {
                         d.result.clone()
                     };
-                    egui::ScrollArea::vertical().max_height(360.0).show(ui, |ui| {
-                        ui.monospace(serde_json::to_string_pretty(&r.unwrap_or(Json::Null)).unwrap_or_default());
-                    });
+                    // Dexterity Sheets: readable tables and cell links instead of the raw result.
+                    crate::dex_ui::result_view(app, ui, &d.name, &r.unwrap_or(Json::Null));
                 }
                 "insertPicture" => {
                     // A private inbox dies with this dialog; late browser results

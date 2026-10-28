@@ -3,6 +3,7 @@ use super::*;
 pub(super) fn manage_rules(app: &mut SheetApp, ui: &mut egui::Ui) {
     let list = app.session.run("home.manageRules", json!({})).unwrap_or(Json::Null);
     let rules = list["rules"].as_array().cloned().unwrap_or_default();
+    crate::dex_ui::new_rule_button(app, ui);
     if rules.is_empty() {
         ui.label("There are no conditional formatting rules on this sheet.");
     }

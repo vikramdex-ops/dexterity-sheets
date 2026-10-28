@@ -287,6 +287,11 @@ each application opened in the other.
 
 Dates (dd-mm), digit grouping (12,34,567) and currency follow the Windows regional settings, as
 Excel does on the same PC; files stay locale-independent.
+
+What Dexterity Sheets does and does not do yet, feature by feature against official GridCraft and
+the latest Excel, is in [docs/dexterity-parity-audit.md](docs/dexterity-parity-audit.md); the
+screen-by-screen check that nothing is a placeholder is
+[docs/dexterity-ui-audit.md](docs/dexterity-ui-audit.md).
 </details>
 
 <details>

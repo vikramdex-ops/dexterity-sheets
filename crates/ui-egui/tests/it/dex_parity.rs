@@ -2,6 +2,7 @@
 //! F4 / Ctrl+Y repeat, the Remove Arrows variants, Focus Cell, validation circles and Show Changes.
 
 use egui::{Event, Key, Modifiers};
+use egui_kittest::kittest::Queryable as _;
 use gridcraft_engine::Session;
 use gridcraft_engine::core::CellRef;
 use gridcraft_ui_egui::SheetApp;
@@ -90,4 +91,41 @@ fn focus_cell_validation_circles_and_show_changes_render() {
     h.state_mut().run("review.showChanges", json!({})).unwrap();
     h.run_steps(2);
     assert_eq!(h.state().grid.pane.as_deref(), Some("history"));
+}
+
+#[test]
+fn conditional_formatting_with_no_rule_opens_new_formatting_rule() {
+    let mut h = harness(book());
+    h.state_mut().run_or_alert("home.conditionalFormat", json!({}));
+    h.run_steps(2);
+    let d = h.state().dialog.as_ref().map(|d| d.name().to_string());
+    assert_eq!(d.as_deref(), Some("cfQuick"), "the request for newFormattingRule must open the New Rule dialog");
+}
+
+#[test]
+fn result_dialogs_read_as_text_not_json() {
+    let mut s = book();
+    s.execute("cell.set", json!({"cell": "C1", "input": "=1/0"})).unwrap();
+    let mut h = harness(s);
+    h.state_mut().open_dialog("statistics", json!({}));
+    h.run_steps(2);
+    assert!(h.query_all_by_label("Cells with data").count() >= 2, "sheet and workbook tables");
+    h.state_mut().open_dialog("errorChecking", json!({}));
+    h.run_steps(2);
+    h.get_by_label("#DIV/0!");
+    h.state_mut().open_dialog("accessibility", json!({}));
+    h.run_steps(2);
+    assert!(h.query_by_label("[]").is_none(), "no raw JSON");
+}
+
+#[test]
+fn watch_window_and_show_comments_open_their_panes_from_any_entry_point() {
+    let mut h = harness(book());
+    h.state_mut().run_or_alert("formulas.watchWindow", json!({}));
+    h.run_steps(2);
+    assert_eq!(h.state().grid.pane.as_deref(), Some("watch"));
+    h.state_mut().run_or_alert("review.showComments", json!({"on": true}));
+    h.run_steps(2);
+    assert!(h.state().session.comments_pane, "Comments stays open in place of the Watch Window");
+    assert_eq!(h.state().grid.pane, None);
 }

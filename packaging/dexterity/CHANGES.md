@@ -15,6 +15,9 @@ automatically and don't go here.
 - **View › Focus Cell** highlights the active cell's row and column so it is easy to follow across a wide sheet; pick the colour from its arrow.
 - **Review › Show Changes** (the name Excel uses) opens Edit History.
 - **Alt, Q** opens the command search (as Excel's Search box does), the same as the search icon in the title bar.
+- Fixed: **Workbook Statistics**, **Check Accessibility**, **Error Checking** and **Evaluate Formula** showed raw program output. They now show readable tables; in Error Checking each cell (and each circular reference) is a link that takes you there.
+- Fixed: choosing **Conditional Formatting** from the command search or a key tip did nothing; it now opens New Formatting Rule. The **Rules Manager** has a **New Rule…** button.
+- Fixed: **Watch Window** and **Show Comments** run from the command search or key tips now open their panes, as the ribbon buttons do.
 
 ## 1.2.2 · 27 October 2026
 

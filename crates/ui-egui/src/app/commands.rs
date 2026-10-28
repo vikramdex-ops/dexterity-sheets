@@ -283,6 +283,9 @@ impl SheetApp {
     }
 
     pub fn open_dialog(&mut self, name: &str, params: Json) {
+        if let Some((alias, p)) = crate::dex_ui::dialog_alias(name) {
+            return self.open_dialog(alias, p);
+        }
         if let Err(e) = self.commit_text_box_edit() {
             self.message = Some(("Text Box".into(), clean_error(&e)));
             return;

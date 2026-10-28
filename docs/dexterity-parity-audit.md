@@ -34,10 +34,10 @@ is used.
 
 | Feature | Status | Evidence | Priority | Done |
 |---|---|---|---|---|
-| Upstream merges reach Dexterity automatically | **broken** since 2026-10-27 | sync run 40593366984: overlay hooks `name = "DexteritySheets"`, `UpgradeCode`, `Scope="perUser"` and "no craft-update" could not be re-placed; issue #1 open | H | |
-| Format Chart Area ▸ Chart Type offers stacked and 100% stacked types (#2605) | missing (upstream only) | `git log main..upstream/main` `0b6d2439` | M | |
-| Faster XLSX worksheet writing (#2749) | missing (upstream only) | `393a524a` | M | |
-| Drop-down menus grow back after a search with no matches (#2743) | missing (upstream only) | `63038650` | M | |
+| Upstream merges reach Dexterity automatically | fixed | sync run 40593366984: overlay hooks `name = "DexteritySheets"`, `UpgradeCode`, `Scope="perUser"` and "no craft-update" could not be re-placed; issue #1 open | H | fixed `6641c8ce`: merged by hand; the overlay now re-applies these hooks itself |
+| Format Chart Area ▸ Chart Type offers stacked and 100% stacked types (#2605) | present | `git log main..upstream/main` `0b6d2439` | M | merged `6641c8ce` |
+| Faster XLSX worksheet writing (#2749) | present | `393a524a` | M | merged `6641c8ce` (its fast path had dropped the bare-table-name fix; restored) |
+| Drop-down menus grow back after a search with no matches (#2743) | present | `63038650` | M | merged `6641c8ce` |
 | Per-user default install folder and install-scope policy (#2704) | n/a: Dexterity has its own installer identity (per-user, its own UpgradeCode) | `packaging/windows/gridcraft.wxs`; `packaging/dexterity/check_overlay.py` | L | |
 | Internet update checker (`craft-update`) | n/a: removed on purpose, the office server delivers updates and the app never contacts the internet | `apps/gridcraft/Cargo.toml` comment; `docs/collaboration.md` | — | |
 | Upstream CI workflows, ArtCraft brand files and icons | n/a: deleted on purpose (Dexterity CI and branding replace them) | `git diff --name-status $(git merge-base main upstream/main) main` (22 deletions, all of these) | — | |
@@ -49,7 +49,7 @@ is used.
 |---|---|---|---|---|
 | 514 worksheet functions incl. dynamic arrays, LAMBDA family, GROUPBY, PIVOTBY, PERCENTOF, REGEX*, TRIMRANGE | present | `gridcraft-cli functions --json`; `crates/functions/src/dynamic.rs`, `text.rs` | — | |
 | Trim-reference operators `.:` `:.` `.:.` | present | `crates/formula/src/lexer.rs:200` | — | |
-| GETPIVOTDATA | missing | not in `gridcraft-cli functions`; only in the `.xls` token table `crates/xlsx/src/xls/ftab.rs:354` | H (engineering summaries pull figures out of PivotTables) | |
+| GETPIVOTDATA | missing | not in `gridcraft-cli functions`; only in the `.xls` token table `crates/xlsx/src/xls/ftab.rs:354` | H (engineering summaries pull figures out of PivotTables) | not built: upstream PR #290 implements it and merges cleanly, but an unreviewed upstream pull request is not taken into `main`, and a second implementation would conflict with it in the calc evaluator. Arrives with the sync once upstream merges #290 |
 | XLOOKUP / XMATCH regex match mode (`match_mode` 3) | n/a for now: announced for Insiders in Aug 2024, but Microsoft's XLOOKUP reference (checked 2026-10-28) still lists only modes -1, 0, 1 and 2, so there is no public behaviour to match | `gridcraft-cli eval '=XMATCH("^ban",{"apple";"banana"},3)'` → `#VALUE!` (`crates/functions/src/lookup.rs:234`) | L (re-check when the reference documents it) | |
 | IMAGE | n/a: fetches pictures from web addresses and the app never contacts the internet; pictures in cells (Insert ▸ Pictures ▸ Place in Cell) cover local images | `crates/ui-egui/src/cell_pictures.rs` | L | |
 | TRANSLATE, DETECTLANGUAGE, STOCKHISTORY | n/a: Microsoft online services | Microsoft function pages ("requires internet") | L | |
@@ -76,7 +76,7 @@ is used.
 |---|---|---|---|---|
 | Column, bar, line, pie, doughnut, area, XY scatter, bubble, radar, stock, combo, histogram, box & whisker, waterfall, funnel, treemap, sunburst (26 subtypes) | present | `crates/model/src/features.rs:404` (`ChartKind`) | — | |
 | Trendlines with equation and R², smoothed lines, secondary axis, data labels, titles, legend | present | `crates/model/src/features.rs:476` (`Trendline`), `Series::smooth` | — | |
-| Axis bounds, major unit and logarithmic scale (Format Axis) | missing | `Chart` (`crates/model/src/features.rs:544`) has no axis scaling fields | **H** (XY plots of pump, pressure and temperature data need fixed bounds and log axes) | |
+| Axis bounds, major unit and logarithmic scale (Format Axis) | missing | `Chart` (`crates/model/src/features.rs:544`) has no axis scaling fields | **H** (XY plots of pump, pressure and temperature data need fixed bounds and log axes) | not built: upstream PR #1290 (bounds and units) and issue #937 (log scale); see the work order below |
 | Error bars, per-point formatting | missing | same struct | M | |
 | 3-D charts, surface, pie of pie / bar of pie, Pareto | missing | `docs/chart-parity.md` | L | |
 | Filled map (Insert ▸ Maps) | n/a: needs online map data | `catalog.rs:126` | L | |
@@ -88,9 +88,9 @@ is used.
 | Sort, filter, advanced filter, slicers, remove duplicates, text to columns, Flash Fill, consolidate, subtotal, group and outline | present | `gridcraft-cli commands` (`data.*`, 38 commands) | — | |
 | PivotTables, Recommended PivotTables, PivotCharts | present | `crates/engine/src/cmd/pivot.rs` | — | |
 | Goal Seek, Scenario Manager, Data Table, Solver, Analysis ToolPak, Forecast Sheet | present | `crates/engine/src/cmd/whatif.rs`, `solver.rs`, `analysis.rs`, `forecast.rs` | — | |
-| Data validation and Circle Invalid Data | **broken**: Circle Invalid Data finds the cells but nothing is drawn on the sheet, so the menu item looks dead | `crates/engine/src/cmd/data/validation.rs:272` returns a list; no painter uses it (`grep -ri circle crates/ui-egui/src/grid`) | H | |
-| Clear Validation Circles | missing | `keytip_table/generated.rs:311` reserved | H (goes with the fix above) | |
-| Auto Outline, Clear Outline | missing | `keytip_table/generated.rs:276`, `:307` reserved | M | |
+| Data validation and Circle Invalid Data | present | `crates/engine/src/cmd/data/validation.rs:272` returns a list; no painter uses it (`grep -ri circle crates/ui-egui/src/grid`) | H | fixed `07a0f893`: red circles drawn, removed when the value is corrected |
+| Clear Validation Circles | present | `keytip_table/generated.rs:311` reserved | H (goes with the fix above) | added `07a0f893` |
+| Auto Outline, Clear Outline | present | `keytip_table/generated.rs:276`, `:307` reserved | M | added `07a0f893` |
 | Get Data: From Text/CSV, From Table/Range, Queries & Connections, Refresh All | present | `data.fromTextCsv`, `data.fromTableRange`, `data.queriesConnections` | — | |
 | Get Data from Web, databases, other sources; Power Query editor | missing (web: n/a, no internet) | `catalog.rs:196`; `keytip_table/generated.rs` (`gap #12` entries) | M (from folder / workbook would help; a full Power Query is out of scope for now) | |
 | Stocks and Geography data types, Analyze Data, Clean Data (Copilot) | n/a: Microsoft online services | `catalog.rs:200`, `:201`, `:225` | — | |
@@ -114,7 +114,7 @@ is used.
 |---|---|---|---|---|
 | Live co-authoring on the office LAN, from any folder, with presence and named accounts | present (Dexterity) | `docs/collaboration.md`; `packaging/dexterity/tests/lan_e2e.py` | — | |
 | Edit history (who changed which cell, when, old → new) and versions | present (Dexterity) | `crates/ui-egui/src/collab_ui.rs:1493` (`history_pane`) | — | |
-| Review ▸ Show Changes | missing as a command (the same history is under Review ▸ Edit History) | `catalog.rs:248`; `keytip_table/generated.rs:323` reserved | H (the name Excel users look for) | |
+| Review ▸ Show Changes | present | `catalog.rs:248`; `keytip_table/generated.rs:323` reserved | H (the name Excel users look for) | added `07a0f893`: opens Edit History |
 | Threaded comments with replies and resolve, notes | present | `review.*` commands; `docs/file-format-parity.md` (#300) | — | |
 | @mentions in comments, comment filtering | missing | no `mention` in `crates/` | L | |
 | Sheet View (personal sort/filter while co-authoring) | missing | no sheet-view feature in `crates/ui-egui/src` | L | |
@@ -125,9 +125,9 @@ is used.
 | Feature | Status | Evidence | Priority | Done |
 |---|---|---|---|---|
 | Ribbon (11 tabs plus contextual tabs), backstage, task panes, key tips | present | `cargo xtask parity`; `crates/ui-egui/src/ribbon/` | — | |
-| Search / Tell Me box (Alt+Q) | partial: a command search opens from the title bar's search icon and Automate tab, but not from Alt+Q, and it matches only exact substrings | `crates/ui-egui/src/dialogs/command_search.rs`; `keytip_table/generated.rs:373` (`ui.search` reserved) | **H** (finding a command by name is how people cope with an unfamiliar ribbon) | |
-| Focus Cell (View ▸ Focus Cell, Excel Dec 2024) | missing | `keytip_table/generated.rs:354` reserved | M | |
-| Formulas ▸ Remove Arrows ▸ Remove Precedent / Dependent Arrows | partial: only Remove Arrows (all) | `formulas.removeArrows` present; `keytip_table/generated.rs:226` reserved | M | |
+| Search / Tell Me box (Alt+Q) | partial | `crates/ui-egui/src/dialogs/command_search.rs`; `keytip_table/generated.rs:373` (`ui.search` reserved) | **H** (finding a command by name is how people cope with an unfamiliar ribbon) | `40e3b3d9`: Alt, Q opens it; fuzzy matching arrives with upstream PR #1339 |
+| Focus Cell (View ▸ Focus Cell, Excel Dec 2024) | present | `keytip_table/generated.rs:354` reserved | M | added `07a0f893` |
+| Formulas ▸ Remove Arrows ▸ Remove Precedent / Dependent Arrows | present | `formulas.removeArrows` present; `keytip_table/generated.rs:226` reserved | M | added `07a0f893` |
 | Fill ▸ Across Worksheets, grouped sheets | missing | `keytip_table/generated.rs:82` | L | |
 | Select Objects pointer, Navigation pane, Reset Window Position | missing | `keytip_table/generated.rs:75`, `:354`… | L | |
 | Insert Screenshot, Equation, WordArt, Object, SmartArt, Signature Line, Timeline | missing | `catalog.rs:121`–`137` | L | |
@@ -142,9 +142,9 @@ is used.
 | Feature | Status | Evidence | Priority | Done |
 |---|---|---|---|---|
 | Navigation, selection, editing, Ctrl+letter commands, number-format and border combinations, F2/F3/F5/F7/F9, Shift+F2/F3/F10, Ctrl+[ ], Alt+= | present | `crates/ui-egui/src/keymap.rs`; `docs/ui-parity.md` §shortcuts | — | |
-| F4 / Ctrl+Y outside the formula bar: Repeat last action | missing: F4 on the grid does nothing | `crates/ui-egui/src/grid/keyboard.rs:145` (`Key::F4 if !cmd => {}`) | **H** (used constantly to repeat formatting, inserts and deletes) | |
-| Alt+Q (Search) | missing | see §8 | H | |
-| Alt+W E F (Focus Cell) | missing | see §8 | M | |
+| F4 / Ctrl+Y outside the formula bar: Repeat last action | present | `crates/ui-egui/src/grid/keyboard.rs:145` (`Key::F4 if !cmd => {}`) | **H** (used constantly to repeat formatting, inserts and deletes) | added `07a0f893` |
+| Alt+Q (Search) | present | see §8 | H | `40e3b3d9` |
+| Alt+W E F (Focus Cell) | present | see §8 | M | `07a0f893` (key tip W, V, C) |
 | F8 extend mode, Shift+F8 add mode, F6 pane cycling, Ctrl+Q | missing | `docs/ui-parity.md:139`–`142` | L | |
 
 ## Work order (phase 2)
@@ -162,8 +162,11 @@ conflict), and building a second version would make every later sync conflict.
    `crates/ui-egui/src/dex_ui.rs`). Upstream's F4 (#2087) and Focus Cell (#1376, #1884) pull
    requests are hundreds of commits behind and conflict, so they could not be taken; a Dexterity
    command whose id upstream later registers gives way to upstream's automatically.
-3. GETPIVOTDATA from upstream pull request #290 and the Alt+Q search box from #1339: both merge
-   cleanly onto current upstream.
+3. GETPIVOTDATA and the Alt+Q search box: upstream pull requests #290 and #1339 implement them
+   and merge cleanly onto current upstream, but a pull request upstream has not reviewed is not
+   taken into `main`. Alt, Q was wired to the command search the app already has (the same
+   key-tip change #1339 makes); GETPIVOTDATA waits for upstream, because a second
+   implementation would conflict with #290 in the calc evaluator.
 4. Chart axis bounds, major unit and logarithmic scale: **not built here**. Upstream pull request
    #1290 (fixed axis bounds and units) is in review and issue #937 (log scale) is open; both
    change the shared `Chart` model, which 15 upstream files construct, so a fork-only version
