@@ -1,6 +1,6 @@
 # Dexterity Sheets UI audit
 
-> **Audited:** 2026-10-28 · **Build:** `main` after `40e3b3d9` (dev profile) · **Rule:** `RULES.md`
+> **Audited:** 2026-10-28 · **Build:** `main` at `40e3b3d9` (dev profile); fixes in `07a0f893`, `40e3b3d9`, `1f780550` · **Rule:** `RULES.md`
 > §1.3, "every screen is real"
 
 Every screen of the app and of the Server Manager was opened and looked at, to find controls that
@@ -31,10 +31,10 @@ Draw tab's pen strokes, and printing to a real printer.
 | Data ▸ Outline | buttons | Auto Outline and Clear Outline reserved but missing | `07a0f893` |
 | View ▸ Show | buttons | Focus Cell missing | `07a0f893` |
 | Command search (title bar, Automate) and Alt, Q | opened from the key tip | the Q key tip was reserved, silent | `40e3b3d9`: opens the search |
-| Conditional Formatting from the command search or a key tip | run with no rule | **dead**: the engine asked for a "newFormattingRule" dialog the UI did not have | this change: opens New Formatting Rule |
-| Conditional Formatting Rules Manager | dialog | could only reorder and delete; no way to add a rule from it | this change: New Rule… button (Edit Rule: see "Left") |
-| Workbook Statistics, Check Accessibility, Error Checking, Evaluate Formula | dialogs | showed the command's raw JSON (`[]`, `{"errors": []…}`, `null`) | this change: readable tables; Error Checking's cells and circular references are links to the cell; a clear line when there is nothing to show |
-| Formulas ▸ Watch Window, Review ▸ Show Comments from the command search or key tips | run as commands | **dead from those entry points**: the pane opens only from the ribbon button | this change: the panes open from every entry point |
+| Conditional Formatting from the command search or a key tip | run with no rule | **dead**: the engine asked for a "newFormattingRule" dialog the UI did not have | `1f780550`: opens New Formatting Rule |
+| Conditional Formatting Rules Manager | dialog | could only reorder and delete; no way to add a rule from it | `1f780550`: New Rule… button (Edit Rule: see "Left") |
+| Workbook Statistics, Check Accessibility, Error Checking, Evaluate Formula | dialogs | showed the command's raw JSON (`[]`, `{"errors": []…}`, `null`) | `1f780550`: readable tables; Error Checking's cells and circular references are links to the cell; a clear line when there is nothing to show |
+| Formulas ▸ Watch Window, Review ▸ Show Comments from the command search or key tips | run as commands | **dead from those entry points**: the pane opens only from the ribbon button | `1f780550`: the panes open from every entry point |
 | Review ▸ Show Changes | key tip R, G and the command | reserved, silent | `07a0f893`: opens Edit History |
 | Other dialogs (59 in all: Format Cells, Find and Replace, Go To / Go To Special, Sort, Advanced Filter, Data Validation, Text to Columns, Remove Duplicates, Subtotal, Goal Seek, Solver, Forecast Sheet, Data Analysis, Name Manager, New Name, Paste Name, Paste Special, Insert / Delete cells, Row Height, Column Width, Standard Width, Rename / Move or Copy / Unhide sheet, Protect Sheet / Workbook, Allow Edit Ranges, Insert Hyperlink, Place Picture, Insert Chart, Sparklines, Series, Header & Footer, Page Setup, Zoom, Arrange Windows, Macros, Action Journal, Agent Control, About, Spelling, Insert Function, Calculated Field, Chart Title, Resize Table, Outline Settings) | each opened, photographed, read | real fields and buttons; disabled controls say why ("No names defined" in Paste Name) | — |
 | Backstage: Home, New, Open, Shared, Info, Save As, Print, Export, Options, Account | each page opened and photographed | real; "No recent workbooks yet" is an honest empty state | — |
