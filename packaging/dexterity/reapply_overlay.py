@@ -119,6 +119,57 @@ insert(
     "                    ui.separator();\n",
 )
 
+# ---- Desktop app manifest: our executable name, no internet update checker --------------------
+APP = "apps/gridcraft/Cargo.toml"
+replace(APP, 'default-run = "gridcraft"\ndescription = "GridCraft desktop app"',
+        'default-run = "DexteritySheets"\ndescription = "Dexterity Sheets desktop app (based on GridCraft)"', required=False)
+replace(APP, "VERSIONINFO for gridcraft.exe", "VERSIONINFO for DexteritySheets.exe", required=False)
+insert(
+    APP,
+    'name = "DexteritySheets"',
+    "[lints]\nworkspace = true\n",
+    "\n# The shipped desktop executable is `DexteritySheets` (`DexteritySheets.exe` on Windows); the\n"
+    "# package keeps its name `gridcraft` (`cargo run -p gridcraft`).\n"
+    '[[bin]]\nname = "DexteritySheets"\npath = "src/main.rs"\n',
+)
+s = read(APP)
+s2 = re.sub(r"# Same craft-libs revision as the workspace's craft-update and craft-window \(see the root\n# Cargo\.toml\)\.\n",
+            "# Same craft-libs revision as the workspace's craft-window (see the root Cargo.toml).\n", s)
+s2 = re.sub(r"craft-update = \{[^\n]*\}\n", "# Dexterity Sheets: no craft-update (no update checker; the app never contacts the internet).\n", s2)
+if s2 != s:
+    write(APP, s2)
+insert(
+    APP,
+    "windows-registry",
+    'pollster = "1"\n',
+    '# Regional settings (`regional.rs`): HKCU\\Control Panel\\International. Already in the tree.\nwindows-registry = "0.6"\n',
+)
+
+# ---- UI test: File › Account shows Dexterity Sheets' own version -------------------------------
+replace(
+    "crates/ui-egui/tests/it/file_menu.rs",
+    '    h.get_by_label(env!("CARGO_PKG_VERSION"));\n    h.get_by_label(env!("CARGO_PKG_LICENSE"));',
+    "    // Dexterity Sheets shows its own version (packaging/dexterity/VERSION), not GridCraft's.\n"
+    '    h.get_by_label(gridcraft_collab::APP_VERSION.trim());\n    h.get_by_label(env!("CARGO_PKG_LICENSE"));',
+    required=False,
+)
+
+# ---- XLSX formulas: the fast path must still spell bare table names `Table[]` ------------------
+insert(
+    "crates/xlsx/src/fmla.rs",
+    "Expr::Name(n) => is_table(n)",
+    "            Expr::Struct(_) => true,\n",
+    "            // Dexterity Sheets: a bare table name is written `Table[]` (see [`TableNames`]).\n"
+    "            Expr::Name(n) => is_table(n),\n",
+)
+
+# ---- Windows packaging: upstream's install-policy check is for GridCraft's identity -----------
+s = read("packaging/windows/package.ps1")
+s2 = re.sub(r"# Check the compiled scope, path and registration contract before signing\.\r?\n& \(Join-Path \$PSScriptRoot 'check-install-policy\.ps1'\) -MsiPath \$Msi\r?\n",
+            "# Dexterity Sheets: no check-install-policy.ps1 (it checks GridCraft's install identity, not ours).\n", s)
+if s2 != s:
+    write("packaging/windows/package.ps1", s2)
+
 # ---- Agents read RULES.md first ---------------------------------------------------------------
 insert(
     "CLAUDE.md",

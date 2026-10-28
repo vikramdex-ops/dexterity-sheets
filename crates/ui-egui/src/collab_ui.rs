@@ -1505,7 +1505,7 @@ pub fn history_pane(app: &mut SheetApp, ui: &mut Ui) {
         ui.selectable_value(&mut app.collab.history.this_cell, false, "Whole workbook");
     });
     let mut user = app.collab.history.user.clone();
-    egui::ComboBox::from_id_salt("collab_history_user")
+    craft_ui::ComboBox::from_id_salt("collab_history_user")
         .selected_text(user.as_deref().map(|u| app.collab.display_of(u)).unwrap_or_else(|| "Everyone".into()))
         .show_ui(ui, |ui| {
             ui.selectable_value(&mut user, None, "Everyone");

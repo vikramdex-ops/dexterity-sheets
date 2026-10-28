@@ -158,7 +158,8 @@ fn file_account_shows_the_version_and_opens_about() {
     assert_eq!(page(&h), Some("account"));
     assert!(h.state().dialog.is_none());
     // The About dialog also shows the version; it must not be open yet.
-    h.get_by_label(env!("CARGO_PKG_VERSION"));
+    // Dexterity Sheets shows its own version (packaging/dexterity/VERSION), not GridCraft's.
+    h.get_by_label(gridcraft_collab::APP_VERSION.trim());
     h.get_by_label(env!("CARGO_PKG_LICENSE"));
     click(&mut h, "About Dexterity Sheets");
     assert_eq!(h.state().dialog.as_ref().map(|d| d.name()), Some("about"));

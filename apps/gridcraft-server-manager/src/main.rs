@@ -286,6 +286,9 @@ fn primary(text: &str) -> egui::Button<'static> {
     egui::Button::new(RichText::new(text.to_string()).color(Color32::WHITE).strong()).fill(ACCENT).min_size(vec2(120.0, 30.0))
 }
 
+// A fixed list of three roles with no search box, so egui's combo box can't get stuck small
+// (the reason the workspace prefers craft_ui::ComboBox); the Manager doesn't depend on craft-ui.
+#[allow(clippy::disallowed_types)]
 fn role_combo(ui: &mut Ui, id: impl std::hash::Hash + std::fmt::Debug, role: &mut Role) -> bool {
     let before = *role;
     egui::ComboBox::from_id_salt(id).selected_text(role_label(*role)).width(170.0).show_ui(ui, |ui| {

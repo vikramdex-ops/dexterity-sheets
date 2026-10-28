@@ -38,12 +38,15 @@ HOOKS = [
     ("apps/gridcraft/src/main.rs", "regional::apply();", "Windows regional settings (dates, grouping) like Excel"),
     ("packaging/windows/gridcraft.wxs", 'UpgradeCode="FE2AD491-38E3-4E1B-8441-FDF652AB8443"', "installer identity (never change)"),
     ("packaging/windows/gridcraft.wxs", 'Scope="perUser"', "per-user install so updates need no admin"),
+    ("crates/xlsx/src/fmla.rs", "pub(crate) struct TableNames", "bare table names written as Table[] (Excel reads a bare name as #NAME?)"),
+    ("crates/xlsx/src/fmla.rs", "Expr::Name(n) => is_table(n)", "the formula writer's fast path still rewrites bare table names"),
 ]
 
 # Strings that must not come back into the shipped app's code from upstream.
 FORBIDDEN = [
     ("crates/ui-egui/Cargo.toml", "craft-update = {", "upstream internet update checker"),
     ("apps/gridcraft/Cargo.toml", "craft-update = {", "upstream internet update checker"),
+    ("packaging/windows/package.ps1", "check-install-policy.ps1') -MsiPath", "GridCraft's install-identity check (fails on our installer)"),
 ]
 
 

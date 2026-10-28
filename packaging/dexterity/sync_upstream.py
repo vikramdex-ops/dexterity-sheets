@@ -48,6 +48,10 @@ OURS = [
     "crates/ui-egui/src/collab_ui.rs",
     "packaging/dexterity/*",
     "packaging/windows/setup/*",
+    # Our installer has its own identity (name, UpgradeCode, per-user scope, registry keys);
+    # upstream's install-scope policy (#2704) is written for GridCraft's.
+    "packaging/windows/gridcraft.wxs",
+    "packaging/windows/test-desktop-shortcut.ps1",
     "docs/collaboration.md",
     "docs/readme/*",
     "site/*",
