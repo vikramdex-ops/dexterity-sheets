@@ -315,7 +315,8 @@ def main():
         # Simultaneous edits to the same cell converge.
         b.run("cell.set", cell="B2", input="6")
         c.run("cell.set", cell="B2", input="8")
-        time.sleep(1.0)
+        # Every window ends on the same value (a slow runner may need more than a second).
+        wait(lambda: len({str(x.value("B2")) for x in apps}) == 1, timeout=15, step=0.25)
         vals = [x.value("B2") for x in apps]
         check("conflicting edits converge on one value", len(set(map(str, vals))) == 1, str(vals))
 
