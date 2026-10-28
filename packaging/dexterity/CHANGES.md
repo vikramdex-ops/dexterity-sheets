@@ -18,6 +18,11 @@ automatically and don't go here.
 - Fixed: **Workbook Statistics**, **Check Accessibility**, **Error Checking** and **Evaluate Formula** showed raw program output. They now show readable tables; in Error Checking each cell (and each circular reference) is a link that takes you there.
 - Fixed: choosing **Conditional Formatting** from the command search or a key tip did nothing; it now opens New Formatting Rule. The **Rules Manager** has a **New Rule…** button.
 - Fixed: **Watch Window** and **Show Comments** run from the command search or key tips now open their panes, as the ribbon buttons do.
+- Fixed: sharing a workbook while still typing in a cell sent the team a blank workbook and lost what was typed. Share now enters the cell first, and the server's copy is checked against yours before your window is replaced; if anything is missing your window stays open and you are told.
+- Fixed: anything typed while a workbook was on its way to the server stayed behind in an unshared window. It now goes into the shared workbook.
+- Shared workbooks say where your edits are: **saved on the server**, **saving N edit(s)**, **offline**, or **out of step, reloading**; a workbook being shared shows **Sharing · uploading** until the server has it.
+- When two people change the same cell at the same moment, both are now told who changed it and which value was kept (the later edit wins, as before); the replaced value stays in Edit History.
+- Workbooks sent to and from the server are checked against a checksum, so a damaged transfer is refused instead of opening as a blank or partial workbook.
 
 ## 1.2.2 · 27 October 2026
 

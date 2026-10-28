@@ -27,7 +27,9 @@ use gridcraft_engine::model::Workbook;
 use serde::{Deserialize, Serialize};
 
 use crate::patch::{self, CellData, WbPatch};
-use crate::proto::{self, BookInfo, Change, ClientMsg, FileSource, LastEdit, Logged, Peer, Role, ServerMsg, UpdateInfo, UserInfo, VersionInfo};
+use crate::proto::{
+    self, BookInfo, Change, ClientMsg, Conflict, FileSource, LastEdit, Logged, Peer, Role, ServerMsg, UpdateInfo, UserInfo, VersionInfo,
+};
 use crate::{Error, Result, auth, now_ms};
 
 /// Write a fresh snapshot after this many edits.
@@ -83,6 +85,9 @@ struct Book {
     log: File,
     audit: File,
     last_edits: HashMap<(String, CellRef), (String, i64)>,
+    /// The last edit of each cell's content since the workbook was loaded: (seq, client instance,
+    /// user). An edit made without having seen it is a conflict.
+    writes: HashMap<(String, CellRef), (u64, String, String)>,
     last_version: i64,
     /// Last opened or edited.
     touched: i64,
@@ -542,6 +547,7 @@ impl State {
         }
         let (snapshot_seq, mut wb, bytes) = loaded.ok_or_else(|| Error::Engine(format!("{}: no readable snapshot", meta.name)))?;
         let mut tail = Vec::new();
+        let mut writes = HashMap::new();
         let mut seq = snapshot_seq;
         let log_path = dir.join("log.jsonl");
         if let Ok(f) = File::open(&log_path) {
@@ -553,6 +559,12 @@ impl State {
                 }
                 if entry.seq != seq + 1 {
                     log::warn!("{}: log jumps from {seq} to {}", meta.name, entry.seq);
+                }
+                let inst = entry.origin.as_deref().and_then(|o| o.rsplit_once(':')).map(|(i, _)| i.to_string()).unwrap_or_default();
+                for c in describe(&wb, &entry.patch, entry.seq, entry.time, &entry.user, "") {
+                    if let Some(at) = CellRef::parse(&c.cell) {
+                        writes.insert((c.sheet, at), (entry.seq, inst.clone(), entry.user.clone()));
+                    }
                 }
                 if let Err(e) = patch::apply(&mut wb, &entry.patch) {
                     log::error!("{}: edit {} could not be replayed: {e}", meta.name, entry.seq);
@@ -578,7 +590,7 @@ impl State {
         let now = now_ms();
         self.books.insert(
             id.to_string(),
-            Book { meta, wb, snapshot_seq, snapshot: Arc::new(bytes), tail, log, audit, last_edits, last_version: now, touched: now },
+            Book { meta, wb, snapshot_seq, snapshot: Arc::new(bytes), tail, log, audit, last_edits, writes, last_version: now, touched: now },
         );
         Ok(())
     }
@@ -784,7 +796,7 @@ impl State {
                 let books = self.metas.values().map(|m| self.info(m)).collect();
                 self.reply(conn, &ServerMsg::Books { books });
             }
-            ClientMsg::CreateBook { name, xlsx, source } => {
+            ClientMsg::CreateBook { name, xlsx, source, sha256 } => {
                 if !role.can_edit() {
                     return Err(Error::Denied("view-only accounts can't create workbooks".into()));
                 }
@@ -796,7 +808,7 @@ impl State {
                 }
                 let source = source.map(|s| FileSource { user: user.clone(), ..s });
                 let bytes = match xlsx {
-                    Some(s) => Some(proto::unb64(&s)?),
+                    Some(s) => Some(proto::unb64_checked(&s, sha256.as_deref().unwrap_or(""))?),
                     None => None,
                 };
                 let meta = self.create_book(&user, &name, bytes.as_deref(), source)?;
@@ -828,6 +840,7 @@ impl State {
                     log: b.tail.clone(),
                     last_edits,
                     peers,
+                    sha256: proto::sha256_hex(&b.snapshot),
                 };
                 self.reply(conn, &msg);
                 log::info!("{user} opened \"{}\"", b.meta.name);
@@ -880,8 +893,8 @@ impl State {
                 self.broadcast(&book, &ServerMsg::BookGone { book: book.clone(), by: Some(display.clone()), stopped }, None);
                 self.broadcast_books();
             }
-            ClientMsg::Patch { book, cseq, patch } => {
-                if let Err(e) = self.take_patch(conn, &user, &display, role, &book, cseq, patch) {
+            ClientMsg::Patch { book, cseq, patch, base } => {
+                if let Err(e) = self.take_patch(conn, &user, &display, role, &book, cseq, patch, base) {
                     self.reply(conn, &ServerMsg::Rejected { book, cseq, reason: e.to_string() });
                 }
             }
@@ -964,7 +977,18 @@ impl State {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn take_patch(&mut self, conn: u64, user: &str, display: &str, role: Role, book: &str, cseq: u64, patch: WbPatch) -> Result<()> {
+    #[allow(clippy::too_many_arguments)]
+    fn take_patch(
+        &mut self,
+        conn: u64,
+        user: &str,
+        display: &str,
+        role: Role,
+        book: &str,
+        cseq: u64,
+        patch: WbPatch,
+        base: Option<u64>,
+    ) -> Result<()> {
         if !role.can_edit() {
             return Err(Error::Denied("view-only account".into()));
         }
@@ -975,6 +999,27 @@ impl State {
         let changes = describe(&b.wb, &patch, b.meta.seq + 1, time, user, display);
         let mut next = b.wb.clone();
         patch::apply(&mut next, &patch)?;
+        // Cells someone else changed after the last edit this client had seen.
+        let mut conflicts = Vec::new();
+        if let Some(base) = base {
+            for c in &changes {
+                let Some(at) = CellRef::parse(&c.cell) else { continue };
+                if let Some((seq, inst, other)) = b.writes.get(&(c.sheet.clone(), at))
+                    && *seq > base
+                    && *inst != instance
+                {
+                    let shown = self.users.iter().find(|u| u.user == *other).map_or_else(|| other.clone(), |u| u.display.clone());
+                    conflicts.push(Conflict {
+                        sheet: c.sheet.clone(),
+                        cell: c.cell.clone(),
+                        user: other.clone(),
+                        display: shown,
+                        theirs: c.old.clone(),
+                        yours: c.new.clone(),
+                    });
+                }
+            }
+        }
         let entry = Logged { seq: b.meta.seq + 1, time, user: user.to_string(), origin: Some(format!("{instance}:{cseq}")), patch };
         // On disk before anyone hears of it.
         let line = serde_json::to_string(&entry)?;
@@ -986,6 +1031,7 @@ impl State {
             }
             if let Ok(at) = CellRef::parse(&c.cell).ok_or(()) {
                 b.last_edits.insert((c.sheet.clone(), at), (c.user.clone(), c.time));
+                b.writes.insert((c.sheet.clone(), at), (entry.seq, instance.clone(), user.to_string()));
             }
         }
         let _ = b.audit.flush();
@@ -996,7 +1042,11 @@ impl State {
         b.tail.push(entry.clone());
         b.touched = time;
         let (seq, snap_due, version_due) = (b.meta.seq, b.meta.seq - b.snapshot_seq >= SNAPSHOT_EVERY, time - b.last_version >= AUTO_VERSION_MS);
-        let msg = ServerMsg::Patched { book: book.to_string(), seq, time, user: user.to_string(), origin: entry.origin, patch: entry.patch };
+        if !conflicts.is_empty() {
+            log::info!("{book}: {user}'s edit {seq} replaced {} cell(s) changed meanwhile by others", conflicts.len());
+        }
+        let msg =
+            ServerMsg::Patched { book: book.to_string(), seq, time, user: user.to_string(), origin: entry.origin, patch: entry.patch, conflicts };
         self.broadcast(book, &msg, None);
         if version_due {
             if let Err(e) = self.save_version(book, "auto", "automatic") {

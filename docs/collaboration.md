@@ -24,6 +24,14 @@ app.
   someone presses Save, on request (Review › Versions › Keep version), and before any restore.
   Any version can be opened as a separate copy or restored for everyone.
 - **Undo is yours.** Undo takes back your own edits, never someone else's.
+- **The status bar says where your edits are.** *Shared · saved on the server* only once the server has
+  written every edit of yours to its disk; *saving N edit(s)* while they are on their way; *Offline · N
+  edit(s) not on the server yet* while the connection is down (they are sent when it is back); *out of
+  step, reloading* when the server refused an edit or this copy missed one and it is fetched again;
+  *Sharing · uploading* for a workbook being shared, until the server's copy is back.
+- **Two people, one cell, same moment.** The edit the server receives later is kept, on every PC alike,
+  and both people are told who changed the cell and which value was kept. The replaced value stays in
+  the cell's Edit History. Edits to different cells never conflict.
 - **Roles.** `admin` (everything, including deleting any shared workbook), `editor` (edit, create,
   share; delete only their own workbooks), `viewer` (read only).
 - **Share a file from where it is.** Open it and click Share › Share with my team. The file is
@@ -113,6 +121,15 @@ trash/                        deleted workbooks
 Code: `crates/collab` (protocol, patches, client, server), `crates/ui-egui/src/collab_ui.rs`
 (window integration), `apps/gridcraft-server` (the server executable).
 
+- **Sharing a workbook.** Share first enters whatever is being typed in a cell, then uploads the
+  workbook (.xlsx, with its SHA-256; the server refuses a damaged upload). The server writes it as
+  `snapshot-0.xlsx` and sends its own copy back (with the snapshot's SHA-256, checked on arrival). The
+  sharer's app compares that copy with what it uploaded, sheet by sheet and cell by cell (constants and
+  formulas); only if nothing is missing does the shared workbook take the window's place, with anything
+  typed meanwhile carried over as an edit. A download that is not a workbook is reported, never opened
+  as a blank one. Regression tests: `crates/collab/src/tests.rs` (server files read back from disk, a
+  second person, both-way edits, concurrent edits, a crash and restart, viewers, no sign-in) and the
+  blank-share flow with real windows in `packaging/dexterity/tests/lan_e2e.py`.
 - Each client compares its workbook with the last state it synchronised and sends the difference
   as a **patch** of absolute assignments: cells (value, formula, the style itself), top-level
   sheet and workbook fields (object fields such as column widths key by key), and the sheet list.
@@ -121,7 +138,9 @@ Code: `crates/collab` (protocol, patches, client, server), `crates/ui-egui/src/c
 - The server gives every patch a sequence number, appends it to `log.jsonl` (fsync), records the
   audit lines, then broadcasts it. Each client shows "server state + its own unacknowledged
   patches", so all replicas converge on the server's order; a conflicting edit to the same cell
-  is resolved last-writer-wins in that order.
+  is resolved last-writer-wins in that order. Each patch carries the sequence number the client had
+  seen (`base`); a cell another client changed after it is reported as a conflict to both, in the
+  broadcast edit itself.
 - Remote patches are also applied to each client's undo/redo snapshots, so Undo never reverts
   someone else's edit.
 - Values that are only recalculated are not attributed to anyone in the audit trail.

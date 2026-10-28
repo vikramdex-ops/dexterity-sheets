@@ -125,6 +125,57 @@ def shared_doc(app, path):
     return next((d for d in app.status()["docs"] if d.get("source") and same_path(d["source"]["path"], path)), None)
 
 
+def server_text(data, name):
+    """Everything the server's files hold for shared workbook `name`: snapshots and edit log."""
+    books = os.path.join(data, "books")
+    for bk in os.listdir(books):
+        try:
+            with open(os.path.join(books, bk, "book.json"), encoding="utf-8") as f:
+                if json.load(f)["name"] != name:
+                    continue
+        except (OSError, ValueError, KeyError):
+            continue
+        out = ""
+        for n in os.listdir(os.path.join(books, bk)):
+            path = os.path.join(books, bk, n)
+            if n.endswith(".xlsx"):
+                out += file_text(path)
+            elif n == "log.jsonl":
+                with open(path, encoding="utf-8") as f:
+                    out += f.read()
+        return out
+    return ""
+
+
+def blank_share_regression(a, b, data):
+    """The reported failure: user A types in a new workbook and shares it; user B opened it
+    blank. The text is still being typed (not entered) when Share is clicked, and more is typed
+    while the workbook is on its way to the server."""
+    text = "Persist-7Q distinctive text"
+    a.run("selection.set", range="A1")
+    time.sleep(0.4)
+    a.call("ui.text", {"text": text})
+    ok = wait(lambda: (a.call("ui.inspect").get("editor") or {}).get("text") == text, timeout=5)
+    check("A is typing in a new workbook (not entered yet)", ok)
+    a.run("collab.share", name="Project Tracker")
+    a.run("cell.set", cell="A2", input="typed while sharing")
+    d = wait(lambda: next((x for x in a.status()["docs"] if x["book"] == "Project Tracker" and x["active"] and x["state"] == "synced"), None))
+    check("A's workbook is shared and says synced only once the server has it", d, json.dumps(d))
+    check("A's shared window has what was typed", a.value("A1") == text and a.value("A2") == "typed while sharing", f"A1={a.value('A1')!r} A2={a.value('A2')!r}")
+    titles = [x["title"] for x in a.call("ui.inspect")["documents"]]
+    check("no unshared copy is left behind in another window", titles.count("Book1") == 0 and titles.count("Project Tracker") == 1, str(titles))
+    on_server = wait(lambda: text in server_text(data, "Project Tracker") and "typed while sharing" in server_text(data, "Project Tracker"))
+    check("the server's own files hold the content (not just a workbook of that name)", on_server)
+    wait(lambda: any(x["name"] == "Project Tracker" for x in b.status()["books"]))
+    b.run("collab.open", book="Project Tracker")
+    ok = wait(lambda: any(x["book"] == "Project Tracker" and x["active"] for x in b.status()["docs"]))
+    got = (b.value("A1"), b.value("A2")) if ok else None
+    check("B opens it with A's content, not blank", got == (text, "typed while sharing"), str(got))
+    b.run("cell.set", cell="B1", input="from B")
+    ok = wait(lambda: a.value("B1") == "from B")
+    check("B's edit reaches A without reopening", ok)
+
+
 def shared_files(a, b, c):
     """Sharing a workbook from wherever it is saved: the file keeps everyone's edits."""
     job = tempfile.mkdtemp(prefix="Job 12 ")
@@ -225,6 +276,7 @@ def main():
             app.run("collab.signIn", server=server, user=app.who, password=pw)
         ok = all(wait(lambda app=app: app.status()["status"] == "Online") for app in apps)
         check("three people signed in", ok)
+        blank_share_regression(a, b, data)
 
         a.run("collab.create", name="Line List 100")
         ok = wait(lambda: any(d["book"] == "Line List 100" and d["active"] for d in a.status()["docs"]))
@@ -296,7 +348,7 @@ def main():
         srv.wait()
         wait(lambda: a.status()["status"].startswith("Reconnecting"), timeout=30)
         a.run("cell.set", cell="A20", input="typed while the server was down")
-        pend = a.status()["docs"][0]["pending"]
+        pend = next(d["pending"] for d in a.status()["docs"] if d["book"] == "Line List 100")
         check("offline edit is held", pend >= 1, f"pending={pend}")
         srv = start_server(data)
         ok = wait(lambda: b.value("A20") == "typed while the server was down", timeout=60, step=0.25)
@@ -312,8 +364,10 @@ def main():
         check("all three windows identical after two restarts", reads[0] == reads[1] == reads[2])
         hist_path = None
         for root, _, files in os.walk(os.path.join(data, "books")):
-            if "audit.jsonl" in files:
-                hist_path = os.path.join(root, "audit.jsonl")
+            if "audit.jsonl" in files and "book.json" in files:
+                with open(os.path.join(root, "book.json"), encoding="utf-8") as f:
+                    if json.load(f).get("name") == "Line List 100":
+                        hist_path = os.path.join(root, "audit.jsonl")
         lines = open(hist_path, encoding="utf-8").read().splitlines() if hist_path else []
         users = {json.loads(l)["user"] for l in lines}
         check("server audit trail names every editor", {"vikram", "anita", "rahul"} <= users, f"{len(lines)} audit lines, users={sorted(users)}")

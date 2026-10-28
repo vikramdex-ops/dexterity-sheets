@@ -27,6 +27,8 @@ pub struct SharedDoc {
     confirmed: Arc<Workbook>,
     pub seq: u64,
     pending: VecDeque<(u64, WbPatch)>,
+    /// The server sequence each pending patch was made on (its `base`, for conflict reports).
+    bases: HashMap<u64, u64>,
     last_seen: Arc<Workbook>,
     cache: DiffCache,
     next_cseq: u64,
@@ -50,6 +52,7 @@ pub struct RemoteEffect {
 
 impl SharedDoc {
     /// A shared workbook as the server sent it: its snapshot (an .xlsx) and the edits since.
+    #[allow(clippy::too_many_arguments)]
     pub fn open(
         book: BookInfo,
         snapshot_seq: u64,
@@ -59,6 +62,11 @@ impl SharedDoc {
         peers: Vec<Peer>,
         read_only: bool,
     ) -> Result<(SharedDoc, DocState)> {
+        // An .xlsx is a zip: anything else is damage, never "a workbook" (the reader would take
+        // stray bytes as a CSV and show a near-empty sheet instead of saying so).
+        if !xlsx.starts_with(b"PK") {
+            return Err(Error::Protocol("the server sent something that is not a workbook".into()));
+        }
         let (mut wb, _warnings) = gridcraft_engine::io::open_bytes("shared.xlsx", xlsx)?;
         let mut seq = snapshot_seq;
         let mut le = HashMap::new();
@@ -80,6 +88,7 @@ impl SharedDoc {
             confirmed,
             seq,
             pending: VecDeque::new(),
+            bases: HashMap::new(),
             cache: DiffCache::default(),
             next_cseq: 1,
             last_edits: le,
@@ -120,7 +129,13 @@ impl SharedDoc {
         let cseq = self.next_cseq;
         self.next_cseq += 1;
         self.pending.push_back((cseq, p.clone()));
+        self.bases.insert(cseq, self.seq);
         Ok(Some((cseq, p)))
+    }
+
+    /// The server sequence pending patch `cseq` was made on.
+    pub fn base_of(&self, cseq: u64) -> Option<u64> {
+        self.bases.get(&cseq).copied()
     }
 
     /// The pending patches, to send again after a reconnect.
@@ -150,6 +165,7 @@ impl SharedDoc {
             && let Some(i) = self.pending.iter().position(|(pc, _)| *pc == c)
         {
             self.pending.remove(i);
+            self.bases.remove(&c);
             return Ok(RemoteEffect::default());
         }
         // Someone else's edit. First take in anything the person did since the last look, so it
@@ -219,6 +235,7 @@ impl SharedDoc {
         }
         let _ = self.local_changes(d);
         self.pending.retain(|(c, _)| !applied_cseqs.contains(c));
+        self.bases.retain(|c, _| self.pending.iter().any(|(p, _)| p == c));
         self.confirmed = Arc::new(wb.clone());
         for (_, p) in &self.pending {
             patch::apply(&mut wb, p)?;
@@ -261,5 +278,48 @@ impl SharedDoc {
 
     pub fn last_edit(&self, sheet: &str, at: CellRef) -> Option<&(String, i64)> {
         self.last_edits.get(&(sheet.to_string(), at))
+    }
+}
+
+/// Where `got` lacks what `expected` holds: sheets, and cells' constants and formulas (at most
+/// `limit` of them, as "Sheet1!A1: …"). Empty when every sheet and cell came through. Used to
+/// check that the server's copy of a workbook just shared really holds what was uploaded,
+/// rather than trusting that a workbook of that name exists.
+pub fn content_differences(expected: &Workbook, got: &Workbook, limit: usize) -> Vec<String> {
+    let mut out = Vec::new();
+    for sa in &expected.sheets {
+        let Some(sb) = got.sheets.iter().find(|s| s.name == sa.name) else {
+            out.push(format!("sheet \"{}\" is missing", sa.name));
+            continue;
+        };
+        for (at, ca) in sa.cells.iter() {
+            if out.len() >= limit {
+                return out;
+            }
+            let cb = sb.cells.get(at);
+            let same = match (&ca.formula, cb) {
+                (Some(fa), Some(cb)) => cb.formula.as_ref().is_some_and(|fb| fb.text == fa.text),
+                (Some(_), None) => false,
+                (None, Some(cb)) => cb.formula.is_none() && same_value(&ca.value, &cb.value),
+                (None, None) => ca.value.is_empty(),
+            };
+            if !same {
+                let want = match &ca.formula {
+                    Some(f) => format!("={}", f.text),
+                    None => crate::patch::value_text(&ca.value),
+                };
+                out.push(format!("{}!{}: expected {want:?}", sa.name, at.a1()));
+            }
+        }
+    }
+    out.truncate(limit);
+    out
+}
+
+fn same_value(a: &gridcraft_engine::core::Value, b: &gridcraft_engine::core::Value) -> bool {
+    use gridcraft_engine::core::Value;
+    match (a, b) {
+        (Value::Number(x), Value::Number(y)) => (x - y).abs() <= 1e-9 * x.abs().max(1.0),
+        _ => a == b,
     }
 }

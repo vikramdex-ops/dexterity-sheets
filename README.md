@@ -292,6 +292,10 @@ What Dexterity Sheets does and does not do yet, feature by feature against offic
 the latest Excel, is in [docs/dexterity-parity-audit.md](docs/dexterity-parity-audit.md); the
 screen-by-screen check that nothing is a placeholder is
 [docs/dexterity-ui-audit.md](docs/dexterity-ui-audit.md).
+How shared workbooks are kept intact (the blank-shared-workbook investigation, the sync
+states and the regression tests) is in
+[docs/dexterity-p0-persistence.md](docs/dexterity-p0-persistence.md); what is planned next, in
+[docs/dexterity-roadmap.md](docs/dexterity-roadmap.md).
 </details>
 
 <details>

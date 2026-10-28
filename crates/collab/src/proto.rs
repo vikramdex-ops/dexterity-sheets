@@ -65,6 +65,9 @@ pub enum ClientMsg {
         xlsx: Option<String>,
         #[serde(default)]
         source: Option<FileSource>,
+        /// [`sha256_hex`] of the .xlsx: the server refuses an upload that arrived damaged.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        sha256: Option<String>,
     },
     OpenBook {
         book: String,
@@ -87,6 +90,10 @@ pub enum ClientMsg {
         book: String,
         cseq: u64,
         patch: WbPatch,
+        /// The last edit the client had when it made this one: a cell someone else changed after
+        /// it is a conflict, reported to both people (the later edit still wins).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        base: Option<u64>,
     },
     Presence {
         book: String,
@@ -236,6 +243,18 @@ pub struct Change {
     pub new: String,
 }
 
+/// A same-cell conflict: `user` changed the cell (to `theirs`) after the editor last saw it,
+/// and the editor's edit replaced that. The replaced value stays in the cell's history.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Conflict {
+    pub sheet: String,
+    pub cell: String,
+    pub user: String,
+    pub display: String,
+    pub theirs: String,
+    pub yours: String,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct VersionInfo {
     pub id: String,
@@ -279,6 +298,10 @@ pub enum ServerMsg {
         log: Vec<Logged>,
         last_edits: Vec<LastEdit>,
         peers: Vec<Peer>,
+        /// [`sha256_hex`] of the decoded snapshot, so a damaged download is never opened as the
+        /// workbook. Empty from servers older than this field.
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        sha256: String,
     },
     Patched {
         book: String,
@@ -288,6 +311,10 @@ pub enum ServerMsg {
         #[serde(default)]
         origin: Option<String>,
         patch: WbPatch,
+        /// Cells this edit changed after someone else had changed them since the editor last
+        /// saw the workbook. The edit is applied (the later one wins); both people are told.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        conflicts: Vec<Conflict>,
     },
     /// The server could not take a patch; the client reloads the workbook.
     Rejected {
@@ -395,6 +422,21 @@ pub fn b64(bytes: &[u8]) -> String {
 
 pub fn unb64(s: &str) -> Result<Vec<u8>> {
     gridcraft_engine::io::base64_decode(s).ok_or_else(|| Error::Protocol("bad base64".into()))
+}
+
+/// SHA-256 of `bytes` in lower-case hex: the integrity check on workbook uploads and downloads.
+pub fn sha256_hex(bytes: &[u8]) -> String {
+    use sha2::Digest;
+    crate::auth::hex(&sha2::Sha256::digest(bytes))
+}
+
+/// Decodes a workbook sent as base64 and checks it against its SHA-256 (when one was sent).
+pub fn unb64_checked(s: &str, sha256: &str) -> Result<Vec<u8>> {
+    let bytes = unb64(s)?;
+    if !sha256.is_empty() && !sha256_hex(&bytes).eq_ignore_ascii_case(sha256) {
+        return Err(Error::Protocol("the workbook arrived damaged (its checksum does not match)".into()));
+    }
+    Ok(bytes)
 }
 
 /// Distinct, readable colours for people's cursors.
