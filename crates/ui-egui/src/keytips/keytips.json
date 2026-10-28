@@ -2568,11 +2568,10 @@
   },
   {
    "seq": "Q",
-   "kind": "command",
-   "target": "ui.search",
-   "pending": true,
+   "kind": "dialog",
+   "target": "commandSearch",
    "excel": "Search / Tell Me",
-   "note": "Alt+Q search box does not exist yet (issue #49)"
+   "note": "Dexterity Sheets: Alt, Q opens the command search (the title bar's search icon)"
   }
  ]
 }

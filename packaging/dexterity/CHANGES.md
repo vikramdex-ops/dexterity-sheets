@@ -14,6 +14,7 @@ automatically and don't go here.
 - **Data › Auto Outline** groups the rows (and columns) that your SUM and subtotal formulas add up, with a grand total one level up; **Clear Outline** removes the outline.
 - **View › Focus Cell** highlights the active cell's row and column so it is easy to follow across a wide sheet; pick the colour from its arrow.
 - **Review › Show Changes** (the name Excel uses) opens Edit History.
+- **Alt, Q** opens the command search (as Excel's Search box does), the same as the search icon in the title bar.
 
 ## 1.2.2 · 27 October 2026
 
