@@ -19,7 +19,7 @@ use gridcraft_model::{Formula, Sheet};
 use gridcraft_numfmt::{FormatKind, NumberFormat};
 use serde_json::{Value as Json, json};
 
-use super::*;
+use super::{CommandSpec, Result, Session, bad, cmd, has_doc, split_sheet, str_param, target_sheet};
 
 const ID: &str = "data.qualityCheck";
 /// The most cells one check reads; a larger range is checked from the top down to this many.

@@ -33,6 +33,11 @@ pub enum Status {
     Reconnecting(String),
 }
 
+/// What a history list was asked for: (book, sheet, cell, user).
+type HistoryQuery = (String, Option<String>, Option<String>, Option<String>);
+/// A background save in flight: the workbook being written and its result.
+type PendingWrite = (Arc<Workbook>, Receiver<Result<Stamp, String>>);
+
 #[derive(Default, Serialize, Deserialize)]
 struct Remembered {
     server: String,
@@ -46,7 +51,7 @@ pub struct HistoryPane {
     pub user: Option<String>,
     pub changes: Vec<Change>,
     /// What the shown list was asked for: (book, sheet, cell, user).
-    asked: Option<(String, Option<String>, Option<String>, Option<String>)>,
+    asked: Option<HistoryQuery>,
 }
 
 #[derive(Default)]
@@ -806,7 +811,7 @@ pub struct LinkedFile {
     /// What the file looked like after our last write: a different file means another program
     /// changed it, and it is then never overwritten.
     stamp: Option<Stamp>,
-    writing: Option<(Arc<Workbook>, Receiver<Result<Stamp, String>>)>,
+    writing: Option<PendingWrite>,
     retry_at: f64,
     /// The file was changed outside: writes stopped.
     blocked: bool,

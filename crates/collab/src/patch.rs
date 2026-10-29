@@ -178,19 +178,22 @@ pub fn workbook_fields(wb: &Workbook) -> Result<Map<String, Json>> {
     }
 }
 
+/// A sheet (or workbook) and its serialized fields.
+type Fields<T> = (Arc<T>, Arc<Map<String, Json>>);
+
 /// Remembers the field JSON of sheets already compared, so a diff serializes only the sheets an
 /// edit replaced. Holds the sheets themselves, so a pointer is never reused while cached.
 #[derive(Default)]
 pub struct DiffCache {
-    sheets: Vec<(Arc<Sheet>, Arc<Map<String, Json>>)>,
-    workbook: Option<(Arc<Workbook>, Arc<Map<String, Json>>)>,
+    sheets: Vec<Fields<Sheet>>,
+    workbook: Option<Fields<Workbook>>,
 }
 
 impl DiffCache {
     fn sheet(&self, s: &Arc<Sheet>) -> Option<Arc<Map<String, Json>>> {
         self.sheets.iter().find(|(k, _)| Arc::ptr_eq(k, s)).map(|(_, m)| m.clone())
     }
-    fn sheet_fields(&mut self, s: &Arc<Sheet>, fresh: &mut Vec<(Arc<Sheet>, Arc<Map<String, Json>>)>) -> Result<Arc<Map<String, Json>>> {
+    fn sheet_fields(&mut self, s: &Arc<Sheet>, fresh: &mut Vec<Fields<Sheet>>) -> Result<Arc<Map<String, Json>>> {
         let m = match self.sheet(s) {
             Some(m) => m,
             None => Arc::new(sheet_fields(s)?),

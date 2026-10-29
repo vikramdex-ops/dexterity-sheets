@@ -86,10 +86,22 @@ if cmd_file:
     )
 else:
     problems.append("run_ui_command not found")
-grid_file = next((p for p in sorted(glob.glob(os.path.join(ROOT, UI, "grid*", "*.rs"))) + [os.path.join(ROOT, UI, "grid.rs")] if "paint_selection(&p, geo, sh, sel, outline, t, app, *rows, *cols);" in open(p, encoding="utf-8").read()), None)
+# The per-pane selection painting call: positional arguments before upstream #2711, a
+# `SelectionPaintInput` struct since.
+SELECTION_CALLS = (
+    "        paint_selection(SelectionPaintInput { painter: &p, geo, sheet: sh, selection: sel, outline, tokens: t, app, rows: *rows, cols: *cols });\n",
+    "        paint_selection(&p, geo, sh, sel, outline, t, app, *rows, *cols);\n",
+)
+
+
+def selection_call(text):
+    return next((c for c in SELECTION_CALLS if c in text), None)
+
+
+grid_file = next((p for p in sorted(glob.glob(os.path.join(ROOT, UI, "grid*", "*.rs"))) + [os.path.join(ROOT, UI, "grid.rs")] if os.path.exists(p) and selection_call(open(p, encoding="utf-8").read())), None)
 if grid_file:
     rel = os.path.relpath(grid_file, ROOT).replace("\\", "/")
-    insert(rel, "collab_ui::paint_peers(", "paint_selection(&p, geo, sh, sel, outline, t, app, *rows, *cols);\n", "        crate::collab_ui::paint_peers(&p, geo, sh, app, *rows, *cols);\n")
+    insert(rel, "collab_ui::paint_peers(", selection_call(read(rel)), "        crate::collab_ui::paint_peers(&p, geo, sh, app, *rows, *cols);\n")
 else:
     problems.append("grid selection painting not found")
 
@@ -268,7 +280,7 @@ insert(
 insert(
     f"{UI}/grid/show.rs",
     "crate::dex_ui::paint(",
-    "        paint_selection(&p, geo, sh, sel, outline, t, app, *rows, *cols);\n",
+    selection_call(read(f"{UI}/grid/show.rs")) or SELECTION_CALLS[0],
     "        crate::dex_ui::paint(&p, geo, sh, app, *rows, *cols);\n",
     after=False,
 )

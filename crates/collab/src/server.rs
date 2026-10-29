@@ -976,6 +976,7 @@ impl State {
         if p.exists() { Ok(p) } else { Err(Error::Denied("no such version".into())) }
     }
 
+    /// Handles one message from a signed-in connection; the larger cases are the `on_*` methods below.
     fn dispatch(&mut self, conn: u64, msg: ClientMsg) -> Result<()> {
         let (user, role, display) = {
             let (_, u) = self.user(conn)?;
@@ -1039,117 +1040,12 @@ impl State {
                 self.reply(conn, &ServerMsg::Books { books });
             }
             ClientMsg::CreateBook { name, xlsx, source, sha256 } => {
-                if !role.can_edit() {
-                    return Err(Error::Denied("view-only accounts can't create workbooks".into()));
-                }
-                // A file that is already shared is joined, never shared twice.
-                if let Some(src) = &source
-                    && let Some(id) = self.metas.values().find(|m| m.source.as_ref().is_some_and(|s| s.key == src.key)).map(|m| m.id.clone())
-                {
-                    return self.dispatch(conn, ClientMsg::OpenBook { book: id });
-                }
-                let source = source.map(|s| FileSource { user: user.clone(), ..s });
-                let bytes = match xlsx {
-                    Some(s) => Some(proto::unb64_checked(&s, sha256.as_deref().unwrap_or(""))?),
-                    None => None,
-                };
-                let meta = self.create_book(&user, &name, bytes.as_deref(), source)?;
-                log::info!("{user} created \"{}\"", meta.name);
-                self.broadcast_books();
-                return self.dispatch(conn, ClientMsg::OpenBook { book: meta.id });
+                return self.on_create_book(conn, Caller { user, role, display }, name, xlsx, source, sha256);
             }
-            ClientMsg::OpenBook { book } => {
-                self.require(&user, role, &book, false)?;
-                self.load_book(&book)?;
-                if let Some(b) = self.books.get_mut(&book) {
-                    b.touched = now_ms();
-                }
-                if let Some(c) = self.conns.get_mut(&conn)
-                    && !c.open.contains(&book)
-                {
-                    c.open.push(book.clone());
-                }
-                let peers: Vec<Peer> = self.conns.iter().filter(|(id, _)| **id != conn).filter_map(|(_, c)| c.peer.get(&book).cloned()).collect();
-                let b = self.books.get(&book).ok_or_else(|| Error::Denied("no such workbook".into()))?;
-                let last_edits = b
-                    .last_edits
-                    .iter()
-                    .map(|((sheet, at), (user, time))| LastEdit { sheet: sheet.clone(), r: at.row, c: at.col, user: user.clone(), time: *time })
-                    .collect();
-                let mut info = self.info(&b.meta);
-                info.permission = permission(&b.meta, &user, role, now_ms()).unwrap_or("viewer").into();
-                let msg = ServerMsg::Opened {
-                    book: info,
-                    snapshot_seq: b.snapshot_seq,
-                    xlsx: proto::b64(&b.snapshot),
-                    log: b.tail.clone(),
-                    last_edits,
-                    peers,
-                    sha256: proto::sha256_hex(&b.snapshot),
-                };
-                self.reply(conn, &msg);
-                log::info!("{user} opened \"{}\"", b.meta.name);
-                self.broadcast_books();
-            }
-            ClientMsg::CloseBook { book } => {
-                let seq = self.books.get(&book).map(|b| b.meta.seq);
-                if let (Some(seq), Some(b)) = (seq, self.books.get_mut(&book)) {
-                    // The loaded copy too: edits write `metas` from it.
-                    b.meta.seen.insert(user.clone(), seq);
-                }
-                if let (Some(seq), Some(m)) = (seq, self.metas.get_mut(&book)) {
-                    m.seen.insert(user.clone(), seq);
-                    let m = m.clone();
-                    if let Err(e) = self.save_meta(&m) {
-                        log::warn!("{book}: {e}");
-                    }
-                }
-                if let Some(c) = self.conns.get_mut(&conn) {
-                    c.open.retain(|b| *b != book);
-                    c.peer.remove(&book);
-                }
-                self.broadcast(&book, &ServerMsg::PeerLeft { book: book.clone(), conn }, None);
-                self.broadcast_books();
-            }
-            ClientMsg::RenameBook { book, name } => {
-                let creator = self.metas.get(&book).map(|m| m.created_by.clone()).unwrap_or_default();
-                if role != Role::Admin && creator != user {
-                    return Err(Error::Denied("only the workbook's creator or an administrator can rename it".into()));
-                }
-                let name = name.trim().to_string();
-                if name.is_empty() || self.metas.values().any(|m| m.id != book && m.name.eq_ignore_ascii_case(&name)) {
-                    return Err(Error::Denied("that name is empty or taken".into()));
-                }
-                let mut m = self.metas.get(&book).cloned().ok_or_else(|| Error::Denied("no such workbook".into()))?;
-                m.name = name;
-                self.save_meta(&m)?;
-                if let Some(b) = self.books.get_mut(&book) {
-                    b.meta.name = m.name.clone();
-                }
-                self.metas.insert(book, m);
-                self.broadcast_books();
-            }
-            ClientMsg::DeleteBook { book, stopped } => {
-                let creator = self.metas.get(&book).map(|m| m.created_by.clone()).unwrap_or_default();
-                if role != Role::Admin && creator != user {
-                    return Err(Error::Denied("only the workbook's creator or an administrator can delete it".into()));
-                }
-                let from = self.book_dir(&book);
-                let trash = self.dir.join("trash");
-                fs::create_dir_all(&trash)?;
-                // Close its log files first: Windows can't move a folder with open files in it.
-                // A failed move leaves it listed; it is loaded again when next opened.
-                self.books.remove(&book);
-                fs::rename(&from, trash.join(format!("{book}-{}", now_ms())))?;
-                self.metas.remove(&book);
-                if stopped {
-                    log::info!("{user} stopped sharing {book} (its server copy is kept in the trash folder)");
-                } else {
-                    log::info!("{user} deleted workbook {book} (kept in the trash folder)");
-                }
-                self.broadcast(&book, &ServerMsg::BookGone { book: book.clone(), by: Some(display.clone()), stopped }, None);
-                self.broadcast_books();
-            }
+            ClientMsg::OpenBook { book } => return self.on_open_book(conn, Caller { user, role, display }, book),
+            ClientMsg::CloseBook { book } => return self.on_close_book(conn, Caller { user, role, display }, book),
+            ClientMsg::RenameBook { book, name } => return self.on_rename_book(Caller { user, role, display }, book, name),
+            ClientMsg::DeleteBook { book, stopped } => return self.on_delete_book(Caller { user, role, display }, book, stopped),
             ClientMsg::Patch { book, cseq, patch, base } => {
                 if let Err(e) = self.take_patch(conn, &user, &display, role, &book, cseq, patch, base) {
                     self.reply(conn, &ServerMsg::Rejected { book, cseq, reason: e.to_string() });
@@ -1307,91 +1203,7 @@ impl State {
                 let templates = list_templates(&self.dir);
                 self.reply(conn, &ServerMsg::Templates { templates });
             }
-            ClientMsg::SetAccess { book, access } => {
-                let m = self.metas.get(&book).cloned().ok_or_else(|| Error::Denied("no such workbook".into()))?;
-                if role != Role::Admin && m.created_by != user {
-                    return Err(Error::Denied("only the workbook's creator or an administrator can change who has access".into()));
-                }
-                let clean = |p: &str| if p == "viewer" { "viewer".to_string() } else { "editor".to_string() };
-                let access = Access {
-                    mode: if access.mode == "people" { "people".into() } else { "office".into() },
-                    everyone: clean(&access.everyone),
-                    people: access
-                        .people
-                        .iter()
-                        .map(|(u, p)| (u.trim().to_ascii_lowercase(), clean(p)))
-                        .filter(|(u, _)| self.users.iter().any(|r| r.user == *u))
-                        .take(1000)
-                        .collect(),
-                    expires: access.expires,
-                    download: access.download,
-                };
-                let now = now_ms();
-                let before: Vec<(String, Option<&'static str>)> =
-                    self.users.iter().filter(|u| u.user != user).map(|u| (u.user.clone(), permission(&m, &u.user, u.role, now))).collect();
-                let mut next = m.clone();
-                next.access = access;
-                self.save_meta(&next)?;
-                self.metas.insert(book.clone(), next.clone());
-                if let Some(b) = self.books.get_mut(&book) {
-                    b.meta.access = next.access.clone();
-                }
-                // Tell the people whose access changed: newly shared, a different permission,
-                // or no longer shared (they keep any copy of their own).
-                for (who, was) in before {
-                    let role_of = self.users.iter().find(|u| u.user == who).map_or(Role::Viewer, |u| u.role);
-                    let now_p = permission(&next, &who, role_of, now);
-                    // Only the people it concerns: named before or now, or who have had it open.
-                    let involved = m.access.people.contains_key(&who) || next.access.people.contains_key(&who) || m.seen.contains_key(&who);
-                    // Access they never used (the whole office could open it) counts as newly shared.
-                    let fresh = !m.seen.contains_key(&who) && !m.access.people.contains_key(&who);
-                    let was = if fresh && now_p.is_some() { None } else { was };
-                    if was == now_p || !involved {
-                        continue;
-                    }
-                    let (kind, text) = match (was, now_p) {
-                        (None, Some(p)) => {
-                            ("shared", format!("{display} shared a spreadsheet with you · {}", if p == "editor" { "can edit" } else { "can view" }))
-                        }
-                        (Some(_), Some(p)) => {
-                            ("permission", format!("You can now {} {}", if p == "editor" { "edit" } else { "only view" }, next.name))
-                        }
-                        (Some(_), None) => ("revoked", format!("Your access to {} has changed: it is no longer shared with you", next.name)),
-                        (None, None) => continue,
-                    };
-                    self.notify(
-                        &who,
-                        Notice {
-                            kind: kind.into(),
-                            book: book.clone(),
-                            name: next.name.clone(),
-                            by: display.clone(),
-                            permission: now_p.unwrap_or("").into(),
-                            text,
-                            ..Notice::default()
-                        },
-                    );
-                }
-                // Anyone who lost access and has it open: it closes for them.
-                let gone: Vec<u64> = self
-                    .conns
-                    .iter()
-                    .filter(|(_, c)| c.open.contains(&book))
-                    .filter(|(_, c)| self.users.iter().find(|u| u.user == c.user).is_none_or(|u| permission(&next, &u.user, u.role, now).is_none()))
-                    .map(|(id, _)| *id)
-                    .collect();
-                for id in gone {
-                    if let Some(c) = self.conns.get_mut(&id) {
-                        c.open.retain(|b| *b != book);
-                        if let Some(frame) = encode(&ServerMsg::BookGone { book: book.clone(), by: Some(display.clone()), stopped: false }) {
-                            let _ = c.tx.send(frame);
-                        }
-                    }
-                }
-                log::info!("{user} changed who has access to \"{}\"", next.name);
-                self.broadcast_books();
-                self.reply(conn, &ServerMsg::Ok { what: "Sharing updated.".into() });
-            }
+            ClientMsg::SetAccess { book, access } => return self.on_set_access(conn, Caller { user, role, display }, book, access),
             ClientMsg::SaveVersion { book, label } => {
                 self.require(&user, role, &book, true)?;
                 self.load_book(&book)?;
@@ -1405,40 +1217,259 @@ impl State {
                 let bytes = fs::read(self.version_path(&book, &version)?)?;
                 self.reply(conn, &ServerMsg::Version { book, version, xlsx: proto::b64(&bytes) });
             }
-            ClientMsg::RestoreVersion { book, version } => {
-                self.require(&user, role, &book, true)?;
-                if !role.can_edit() {
-                    return Err(Error::Denied("view-only accounts can't restore versions".into()));
-                }
-                self.load_book(&book)?;
-                let bytes = fs::read(self.version_path(&book, &version)?)?;
-                let (wb, _) = gridcraft_engine::io::open_bytes("book.xlsx", &bytes)?;
-                // Keep what is being replaced, then make the restored workbook the new snapshot.
-                self.save_version(&book, &user, "before restore")?;
-                let dir = self.book_dir(&book);
-                let Some(b) = self.books.get_mut(&book) else { return Ok(()) };
-                b.meta.seq += 1;
-                let entry = Logged {
-                    seq: b.meta.seq,
-                    time: now_ms(),
-                    user: user.clone(),
-                    origin: Some(format!("restore:{version}")),
-                    patch: WbPatch::default(),
-                };
-                writeln!(b.log, "{}", serde_json::to_string(&entry)?)?;
-                b.log.sync_data()?;
-                b.wb = wb;
-                b.meta.modified = entry.time;
-                b.meta.modified_by = user.clone();
-                let meta = b.meta.clone();
-                let _ = dir;
-                self.snapshot(&book)?;
-                self.save_meta(&meta)?;
-                self.metas.insert(book.clone(), meta);
-                log::info!("{user} restored {book} to version {version}");
-                self.broadcast(&book, &ServerMsg::Reload { book: book.clone(), reason: format!("{display} restored an earlier version") }, None);
+            ClientMsg::RestoreVersion { book, version } => return self.on_restore_version(Caller { user, role, display }, book, version),
+        }
+        Ok(())
+    }
+
+    fn on_create_book(
+        &mut self,
+        conn: u64,
+        who: Caller,
+        name: String,
+        xlsx: Option<String>,
+        source: Option<FileSource>,
+        sha256: Option<String>,
+    ) -> Result<()> {
+        let Caller { user, role, .. } = who;
+        if !role.can_edit() {
+            return Err(Error::Denied("view-only accounts can't create workbooks".into()));
+        }
+        // A file that is already shared is joined, never shared twice.
+        if let Some(src) = &source
+            && let Some(id) = self.metas.values().find(|m| m.source.as_ref().is_some_and(|s| s.key == src.key)).map(|m| m.id.clone())
+        {
+            return self.dispatch(conn, ClientMsg::OpenBook { book: id });
+        }
+        let source = source.map(|s| FileSource { user: user.clone(), ..s });
+        let bytes = match xlsx {
+            Some(s) => Some(proto::unb64_checked(&s, sha256.as_deref().unwrap_or(""))?),
+            None => None,
+        };
+        let meta = self.create_book(&user, &name, bytes.as_deref(), source)?;
+        log::info!("{user} created \"{}\"", meta.name);
+        self.broadcast_books();
+        self.dispatch(conn, ClientMsg::OpenBook { book: meta.id })
+    }
+
+    fn on_open_book(&mut self, conn: u64, who: Caller, book: String) -> Result<()> {
+        let Caller { user, role, .. } = who;
+        self.require(&user, role, &book, false)?;
+        self.load_book(&book)?;
+        if let Some(b) = self.books.get_mut(&book) {
+            b.touched = now_ms();
+        }
+        if let Some(c) = self.conns.get_mut(&conn)
+            && !c.open.contains(&book)
+        {
+            c.open.push(book.clone());
+        }
+        let peers: Vec<Peer> = self.conns.iter().filter(|(id, _)| **id != conn).filter_map(|(_, c)| c.peer.get(&book).cloned()).collect();
+        let b = self.books.get(&book).ok_or_else(|| Error::Denied("no such workbook".into()))?;
+        let last_edits = b
+            .last_edits
+            .iter()
+            .map(|((sheet, at), (user, time))| LastEdit { sheet: sheet.clone(), r: at.row, c: at.col, user: user.clone(), time: *time })
+            .collect();
+        let mut info = self.info(&b.meta);
+        info.permission = permission(&b.meta, &user, role, now_ms()).unwrap_or("viewer").into();
+        let msg = ServerMsg::Opened {
+            book: info,
+            snapshot_seq: b.snapshot_seq,
+            xlsx: proto::b64(&b.snapshot),
+            log: b.tail.clone(),
+            last_edits,
+            peers,
+            sha256: proto::sha256_hex(&b.snapshot),
+        };
+        self.reply(conn, &msg);
+        log::info!("{user} opened \"{}\"", b.meta.name);
+        self.broadcast_books();
+        Ok(())
+    }
+
+    fn on_close_book(&mut self, conn: u64, who: Caller, book: String) -> Result<()> {
+        let Caller { user, .. } = who;
+        let seq = self.books.get(&book).map(|b| b.meta.seq);
+        if let (Some(seq), Some(b)) = (seq, self.books.get_mut(&book)) {
+            // The loaded copy too: edits write `metas` from it.
+            b.meta.seen.insert(user.clone(), seq);
+        }
+        if let (Some(seq), Some(m)) = (seq, self.metas.get_mut(&book)) {
+            m.seen.insert(user.clone(), seq);
+            let m = m.clone();
+            if let Err(e) = self.save_meta(&m) {
+                log::warn!("{book}: {e}");
             }
         }
+        if let Some(c) = self.conns.get_mut(&conn) {
+            c.open.retain(|b| *b != book);
+            c.peer.remove(&book);
+        }
+        self.broadcast(&book, &ServerMsg::PeerLeft { book: book.clone(), conn }, None);
+        self.broadcast_books();
+        Ok(())
+    }
+
+    fn on_rename_book(&mut self, who: Caller, book: String, name: String) -> Result<()> {
+        let Caller { user, role, .. } = who;
+        let creator = self.metas.get(&book).map(|m| m.created_by.clone()).unwrap_or_default();
+        if role != Role::Admin && creator != user {
+            return Err(Error::Denied("only the workbook's creator or an administrator can rename it".into()));
+        }
+        let name = name.trim().to_string();
+        if name.is_empty() || self.metas.values().any(|m| m.id != book && m.name.eq_ignore_ascii_case(&name)) {
+            return Err(Error::Denied("that name is empty or taken".into()));
+        }
+        let mut m = self.metas.get(&book).cloned().ok_or_else(|| Error::Denied("no such workbook".into()))?;
+        m.name = name;
+        self.save_meta(&m)?;
+        if let Some(b) = self.books.get_mut(&book) {
+            b.meta.name = m.name.clone();
+        }
+        self.metas.insert(book, m);
+        self.broadcast_books();
+        Ok(())
+    }
+
+    fn on_delete_book(&mut self, who: Caller, book: String, stopped: bool) -> Result<()> {
+        let Caller { user, role, display } = who;
+        let creator = self.metas.get(&book).map(|m| m.created_by.clone()).unwrap_or_default();
+        if role != Role::Admin && creator != user {
+            return Err(Error::Denied("only the workbook's creator or an administrator can delete it".into()));
+        }
+        let from = self.book_dir(&book);
+        let trash = self.dir.join("trash");
+        fs::create_dir_all(&trash)?;
+        // Close its log files first: Windows can't move a folder with open files in it.
+        // A failed move leaves it listed; it is loaded again when next opened.
+        self.books.remove(&book);
+        fs::rename(&from, trash.join(format!("{book}-{}", now_ms())))?;
+        self.metas.remove(&book);
+        if stopped {
+            log::info!("{user} stopped sharing {book} (its server copy is kept in the trash folder)");
+        } else {
+            log::info!("{user} deleted workbook {book} (kept in the trash folder)");
+        }
+        self.broadcast(&book, &ServerMsg::BookGone { book: book.clone(), by: Some(display.clone()), stopped }, None);
+        self.broadcast_books();
+        Ok(())
+    }
+
+    fn on_set_access(&mut self, conn: u64, who: Caller, book: String, access: Access) -> Result<()> {
+        let Caller { user, role, display } = who;
+        let m = self.metas.get(&book).cloned().ok_or_else(|| Error::Denied("no such workbook".into()))?;
+        if role != Role::Admin && m.created_by != user {
+            return Err(Error::Denied("only the workbook's creator or an administrator can change who has access".into()));
+        }
+        let clean = |p: &str| if p == "viewer" { "viewer".to_string() } else { "editor".to_string() };
+        let access = Access {
+            mode: if access.mode == "people" { "people".into() } else { "office".into() },
+            everyone: clean(&access.everyone),
+            people: access
+                .people
+                .iter()
+                .map(|(u, p)| (u.trim().to_ascii_lowercase(), clean(p)))
+                .filter(|(u, _)| self.users.iter().any(|r| r.user == *u))
+                .take(1000)
+                .collect(),
+            expires: access.expires,
+            download: access.download,
+        };
+        let now = now_ms();
+        let before: Vec<(String, Option<&'static str>)> =
+            self.users.iter().filter(|u| u.user != user).map(|u| (u.user.clone(), permission(&m, &u.user, u.role, now))).collect();
+        let mut next = m.clone();
+        next.access = access;
+        self.save_meta(&next)?;
+        self.metas.insert(book.clone(), next.clone());
+        if let Some(b) = self.books.get_mut(&book) {
+            b.meta.access = next.access.clone();
+        }
+        // Tell the people whose access changed: newly shared, a different permission,
+        // or no longer shared (they keep any copy of their own).
+        for (who, was) in before {
+            let role_of = self.users.iter().find(|u| u.user == who).map_or(Role::Viewer, |u| u.role);
+            let now_p = permission(&next, &who, role_of, now);
+            // Only the people it concerns: named before or now, or who have had it open.
+            let involved = m.access.people.contains_key(&who) || next.access.people.contains_key(&who) || m.seen.contains_key(&who);
+            // Access they never used (the whole office could open it) counts as newly shared.
+            let fresh = !m.seen.contains_key(&who) && !m.access.people.contains_key(&who);
+            let was = if fresh && now_p.is_some() { None } else { was };
+            if was == now_p || !involved {
+                continue;
+            }
+            let (kind, text) = match (was, now_p) {
+                (None, Some(p)) => {
+                    ("shared", format!("{display} shared a spreadsheet with you · {}", if p == "editor" { "can edit" } else { "can view" }))
+                }
+                (Some(_), Some(p)) => ("permission", format!("You can now {} {}", if p == "editor" { "edit" } else { "only view" }, next.name)),
+                (Some(_), None) => ("revoked", format!("Your access to {} has changed: it is no longer shared with you", next.name)),
+                (None, None) => continue,
+            };
+            self.notify(
+                &who,
+                Notice {
+                    kind: kind.into(),
+                    book: book.clone(),
+                    name: next.name.clone(),
+                    by: display.clone(),
+                    permission: now_p.unwrap_or("").into(),
+                    text,
+                    ..Notice::default()
+                },
+            );
+        }
+        // Anyone who lost access and has it open: it closes for them.
+        let gone: Vec<u64> = self
+            .conns
+            .iter()
+            .filter(|(_, c)| c.open.contains(&book))
+            .filter(|(_, c)| self.users.iter().find(|u| u.user == c.user).is_none_or(|u| permission(&next, &u.user, u.role, now).is_none()))
+            .map(|(id, _)| *id)
+            .collect();
+        for id in gone {
+            if let Some(c) = self.conns.get_mut(&id) {
+                c.open.retain(|b| *b != book);
+                if let Some(frame) = encode(&ServerMsg::BookGone { book: book.clone(), by: Some(display.clone()), stopped: false }) {
+                    let _ = c.tx.send(frame);
+                }
+            }
+        }
+        log::info!("{user} changed who has access to \"{}\"", next.name);
+        self.broadcast_books();
+        self.reply(conn, &ServerMsg::Ok { what: "Sharing updated.".into() });
+        Ok(())
+    }
+
+    fn on_restore_version(&mut self, who: Caller, book: String, version: String) -> Result<()> {
+        let Caller { user, role, display } = who;
+        self.require(&user, role, &book, true)?;
+        if !role.can_edit() {
+            return Err(Error::Denied("view-only accounts can't restore versions".into()));
+        }
+        self.load_book(&book)?;
+        let bytes = fs::read(self.version_path(&book, &version)?)?;
+        let (wb, _) = gridcraft_engine::io::open_bytes("book.xlsx", &bytes)?;
+        // Keep what is being replaced, then make the restored workbook the new snapshot.
+        self.save_version(&book, &user, "before restore")?;
+        let dir = self.book_dir(&book);
+        let Some(b) = self.books.get_mut(&book) else { return Ok(()) };
+        b.meta.seq += 1;
+        let entry =
+            Logged { seq: b.meta.seq, time: now_ms(), user: user.clone(), origin: Some(format!("restore:{version}")), patch: WbPatch::default() };
+        writeln!(b.log, "{}", serde_json::to_string(&entry)?)?;
+        b.log.sync_data()?;
+        b.wb = wb;
+        b.meta.modified = entry.time;
+        b.meta.modified_by = user.clone();
+        let meta = b.meta.clone();
+        let _ = dir;
+        self.snapshot(&book)?;
+        self.save_meta(&meta)?;
+        self.metas.insert(book.clone(), meta);
+        log::info!("{user} restored {book} to version {version}");
+        self.broadcast(&book, &ServerMsg::Reload { book: book.clone(), reason: format!("{display} restored an earlier version") }, None);
         Ok(())
     }
 
@@ -2097,6 +2128,13 @@ fn add_usage(path: &Path, version: &str, counts: &std::collections::BTreeMap<Str
 /// True when a connection ended before sending a complete hello.
 fn is_probe(e: &Error) -> bool {
     matches!(e, Error::Io(io) if io.kind() == std::io::ErrorKind::UnexpectedEof)
+}
+
+/// The signed-in account a message came from.
+struct Caller {
+    user: String,
+    role: Role,
+    display: String,
 }
 
 #[cfg(test)]

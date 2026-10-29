@@ -672,10 +672,11 @@ mod tests {
         assert!(title.starts_with("1.2.2"), "{title}");
         assert!(notes.contains("server's log file"), "{notes}");
         assert!(!notes.contains("**"));
-        // A version not released yet shows what is in the works.
+        // A version not released yet shows what is in the works (the Unreleased list, empty
+        // right after a release), never an older version's notes.
         let (title, notes) = notes_for("99.0.0");
         assert!(title.contains("in development"));
-        assert!(!notes.is_empty());
+        assert!(!notes.contains("server's log file"), "{notes}");
     }
 
     #[test]
