@@ -8,6 +8,8 @@ automatically and don't go here.
 
 ## Unreleased
 
+## 1.3.0 · 29 October 2026
+
 - The Server Manager has a **Dashboard**: **Installed versions** (which version each PC runs), **Releases** (mark a version stable or testing, OK, known issue, deprecated or blocked, with a note for the people running it; see what stable and testing PCs are offered and where a blocked version rolls back to; choose whether updates are offered, installed on their own or never offered), **Feedback** (problem reports by version and feature, each readable in full, with **Open GitHub issue** that leaves out the names of people and PCs), **System health** (failed updates, recoveries after a crash, errors) and **Feature adoption** (the most and least used commands).
 - **F4** repeats your last action (formatting, inserting rows, typing an entry…) on the cells now selected, as in Excel. **Ctrl+Y** does the same when there is nothing to redo.
 - Fixed: **Data › Data Validation › Circle Invalid Data** found the cells but drew nothing. It now circles them in red; a circle goes away when the value is corrected, and the new **Clear Validation Circles** removes them all.
