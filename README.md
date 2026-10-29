@@ -69,6 +69,11 @@
 <td width="33%" valign="top"><p><b>Check and compare.</b> <b>Compare Files</b> lists what changed between Rev A and Rev B. <b>Quality Check</b> and <b>Formula Diagnostics</b> find duplicates, blanks, bad dates and broken formulas, each with its cell.</p></td>
 <td width="33%" valign="top"><p><b>Never lose unsaved work.</b> If the app or Windows stops unexpectedly, the next start offers to recover each workbook, open its saved version, or compare the two.</p></td>
 </tr>
+<tr>
+<td width="33%" valign="top"><p><b>Start from the office's templates.</b> <b>File › New</b> lists the approved project trackers, registers and minutes, with a preview. A new spreadsheet is your own copy: a later version of the template never changes it.</p></td>
+<td width="33%" valign="top"><p><b>Let the server do the routine checks.</b> <b>Automation rules</b> on a shared spreadsheet: every Monday find overdue items and run the Quality Check, or stamp the date when a status becomes Completed. Fixed steps only, no macros.</p></td>
+<td width="33%" valign="top"><p><b>Told when it matters.</b> Windows notifications when something is shared with you, your access changes, others edited while you were away (one summary), or a new version is ready. Mute a spreadsheet or get one summary an hour.</p></td>
+</tr>
 </table>
 
 ## A look around
@@ -266,13 +271,16 @@ only by administrators; uninstalling never deletes it. Full guide:
 | | |
 |---|---|
 | **Share** | Open the file from wherever it is saved and click **Share › Share…** (or *File › Shared › Share the current workbook*). The file stays where it is: the app of the person who shared it saves everyone's edits into it a second after each change, and on Ctrl+S. *File › Shared › New shared workbook* starts an empty one. |
+| **Who can open it** | Everyone at the office, or named people, each as an **Editor** or a **Viewer**, optionally until an end date; choose whether viewers may save a copy. **Copy link** gives a link for a chat or e-mail that opens the spreadsheet in the app after checking the reader's access. |
+| **Where your edits are** | The status bar says **saved on the server**, **saving N edit(s)**, **offline** or **out of step, reloading**; a workbook being shared shows **Sharing · uploading** until the server has it. |
 | **Opening a shared file** | Opening a file that is being shared joins the live workbook, so a file on the network drive never splits into two versions. Reopening your own shared file rejoins it and brings the file up to date. |
 | **Stop sharing** | *Share › Stop sharing (keep my file)*: the file gets every edit and is just a file again; everyone else is told and keeps a copy in their window. If another program changed the file while it was shared, it is never overwritten: the app says so and the edits stay in the shared workbook (Save As keeps them). |
 | **See each other** | Other people's selections are outlined in their colour with their name; "(typing)" while they edit a cell. Click a name in the status bar to jump to them. |
 | **Who changed it** | The status bar shows who last changed the active cell. Click it, or *Review › Edit History* (Excel's *Show Changes*), for that cell's history or the whole workbook's, filterable by person. |
 | **Versions** | *Review › Versions*: keep a labelled version ("Issued for review Rev B"), open any version as a separate copy, or restore one for everyone (the current state is kept first). Ctrl+S keeps a version too. |
 | **Offline** | Edits made while the server can't be reached are kept and sent on reconnect; the status bar shows how many are waiting. |
-| **Conflicts** | Two people changing the same cell at the same moment: the server's order decides, everyone ends up identical. Different cells never conflict. |
+| **Conflicts** | Two people changing the same cell at the same moment: the later edit wins, both are told who changed it and which value was kept, and the replaced value stays in Edit History. Different cells never conflict. |
+| **Automation rules** | *Share › Automation rules…*: on a schedule or when a value changes, the office server finds overdue items, runs the Quality Check, writes a report, stamps a completion time or notifies people. Fixed steps only: no macros or scripts. |
 
 What the server keeps on disk, and why nothing acknowledged can be lost, is in
 [docs/collaboration.md](docs/collaboration.md#how-it-works-for-maintainers).
