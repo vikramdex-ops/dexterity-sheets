@@ -2238,26 +2238,23 @@ mod housekeeping_tests {
         let (st, id, _) = fresh(&d);
         let vdir = d.join("books").join(&id).join("versions");
         fs::create_dir_all(&vdir).expect("dir");
+        // Versions are kept one per calendar day (or week), so the times are placed in the middle of
+        // a day and of a week: an hour's difference must never cross midnight, whenever this runs.
         let now = now_ms();
-        let add = |n: usize, age_days: i64, hour: i64, label: &str| {
-            let v = VersionInfo {
-                id: format!("v{n}"),
-                seq: 1,
-                time: now - age_days * DAY_MS - hour * 3_600_000,
-                user: "auto".into(),
-                label: label.into(),
-                size: 1,
-            };
+        let midday = |age_days: i64| (now / DAY_MS - age_days) * DAY_MS + DAY_MS / 2;
+        let midweek = |age_days: i64| ((now - age_days * DAY_MS) / (7 * DAY_MS)) * 7 * DAY_MS + 7 * DAY_MS / 2;
+        let add = |n: usize, at: i64, hour: i64, label: &str| {
+            let v = VersionInfo { id: format!("v{n}"), seq: 1, time: at - hour * 3_600_000, user: "auto".into(), label: label.into(), size: 1 };
             fs::write(vdir.join(format!("v{n}.json")), serde_json::to_vec(&v).expect("json")).expect("w");
             fs::write(vdir.join(format!("v{n}.xlsx")), b"x").expect("w");
         };
-        add(1, 1, 0, "automatic");
-        add(2, 1, 1, "automatic");
-        add(3, 30, 0, "automatic");
-        add(4, 30, 1, "automatic");
-        add(5, 30, 2, "Issued for review Rev B");
-        add(6, 200, 0, "automatic");
-        add(7, 201, 0, "automatic");
+        add(1, midday(1), 0, "automatic");
+        add(2, midday(1), 1, "automatic");
+        add(3, midday(30), 0, "automatic");
+        add(4, midday(30), 1, "automatic");
+        add(5, midday(30), 2, "Issued for review Rev B");
+        add(6, midweek(200), 0, "automatic");
+        add(7, midweek(200), 24, "automatic");
         st.prune_versions(&id);
         let left: HashSet<String> = st.versions(&id).into_iter().map(|v| v.id).collect();
         let want: HashSet<String> = ["v1", "v2", "v3", "v5", "v6"].iter().map(|s| s.to_string()).collect();
