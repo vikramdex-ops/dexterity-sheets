@@ -39,6 +39,10 @@ pub enum Event {
     Failed(String),
 }
 
+/// The server's login challenge for the current connection: (salt, iterations, nonce), all hex
+/// but the count. Kept so the person can prove their current password again later (changing it).
+type Challenge = (String, u32, String);
+
 pub struct Client {
     tx: Sender<ClientMsg>,
     pub events: Receiver<Event>,
@@ -46,6 +50,7 @@ pub struct Client {
     pub instance: String,
     pub config: Config,
     online: Arc<AtomicBool>,
+    challenge: Arc<Mutex<Option<Challenge>>>,
 }
 
 impl Client {
@@ -54,13 +59,15 @@ impl Client {
         let (ev_tx, events) = channel::<Event>();
         let stop = Arc::new(AtomicBool::new(false));
         let online = Arc::new(AtomicBool::new(false));
+        let challenge = Arc::new(Mutex::new(None));
         let instance = auth::hex(&auth::random_bytes::<8>());
-        let (cfg, st, inst, on) = (config.clone(), stop.clone(), instance.clone(), online.clone());
-        let spawned = std::thread::Builder::new().name("dexsheets-client".into()).spawn(move || supervise(cfg, inst, out_rx, ev_tx, waker, st, on));
+        let (cfg, st, inst, on, ch) = (config.clone(), stop.clone(), instance.clone(), online.clone(), challenge.clone());
+        let spawned =
+            std::thread::Builder::new().name("dexsheets-client".into()).spawn(move || supervise(cfg, inst, out_rx, ev_tx, waker, st, on, ch));
         if let Err(e) = spawned {
             log::error!("could not start the connection thread: {e}");
         }
-        Client { tx, events, stop, instance, config, online }
+        Client { tx, events, stop, instance, config, online, challenge }
     }
 
     pub fn send(&self, msg: ClientMsg) {
@@ -69,6 +76,13 @@ impl Client {
 
     pub fn online(&self) -> bool {
         self.online.load(Ordering::Relaxed)
+    }
+
+    /// Proves `password` to the server over this connection's login challenge, as `Login` did:
+    /// the `old_proof` of `ChangePassword`. `None` before the first login.
+    pub fn proof(&self, password: &str) -> Option<String> {
+        let (salt, iterations, nonce) = self.challenge.lock().ok()?.clone()?;
+        Some(auth::proof(password, &salt, iterations, &nonce))
     }
 }
 
@@ -82,7 +96,10 @@ fn address(server: &str) -> String {
     if server.contains(':') { server.to_string() } else { format!("{server}:{}", proto::DEFAULT_PORT) }
 }
 
-fn login(cfg: &Config, instance: &str) -> Result<(TcpStream, UserInfo, Vec<UserInfo>, String)> {
+/// Logged in: the connection, who we are, everyone, the server's name and its challenge.
+type LoggedIn = (TcpStream, UserInfo, Vec<UserInfo>, String, Challenge);
+
+fn login(cfg: &Config, instance: &str) -> Result<LoggedIn> {
     let addr = address(&cfg.server);
     let sock = addr.to_socket_addrs()?.next().ok_or_else(|| Error::Protocol(format!("no address for {addr}")))?;
     let mut s = TcpStream::connect_timeout(&sock, Duration::from_secs(4))?;
@@ -100,20 +117,21 @@ fn login(cfg: &Config, instance: &str) -> Result<(TcpStream, UserInfo, Vec<UserI
     )?;
     let (salt, iterations, nonce, server) = match proto::read_frame::<_, ServerMsg>(&mut s)? {
         ServerMsg::Challenge { salt, iterations, nonce, server } => (salt, iterations, nonce, server),
-        ServerMsg::Error { message } => return Err(Error::Denied(message)),
+        ServerMsg::Error { message, .. } => return Err(Error::Denied(message)),
         other => return Err(Error::Protocol(format!("unexpected {other:?}"))),
     };
     proto::write_frame(&mut s, &ClientMsg::Login { proof: auth::proof(&cfg.password, &salt, iterations, &nonce) })?;
     match proto::read_frame::<_, ServerMsg>(&mut s)? {
         ServerMsg::Welcome { me, users, .. } => {
             s.set_read_timeout(None)?;
-            Ok((s, me, users, server))
+            Ok((s, me, users, server, (salt, iterations, nonce)))
         }
-        ServerMsg::Error { message } => Err(Error::Denied(message)),
+        ServerMsg::Error { message, .. } => Err(Error::Denied(message)),
         other => Err(Error::Protocol(format!("unexpected {other:?}"))),
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn supervise(
     cfg: Config,
     instance: String,
@@ -122,14 +140,18 @@ fn supervise(
     waker: Waker,
     stop: Arc<AtomicBool>,
     online: Arc<AtomicBool>,
+    challenge: Arc<Mutex<Option<Challenge>>>,
 ) {
     let mut backoff = 1u64;
     let mut ever_connected = false;
     while !stop.load(Ordering::Relaxed) {
         match login(&cfg, &instance) {
-            Ok((stream, me, users, server)) => {
+            Ok((stream, me, users, server, ch)) => {
                 backoff = 1;
                 ever_connected = true;
+                if let Ok(mut g) = challenge.lock() {
+                    *g = Some(ch);
+                }
                 // Anything queued while offline belonged to the old connection: the front end
                 // resends what still matters when it hears `Connected`.
                 while out_rx.try_recv().is_ok() {}
@@ -227,7 +249,12 @@ fn pump(stream: TcpStream, out_rx: &Receiver<ClientMsg>, ev: &Sender<Event>, wak
                     }
                 }
             }
-            Err(RecvTimeoutError::Disconnected) => return "closed".into(),
+            Err(RecvTimeoutError::Disconnected) => {
+                // The front end let go of the client: close the socket now, or the reader's
+                // clone keeps it open and the server never learns the person is gone.
+                let _ = writer.shutdown(std::net::Shutdown::Both);
+                return "closed".into();
+            }
         }
     }
 }

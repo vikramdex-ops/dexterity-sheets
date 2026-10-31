@@ -23,12 +23,18 @@ pub struct Tools {
     report: String,
 }
 
-/// Commands whose result opens a window here. With empty params, Compare Files opens its form.
+/// Commands whose result opens a window here. Compare Files with neither side named opens its
+/// form for a menu-style call (`show: true`) and is an error for a programmatic one.
 pub fn run_command(app: &mut SheetApp, id: &str, p: &Json) -> Option<Result<Json, String>> {
     if !matches!(id, "review.compareFiles" | "data.qualityCheck" | "formulas.diagnostics" | "formulas.explainError") {
         return None;
     }
     if id == "review.compareFiles" && p.get("old").is_none() && p.get("new").is_none() {
+        if p.get("show").and_then(Json::as_bool) != Some(true) {
+            return Some(Err(
+                "give `old` and `new` (file paths, or \"active\" for the open workbook), or `show: true` to open the Compare Files form".into(),
+            ));
+        }
         app.collab.tools.compare_form = true;
         if app.collab.tools.new.is_empty() {
             app.collab.tools.new = "active".into();
@@ -55,7 +61,7 @@ pub fn review_buttons(app: &mut SheetApp, ui: &mut Ui) {
         )
         .clicked()
         {
-            app.run_or_alert("review.compareFiles", json!({}));
+            app.run_or_alert("review.compareFiles", json!({"show": true}));
         }
         if small_button(
             ui,
@@ -132,18 +138,27 @@ fn compare_form(app: &mut SheetApp, ctx: &egui::Context) {
     }
     let mut open = true;
     let mut go = false;
+    // Which side a Browse… button asks a file for: 0 = earlier, 1 = later.
+    let mut browse: Option<u8> = None;
+    let can_browse = app.services.pick_open.is_some();
     egui::Window::new("Compare Files").collapsible(false).resizable(false).open(&mut open).anchor(egui::Align2::CENTER_CENTER, vec2(0.0, 0.0)).show(
         ctx,
         |ui| {
-            ui.set_max_width(520.0);
+            ui.set_max_width(600.0);
             let t = &mut app.collab.tools;
             ui.label("Compare an earlier version (Rev A) with a later one (Rev B). Type a file path, or \"active\" for the workbook open now.");
-            egui::Grid::new("dex_cmp").num_columns(2).spacing(vec2(10.0, 6.0)).show(ui, |ui| {
+            egui::Grid::new("dex_cmp").num_columns(3).spacing(vec2(10.0, 6.0)).show(ui, |ui| {
                 ui.label("Earlier (Rev A)");
                 ui.add(egui::TextEdit::singleline(&mut t.old).hint_text(r"D:\Jobs\Project_Tracker_Rev_A.xlsx").desired_width(380.0));
+                if can_browse && ui.button("Browse…").on_hover_text("Pick the earlier version").clicked() {
+                    browse = Some(0);
+                }
                 ui.end_row();
                 ui.label("Later (Rev B)");
                 ui.add(egui::TextEdit::singleline(&mut t.new).hint_text("active").desired_width(380.0));
+                if can_browse && ui.button("Browse…").on_hover_text("Pick the later version").clicked() {
+                    browse = Some(1);
+                }
                 ui.end_row();
                 ui.label("Report (optional)");
                 ui.add(egui::TextEdit::singleline(&mut t.report).hint_text(r"D:\Jobs\Comparison.xlsx or .csv").desired_width(380.0));
@@ -154,6 +169,16 @@ fn compare_form(app: &mut SheetApp, ctx: &egui::Context) {
             }
         },
     );
+    if let Some(side) = browse
+        && let Some(pick) = &app.services.pick_open
+        && let Some(path) = pick()
+    {
+        if side == 0 {
+            app.collab.tools.old = path;
+        } else {
+            app.collab.tools.new = path;
+        }
+    }
     if go {
         let t = &app.collab.tools;
         let mut p = json!({"old": t.old.trim().trim_matches('"'), "new": t.new.trim().trim_matches('"')});

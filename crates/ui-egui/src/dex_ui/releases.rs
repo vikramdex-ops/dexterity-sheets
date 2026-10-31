@@ -445,6 +445,7 @@ pub fn help_buttons(app: &mut SheetApp, ui: &mut egui::Ui) {
     use crate::icons::Icon;
     use crate::widgets::small_button;
     let mut run = None;
+    // Two columns: a column of small buttons holds three rows, and a fourth is cut off.
     ui.vertical(|ui| {
         if small_button(ui, Icon::Info, "What's New", "What changed in this version of Dexterity Sheets", false).clicked() {
             run = Some("help.whatsNew");
@@ -453,6 +454,8 @@ pub fn help_buttons(app: &mut SheetApp, ui: &mut egui::Ui) {
         {
             run = Some("help.reportProblem");
         }
+    });
+    ui.vertical(|ui| {
         if small_button(ui, Icon::Undo, "Roll Back Version", "Install an earlier version of the app; your workbooks are not touched", false).clicked()
         {
             run = Some("help.rollBack");

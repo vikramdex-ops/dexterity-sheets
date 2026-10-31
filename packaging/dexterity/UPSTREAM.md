@@ -100,3 +100,12 @@ cargo build --release -p gridcraft -p gridcraft-server
 - Don't reformat or reorganise upstream files.
 - Contribute general fixes (Excel compatibility bugs) back to upstream when possible: once
   upstream has them, our diff shrinks.
+
+## Tests that need the craft-fonts input
+
+`crates/ui-egui/tests/it/interaction.rs` (`column_autocomplete_folds_case_beyond_ascii`,
+`language_switch_renders_the_ribbon_and_persists`) draw glyphs (ẞ, ẻ) that egui's bundled faces
+lack; without `CRAFT_FONTS_DIR` they panic with "No glyph for …". They are upstream's tests and
+fail the same way on an upstream checkout without that input, so Dexterity CI does not run the
+`ui-egui` integration tests; everything else in that crate passes here (`cargo test -p
+gridcraft-ui-egui`: 913 of 916, those two and nothing else).

@@ -61,23 +61,32 @@ def main():
         print("build first: app missing in", REL)
         sys.exit(2)
     rec = tempfile.mkdtemp(prefix="dexsheets-recovery-e2e-")
-    env = dict(os.environ, DEXSHEETS_RECOVERY_DIR=rec)
+    # The apps are the real desktop build: their settings, templates and recovery copies must
+    # land in fresh folders, never in the developer's own %LOCALAPPDATA% and %APPDATA%.
+    local = os.path.join(rec, "LocalAppData")
+    roaming = os.path.join(rec, "AppData")
+    os.makedirs(local)
+    os.makedirs(roaming)
+    env = dict(os.environ, DEXSHEETS_RECOVERY_DIR=os.path.join(rec, "Recovery"), LOCALAPPDATA=local, APPDATA=roaming)
     try:
         a = App(7961, env)
         a.run("cell.set", cell="A1", input="typed before the crash 7Q")
         a.run("cell.set", cell="B2", input="=6*7")
-        def kept():
-            """Cell counts of the copies kept so far (a copy follows the edits within ~10 s)."""
-            out = []
-            for root, _, fs in os.walk(rec):
+        def copies():
+            """The copies kept so far: {json path: cell count} (a copy follows the edits within ~10 s)."""
+            out = {}
+            for root, _, fs in os.walk(env["DEXSHEETS_RECOVERY_DIR"]):
                 for f in fs:
                     if f.endswith(".json"):
                         try:
                             with open(os.path.join(root, f), encoding="utf-8") as h:
-                                out.append(json.load(h).get("cells", 0))
+                                out[os.path.join(root, f)] = json.load(h).get("cells", 0)
                         except (OSError, ValueError):
                             pass
             return out
+
+        def kept():
+            return list(copies().values())
         end = time.time() + 40
         while time.time() < end and 2 not in kept():
             time.sleep(0.5)
@@ -88,12 +97,28 @@ def main():
         b = App(7962, env)
         items = b.run("file.recoverUnsaved", action="list")["items"]
         check("the next start offers the unsaved workbook", len(items) == 1, json.dumps(items))
+        old_copies = set(copies())
         b.run("file.recoverUnsaved", action="recover", index=0)
         docs = [d["title"] for d in b.call("ui.inspect")["documents"]]
         a1 = b.call("cell.get", {"cell": "A1"})
         b2 = b.call("cell.get", {"cell": "B2"})
         check("recover brings back what was typed", isinstance(a1, dict) and a1.get("value") == "typed before the crash 7Q" and b2.get("value") == 42, f"{docs} A1={a1 and a1.get('value')} B2={b2 and b2.get('value')}")
         check("the recovered workbook is new and unsaved (the file is not touched)", any("(Recovered)" in t for t in docs), str(docs))
+        # The old copy may still be there, or this run's own copy may already have replaced it
+        # (a copy is written within seconds of recovering); what must never be seen is no copy.
+        now = set(copies())
+        check("the crashed run's copy stays until this run has its own", bool(now) and (old_copies <= now or len(now - old_copies) == 1), str(copies()))
+        items = b.run("file.recoverUnsaved", action="list")["items"]
+        check("a copy already recovered is not offered again", items == [], json.dumps(items))
+        end = time.time() + 40
+        while time.time() < end and (old_copies & set(copies()) or len(copies()) != 1):
+            time.sleep(0.5)
+        check("once this run's copy of the recovered workbook lands, the old copy goes", not (old_copies & set(copies())) and len(copies()) == 1, str(copies()))
+        try:
+            b.run("review.compareFiles")
+            check("Compare Files with nothing named is an error, not a window", False, "no error")
+        except RuntimeError as e:
+            check("Compare Files with nothing named is an error, not a window", "show: true" in str(e), str(e))
         # A normal exit after discarding: nothing to recover next time.
         b.run("file.close", force=True, document=True)
         b.call("app.quit", {})

@@ -34,7 +34,18 @@ def check(name, ok, detail=""):
 class App:
     def __init__(self, port, token, who):
         self.port, self.token, self.who = port, token, who
-        env = dict(os.environ, GRIDCRAFT_CONTROL_TOKEN=token)
+        # A profile of its own: the real build keeps crash-recovery copies, settings and the
+        # remembered server under %LOCALAPPDATA% and %APPDATA%, and the test must never leave
+        # anything in the developer's own (their app would offer to recover it).
+        self.profile = tempfile.mkdtemp(prefix=f"dexsheets-e2e-{who}-")
+        env = dict(
+            os.environ,
+            GRIDCRAFT_CONTROL_TOKEN=token,
+            LOCALAPPDATA=os.path.join(self.profile, "Local"),
+            APPDATA=os.path.join(self.profile, "Roaming"),
+        )
+        os.makedirs(env["LOCALAPPDATA"])
+        os.makedirs(env["APPDATA"])
         self.proc = subprocess.Popen([APP, "--control", str(port)], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         self.sock = None
         self.n = 0
@@ -85,8 +96,10 @@ class App:
     def close(self):
         try:
             self.proc.kill()
+            self.proc.wait(timeout=10)
         except Exception:
             pass
+        shutil.rmtree(self.profile, ignore_errors=True)
 
 
 def wait(pred, timeout=15, step=0.05):

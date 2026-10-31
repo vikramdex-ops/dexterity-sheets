@@ -103,6 +103,11 @@ struct Conn {
     user: String,
     instance: String,
     machine: String,
+    /// The nonce of this connection's login challenge: a `ChangePassword` proves the current
+    /// password over it again.
+    nonce: String,
+    /// The socket, to close the connection from the server's side (the account disabled).
+    sock: Option<TcpStream>,
     /// The app version and update channel it last asked about.
     version: String,
     channel: String,
@@ -123,6 +128,9 @@ pub struct State {
     /// Every installer in `updates/`, newest first, with the administrator's channel and status.
     available: Vec<(UpdateInfo, PathBuf)>,
     policy: String,
+    /// What `releases.json` says about each version (channel, status, note), installer or not:
+    /// a version marked blocked must reach the people running it even after its file is gone.
+    statuses: HashMap<String, (String, String, String)>,
     /// sha256 of installers already hashed: (path, size, modified) → hash.
     hashes: HashMap<(PathBuf, u64, std::time::SystemTime), String>,
 }
@@ -264,10 +272,21 @@ pub fn set_user(dir: &Path, user: &str, display: &str, password: &str, role: Rol
     save_users(dir, &users)
 }
 
-fn slug(name: &str) -> String {
+/// A fresh id from a name: the name's letters and digits plus a random tail. `taken` says
+/// whether an id is in use; a tail that collides is drawn again.
+pub(crate) fn slug(name: &str, taken: impl Fn(&str) -> bool) -> String {
     let s: String = name.chars().map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_lowercase() } else { '-' }).collect();
     let s = s.trim_matches('-').chars().take(40).collect::<String>();
-    format!("{}-{}", if s.is_empty() { "book" } else { &s }, auth::hex(&auth::random_bytes::<3>()))
+    let stem = if s.is_empty() { "book" } else { &s };
+    let mut id = format!("{stem}-{}", auth::hex(&auth::random_bytes::<3>()));
+    // 16 million tails: a second draw is already rare, a hundredth never happens.
+    for _ in 0..100 {
+        if !taken(&id) {
+            break;
+        }
+        id = format!("{stem}-{}", auth::hex(&auth::random_bytes::<3>()));
+    }
+    id
 }
 
 fn a1(at: CellRef) -> String {
@@ -298,6 +317,7 @@ impl Server {
             update: None,
             available: Vec::new(),
             policy: String::new(),
+            statuses: HashMap::new(),
             hashes: HashMap::new(),
         };
         state.update = state.scan_updates();
@@ -328,7 +348,7 @@ impl Server {
         let _ = stream.set_nodelay(true);
         let _ = stream.set_read_timeout(Some(Duration::from_secs(30)));
         let Ok(mut reader) = stream.try_clone() else { return };
-        let (user, instance, machine) = match self.handshake(&mut reader) {
+        let (user, instance, machine, nonce) = match self.handshake(&mut reader) {
             Ok(x) => x,
             // A connection closed before a full hello is a port check (the Server Manager's
             // "is it running" test, a monitoring tool), not a login: nothing to log or slow down.
@@ -338,7 +358,7 @@ impl Server {
                 // Slow down password guessing.
                 std::thread::sleep(Duration::from_millis(800));
                 let mut w = &stream;
-                let _ = proto::write_frame(&mut w, &ServerMsg::Error { message: e.to_string() });
+                let _ = proto::write_frame(&mut w, &ServerMsg::Error { message: e.to_string(), book: None });
                 return;
             }
         };
@@ -359,6 +379,8 @@ impl Server {
                     user: user.clone(),
                     instance,
                     machine: machine.clone(),
+                    nonce,
+                    sock: stream.try_clone().ok(),
                     version: String::new(),
                     channel: String::new(),
                     tx: tx.clone(),
@@ -381,24 +403,32 @@ impl Server {
                     break;
                 }
             };
+            // A refused request names its workbook, so the window can stop waiting for it.
+            let about = book_of(&msg);
             let reply = {
                 let mut st = lock(&self.state);
                 st.dispatch(conn, msg)
             };
             if let Err(e) = reply {
-                send(&tx, &ServerMsg::Error { message: e.to_string() });
+                send(&tx, &ServerMsg::Error { message: e.to_string(), book: about });
             }
         }
         let mut st = lock(&self.state);
         if let Some(c) = st.conns.remove(&conn) {
             for b in c.open {
+                // Quitting the app with the workbook open counts as closing it: what others
+                // change from here on is summarised at the person's next sign-in.
+                st.mark_seen(&c.user, &b);
                 st.broadcast(&b, &ServerMsg::PeerLeft { book: b.clone(), conn }, None);
             }
+            st.broadcast_books();
         }
         let _ = stream.shutdown(std::net::Shutdown::Both);
     }
 
-    fn handshake(&self, s: &mut TcpStream) -> Result<(String, String, String)> {
+    /// The signed-in account, its app instance and machine, and the nonce it proved its
+    /// password over.
+    fn handshake(&self, s: &mut TcpStream) -> Result<(String, String, String, String)> {
         let (user, instance, machine) = match proto::read_frame::<_, ClientMsg>(s)? {
             ClientMsg::Hello { protocol, user, instance, machine, .. } => {
                 if protocol != proto::PROTOCOL {
@@ -413,10 +443,9 @@ impl Server {
         };
         let (rec, server) = {
             let mut st = lock(&self.state);
-            // Accounts changed with the server's `user` command take effect at the next login.
-            if let Ok(users) = load_users(&st.dir) {
-                st.users = users;
-            }
+            // Accounts changed with the server's `user` command take effect at the next login
+            // (and a disabled account's open connections end now).
+            st.reload_users();
             (st.users.iter().find(|u| u.user == user).cloned(), st.name.clone())
         };
         let nonce = auth::hex(&auth::random_bytes::<24>());
@@ -437,18 +466,46 @@ impl Server {
             return Err(Error::Denied("Wrong user name or password.".into()));
         }
         if rec.disabled {
-            return Err(Error::Denied("This account is disabled. Ask an administrator.".into()));
+            return Err(Error::Denied(DISABLED.into()));
         }
-        Ok((user, instance, machine))
+        Ok((user, instance, machine, nonce))
     }
 }
+
+const DISABLED: &str = "This account is disabled. Ask an administrator.";
 
 fn write_loop(mut w: TcpStream, rx: Receiver<Arc<Vec<u8>>>) {
     while let Ok(frame) = rx.recv() {
         if w.write_all(&frame).is_err() {
-            let _ = w.shutdown(std::net::Shutdown::Both);
-            return;
+            break;
         }
+    }
+    // The connection was dropped from the server's side (the account disabled) or the write
+    // failed: close the socket, so the reading side ends too.
+    let _ = w.shutdown(std::net::Shutdown::Both);
+}
+
+/// The shared workbook a request is about (its id; for `CreateBook` the name asked for), so a
+/// refusal can say which one.
+fn book_of(m: &ClientMsg) -> Option<String> {
+    match m {
+        ClientMsg::CreateBook { name, .. } => Some(name.trim().to_string()),
+        ClientMsg::OpenBook { book }
+        | ClientMsg::CloseBook { book }
+        | ClientMsg::RenameBook { book, .. }
+        | ClientMsg::GetRules { book }
+        | ClientMsg::SetRules { book, .. }
+        | ClientMsg::RunRule { book, .. }
+        | ClientMsg::SetAccess { book, .. }
+        | ClientMsg::DeleteBook { book, .. }
+        | ClientMsg::Patch { book, .. }
+        | ClientMsg::Presence { book, .. }
+        | ClientMsg::History { book, .. }
+        | ClientMsg::Versions { book }
+        | ClientMsg::SaveVersion { book, .. }
+        | ClientMsg::GetVersion { book, .. }
+        | ClientMsg::RestoreVersion { book, .. } => Some(book.clone()),
+        _ => None,
     }
 }
 
@@ -468,7 +525,54 @@ impl State {
     fn user(&self, conn: u64) -> Result<(&Conn, &UserRecord)> {
         let c = self.conns.get(&conn).ok_or_else(|| Error::Protocol("unknown connection".into()))?;
         let u = self.users.iter().find(|u| u.user == c.user).ok_or_else(|| Error::Denied("account removed".into()))?;
+        if u.disabled {
+            return Err(Error::Denied(DISABLED.into()));
+        }
         Ok((c, u))
+    }
+
+    /// Reads `users.json` again (the administrator's tools edit it) and ends the connections of
+    /// accounts that are now disabled or gone: a disabled person is out at once, not at their
+    /// next sign-in.
+    fn reload_users(&mut self) {
+        if let Ok(users) = load_users(&self.dir) {
+            self.users = users;
+        }
+        let out: Vec<u64> =
+            self.conns.iter().filter(|(_, c)| self.users.iter().find(|u| u.user == c.user).is_none_or(|u| u.disabled)).map(|(id, _)| *id).collect();
+        for id in out {
+            let Some(c) = self.conns.remove(&id) else { continue };
+            log::info!("{}: disconnected (account disabled or removed)", c.user);
+            send(&c.tx, &ServerMsg::Error { message: DISABLED.into(), book: None });
+            // Said, then the socket is closed: the client sees the connection end and its
+            // sign-in attempt afterwards is refused.
+            if let Some(s) = &c.sock {
+                // The writer thread gets the Error out first: it was queued before this.
+                std::thread::sleep(Duration::from_millis(50));
+                let _ = s.shutdown(std::net::Shutdown::Both);
+            }
+            for b in c.open {
+                self.mark_seen(&c.user, &b);
+                self.broadcast(&b, &ServerMsg::PeerLeft { book: b.clone(), conn: id }, None);
+            }
+        }
+    }
+
+    /// Remembers that `user` has seen the workbook up to its current edit (they closed it, or
+    /// their connection ended with it open), for "changed while you were away".
+    fn mark_seen(&mut self, user: &str, book: &str) {
+        let Some(seq) = self.books.get(book).map(|b| b.meta.seq) else { return };
+        if let Some(b) = self.books.get_mut(book) {
+            // The loaded copy too: edits write `metas` from it.
+            b.meta.seen.insert(user.to_string(), seq);
+        }
+        if let Some(m) = self.metas.get_mut(book) {
+            m.seen.insert(user.to_string(), seq);
+            let m = m.clone();
+            if let Err(e) = self.save_meta(&m) {
+                log::warn!("{book}: {e}");
+            }
+        }
     }
 
     fn reply(&self, conn: u64, msg: &ServerMsg) {
@@ -586,6 +690,18 @@ impl State {
         let dir = self.dir.join("updates");
         let releases: serde_json::Value = fs::read(dir.join("releases.json")).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default();
         self.policy = releases.pointer("/policy/mode").and_then(serde_json::Value::as_str).unwrap_or("prompt").to_string();
+        self.statuses = releases
+            .get("releases")
+            .and_then(serde_json::Value::as_object)
+            .map(|m| {
+                m.iter()
+                    .map(|(v, r)| {
+                        let f = |k: &str, d: &str| r.get(k).and_then(serde_json::Value::as_str).unwrap_or(d).to_string();
+                        (v.clone(), (f("channel", "stable"), f("status", "ok"), f("note", "")))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
         let mut found: Vec<(UpdateInfo, PathBuf)> = Vec::new();
         for e in fs::read_dir(&dir).ok()?.flatten() {
             let path = e.path();
@@ -657,7 +773,16 @@ impl State {
         let on_channel = |u: &UpdateInfo| channel == "testing" || u.channel == "stable";
         let update =
             self.available.iter().map(|(u, _)| u).find(|u| offerable(u) && on_channel(u) && proto::version_newer(&u.version, version)).cloned();
-        let current = self.available.iter().map(|(u, _)| u).find(|u| u.version == version).cloned();
+        let current = self.available.iter().map(|(u, _)| u).find(|u| u.version == version).cloned().or_else(|| {
+            // No installer of this version here, but the administrator said something about it.
+            self.statuses.get(version).map(|(channel, status, note)| UpdateInfo {
+                version: version.to_string(),
+                channel: channel.clone(),
+                status: status.clone(),
+                note: note.clone(),
+                ..UpdateInfo::default()
+            })
+        });
         let older = self
             .available
             .iter()
@@ -879,7 +1004,7 @@ impl State {
             }
         };
         let bytes = gridcraft_engine::io::save_bytes(&wb, "book.xlsx")?;
-        let id = slug(name);
+        let id = slug(name, |id| self.metas.contains_key(id) || self.book_dir(id).exists());
         let dir = self.book_dir(&id);
         fs::create_dir_all(dir.join("versions"))?;
         write_atomic(&dir.join("snapshot-0.xlsx"), &bytes)?;
@@ -1005,8 +1130,17 @@ impl State {
                 self.reply(conn, &ServerMsg::UpdateFile { info, data: proto::b64(&data) });
             }
             ClientMsg::Hello { .. } | ClientMsg::Login { .. } => {}
-            ClientMsg::ChangePassword { old_proof: _, new_password } => {
-                // The connection already proved the old password at login.
+            ClientMsg::ChangePassword { old_proof, new_password } => {
+                // The current password is proved again over this connection's login nonce, so
+                // nobody at an unlocked PC changes it without knowing it.
+                let (nonce, key) = {
+                    let (c, u) = self.user(conn)?;
+                    (c.nonce.clone(), u.key.clone())
+                };
+                let expect = auth::hmac_sha256(&auth::unhex(&key).unwrap_or_default(), &auth::unhex(&nonce).unwrap_or_default());
+                if !auth::same(&expect, &auth::unhex(&old_proof).unwrap_or_default()) {
+                    return Err(Error::Denied("The current password is wrong; the password was not changed.".into()));
+                }
                 set_user(&self.dir, &user, &display, &new_password, role)?;
                 self.users = load_users(&self.dir)?;
                 self.reply(conn, &ServerMsg::Ok { what: "Password changed.".into() });
@@ -1053,6 +1187,9 @@ impl State {
                 }
             }
             ClientMsg::Presence { book, sheet, range, editing } => {
+                // Only where the person may look: a selection is not shown on a workbook they
+                // have no access to (nor relayed to its readers).
+                self.require(&user, role, &book, false)?;
                 let Some(u) = self.users.iter().find(|u| u.user == user) else { return Ok(()) };
                 let peer = Peer { user: user.clone(), display: u.display.clone(), color: u.color, sheet, range, editing, conn };
                 if let Some(c) = self.conns.get_mut(&conn) {
@@ -1152,7 +1289,7 @@ impl State {
                 let dir = self.dir.join("templates");
                 fs::create_dir_all(&dir)?;
                 let existing = id.as_ref().and_then(|i| list_templates(&self.dir).into_iter().find(|t| &t.id == i));
-                let id = existing.as_ref().map_or_else(|| slug(&name), |t| t.id.clone());
+                let id = existing.as_ref().map_or_else(|| slug(&name, |id| dir.join(format!("{id}.json")).exists()), |t| t.id.clone());
                 let info = TemplateInfo {
                     id: id.clone(),
                     name: name.clone(),
@@ -1291,18 +1428,7 @@ impl State {
 
     fn on_close_book(&mut self, conn: u64, who: Caller, book: String) -> Result<()> {
         let Caller { user, .. } = who;
-        let seq = self.books.get(&book).map(|b| b.meta.seq);
-        if let (Some(seq), Some(b)) = (seq, self.books.get_mut(&book)) {
-            // The loaded copy too: edits write `metas` from it.
-            b.meta.seen.insert(user.clone(), seq);
-        }
-        if let (Some(seq), Some(m)) = (seq, self.metas.get_mut(&book)) {
-            m.seen.insert(user.clone(), seq);
-            let m = m.clone();
-            if let Err(e) = self.save_meta(&m) {
-                log::warn!("{book}: {e}");
-            }
-        }
+        self.mark_seen(&user, &book);
         if let Some(c) = self.conns.get_mut(&conn) {
             c.open.retain(|b| *b != book);
             c.peer.remove(&book);
@@ -1747,9 +1873,11 @@ impl Server {
         lock(&self.state).flush_all();
     }
 
-    /// Housekeeping, every half minute: workbooks nobody has open leave memory.
+    /// Housekeeping, every half minute: workbooks nobody has open leave memory, and accounts the
+    /// administrator disabled meanwhile are disconnected.
     pub fn unload_idle(&self) {
         let mut st = lock(&self.state);
+        st.reload_users();
         st.run_due_rules();
         st.unload_idle();
     }

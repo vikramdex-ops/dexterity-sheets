@@ -84,6 +84,10 @@ pub struct Collab {
     finding: Option<Receiver<Vec<Found>>>,
     new_name: String,
     new_password: String,
+    /// The current password, typed again to change it.
+    old_password: String,
+    /// A request that could not be sent (not connected), shown as a toast by `tick`.
+    dropped: Option<String>,
     /// Workbooks asked for and not yet arrived.
     opening: Vec<String>,
     /// The last presence sent: (doc uid, sheet, range, editing).
@@ -101,6 +105,9 @@ pub struct Collab {
     update_dialog: bool,
     /// Downloading or installing: what the dialog says.
     pub(crate) update_state: Option<String>,
+    /// The new password sent with ChangePassword: once the server says it took, the connection
+    /// reconnects with it (not with the old one).
+    new_password_sent: Option<String>,
     last_update_check: f64,
     /// Shared workbooks that are files on this PC, kept saved with everyone's edits.
     pub links: Vec<LinkedFile>,
@@ -155,14 +162,44 @@ impl Collab {
     pub fn shared(&self, uid: u64) -> Option<&SharedDoc> {
         self.docs.iter().find(|d| d.doc_uid == uid)
     }
-    pub(crate) fn send(&self, m: ClientMsg) {
-        if let Some(c) = &self.client {
-            c.send(m);
-        }
+    /// Sends a request to the server. While not connected, a request that is a person's action
+    /// (keep a version, change who has access, restore, delete, change the password…) would
+    /// vanish: the connection drops its queue when it comes back. Such a request is refused
+    /// here, the person is told (a toast), and `false` comes back. Edits, presence and the
+    /// requests the reconnect repeats on its own are handed over whatever the state.
+    pub(crate) fn send(&mut self, m: ClientMsg) {
+        self.try_send(m);
     }
-    /// The office server as `host:port`, for links.
+    /// [`send`](Self::send), saying whether the request went out.
+    pub(crate) fn try_send(&mut self, m: ClientMsg) -> bool {
+        let Some(c) = &self.client else { return false };
+        let repeated = matches!(
+            m,
+            ClientMsg::Patch { .. }
+                | ClientMsg::Presence { .. }
+                | ClientMsg::Ping
+                | ClientMsg::OpenBook { .. }
+                | ClientMsg::CloseBook { .. }
+                | ClientMsg::ListBooks
+                | ClientMsg::CheckUpdate { .. }
+                | ClientMsg::Health { .. }
+                | ClientMsg::Usage { .. }
+        );
+        if !repeated && !c.online() {
+            self.dropped = Some(offline_note(&self.status));
+            return false;
+        }
+        c.send(m);
+        true
+    }
+    /// The office server as `host:port`, for links: the one this app is signed in to, else the
+    /// one in the sign-in form or remembered from last time.
     pub(crate) fn server_address(&self) -> String {
-        let s = if self.form_server.trim().is_empty() { load_remembered().server } else { self.form_server.trim().to_string() };
+        let s = match &self.client {
+            Some(c) if self.me.is_some() => c.config.server.trim().to_string(),
+            _ if self.form_server.trim().is_empty() => load_remembered().server,
+            _ => self.form_server.trim().to_string(),
+        };
         if s.contains(':') { s } else { format!("{s}:{}", proto::DEFAULT_PORT) }
     }
     pub(crate) fn set_form_server(&mut self, server: &str) {
@@ -178,6 +215,15 @@ impl Collab {
     }
     pub fn signed_in(&self) -> bool {
         self.client.is_some() && self.me.is_some()
+    }
+}
+
+/// What a person is told when a request could not be sent.
+fn offline_note(status: &Status) -> String {
+    match status {
+        Status::Reconnecting(why) => format!("Not connected to the office server ({why}): nothing was sent. Try again once you are back online."),
+        Status::Connecting => "Still signing in to the office server: nothing was sent. Try again in a moment.".into(),
+        _ => "Not signed in to the office server: nothing was sent.".into(),
     }
 }
 
@@ -261,6 +307,9 @@ pub fn tick(app: &mut SheetApp, ctx: &egui::Context) {
         handle(app, e);
     }
     keep_files(app);
+    if let Some(note) = app.collab.dropped.take() {
+        app.toast = Some((note, crate::now_ms()));
+    }
     // Workbooks that need to be fetched again (a missed edit, a restored version).
     let reload: Vec<String> = app.collab.docs.iter().filter(|d| d.needs_reload.is_some()).map(|d| d.book.id.clone()).collect();
     for id in reload {
@@ -409,7 +458,9 @@ fn message(app: &mut SheetApp, m: ServerMsg) {
                 for e in last_edits {
                     sd.last_edits.insert((e.sheet, CellRef::new(e.r, e.c)), (e.user, e.time));
                 }
-                match sd.resync(doc, snapshot_seq, &bytes, &log, book, &mine) {
+                // The reload is over either way (`resync` clears `needs_reload`): a failure is
+                // said once, never asked of the server again every frame.
+                match sd.resync(doc, snapshot_seq, &bytes, &log, book, &mine, read_only) {
                     Ok(resend) => {
                         for (cseq, patch) in resend {
                             let id = sd.book.id.clone();
@@ -418,7 +469,15 @@ fn message(app: &mut SheetApp, m: ServerMsg) {
                             }
                         }
                     }
-                    Err(e) => app.message = Some(("Dexterity Sheets".into(), format!("Could not bring \"{}\" up to date: {e}", sd.book.name))),
+                    Err(e) => {
+                        app.message = Some((
+                            "Dexterity Sheets".into(),
+                            format!(
+                                "Could not bring \"{}\" up to date: {e}. Your window keeps what it shows; close and open it again from File › Shared to retry.",
+                                sd.book.name
+                            ),
+                        ));
+                    }
                 }
                 return;
             }
@@ -455,7 +514,7 @@ fn message(app: &mut SheetApp, m: ServerMsg) {
             let mut outgoing = None;
             match sd.ordered(doc, seq, &user, time, cseq, &patch) {
                 Ok(fx) => outgoing = fx.outgoing,
-                Err(e) => sd.rejected(&e.to_string()),
+                Err(e) => sd.rejected(None, &e.to_string()),
             }
             if let Some((cseq, patch)) = outgoing {
                 let base = app.collab.docs.iter().find(|d| d.book.id == book).and_then(|d| d.base_of(cseq));
@@ -466,11 +525,13 @@ fn message(app: &mut SheetApp, m: ServerMsg) {
                 app.collab.history.asked = None;
             }
         }
-        ServerMsg::Rejected { book, reason, .. } => {
+        ServerMsg::Rejected { book, cseq, reason } => {
+            // The refused edit is dropped for good: sending it again after the reload would
+            // only be refused again, for ever.
             if let Some(sd) = app.collab.docs.iter_mut().find(|d| d.book.id == book) {
-                sd.rejected(&reason);
+                sd.rejected(Some(cseq), &reason);
             }
-            app.toast = Some((format!("The server refused an edit ({reason}); reloading the workbook."), crate::now_ms()));
+            app.toast = Some((format!("The server refused an edit ({reason}); it was taken back and the workbook reloaded."), crate::now_ms()));
         }
         ServerMsg::PeerMoved { book, peer } => {
             if let Some(sd) = app.collab.docs.iter_mut().find(|d| d.book.id == book) {
@@ -565,8 +626,24 @@ fn message(app: &mut SheetApp, m: ServerMsg) {
         ServerMsg::Templates { templates } => crate::dex_ui::templates::on_list(app, templates),
         ServerMsg::Rules { book, rules } => crate::dex_ui::automation::on_rules(app, book, rules),
         ServerMsg::Template { info, xlsx, sha256 } => crate::dex_ui::templates::on_template(app, info, &xlsx, &sha256),
-        ServerMsg::Ok { what } => app.toast = Some((what, crate::now_ms())),
-        ServerMsg::Error { message } => app.message = Some(("Dexterity Sheets".into(), message)),
+        ServerMsg::Ok { what } => {
+            if what == "Password changed."
+                && let Some(p) = app.collab.new_password_sent.take()
+                && let Some(c) = app.collab.client.as_mut()
+            {
+                c.config.password = p;
+            }
+            app.toast = Some((what, crate::now_ms()));
+        }
+        ServerMsg::Error { message, book } => {
+            // A refused open or share: the window stops waiting ("Opening…", "Sharing ·
+            // uploading…") for a workbook that is not coming.
+            if let Some(b) = &book {
+                app.collab.opening.retain(|id| id != b);
+                app.collab.joining.retain(|j| j.name != *b);
+            }
+            app.message = Some(("Dexterity Sheets".into(), message));
+        }
         ServerMsg::Challenge { .. } | ServerMsg::Welcome { .. } | ServerMsg::Pong => {}
     }
 }
@@ -713,9 +790,19 @@ pub fn run_command(app: &mut SheetApp, id: &str, p: &Json) -> Option<Result<Json
         "file.save" if active_shared(app).is_some() && p.get("path").is_none() => {
             let book = active_shared(app).map(|s| s.book.id.clone()).unwrap_or_default();
             let who = app.collab.me.as_ref().map(|m| m.display.clone()).unwrap_or_default();
-            app.collab.send(ClientMsg::SaveVersion { book: book.clone(), label: format!("Saved by {who}") });
+            let kept = app.collab.try_send(ClientMsg::SaveVersion { book: book.clone(), label: format!("Saved by {who}") });
+            app.collab.dropped = None;
             let wb = app.session.active().map(|d| d.wb.clone());
-            let mut note = "Every change is saved on the server as you work. A version was kept as well.".to_string();
+            let pending = active_shared(app).map_or(0, SharedDoc::pending_len);
+            // The truth about where the edits are: while offline nothing reached the server, and
+            // no version was kept.
+            let mut note = if kept {
+                "Every change is saved on the server as you work. A version was kept as well.".to_string()
+            } else {
+                format!(
+                    "Not connected to the office server: {pending} edit(s) are not on the server yet and no version was kept. They are sent when the connection is back."
+                )
+            };
             if let Some(l) = app.collab.links.iter_mut().find(|l| l.book == book)
                 && let Some(wb) = wb
             {
@@ -723,7 +810,11 @@ pub fn run_command(app: &mut SheetApp, id: &str, p: &Json) -> Option<Result<Json
                 l.flush();
                 note = match &l.error {
                     Some(e) => e.clone(),
-                    None => format!("Saved to {} and kept a version on the server.", l.path),
+                    None if kept => format!("Saved to {} and kept a version on the server.", l.path),
+                    None => format!(
+                        "Saved to {}. Not connected to the office server: {pending} edit(s) are not there yet, and no version was kept.",
+                        l.path
+                    ),
                 };
             }
             app.toast = Some((note, crate::now_ms()));
@@ -1280,7 +1371,7 @@ pub fn share_menu(app: &mut SheetApp, ui: &mut Ui) {
             .on_hover_text("Scheduled checks and reports, and what happens when a status changes, run by the office server")
             .clicked()
     {
-        app.run_or_alert("automate.rules", json!({}));
+        app.run_or_alert("automate.rules", json!({"show": true}));
     }
     if linked && ui.button("Stop sharing (keep my file)").clicked() {
         app.run_or_alert("collab.stopSharing", json!({}));
@@ -1547,15 +1638,32 @@ fn books_list(app: &mut SheetApp, ui: &mut Ui, t: &Tokens, me: &UserInfo, close:
     ui.add_space(22.0);
     ui.collapsing("Change my password", |ui| {
         ui.horizontal(|ui| {
+            ui.add(egui::TextEdit::singleline(&mut app.collab.old_password).password(true).hint_text("current password").desired_width(180.0));
             ui.add(
                 egui::TextEdit::singleline(&mut app.collab.new_password)
                     .password(true)
                     .hint_text("new password (6+ characters)")
                     .desired_width(220.0),
             );
-            if ui.button("Change").clicked() && app.collab.new_password.chars().count() >= 6 {
+            let ready = !app.collab.old_password.is_empty() && app.collab.new_password.chars().count() >= 6;
+            if ui
+                .add_enabled(ready, egui::Button::new("Change"))
+                .on_disabled_hover_text("Type your current password and a new one of 6+ characters.")
+                .clicked()
+            {
+                let old = std::mem::take(&mut app.collab.old_password);
                 let p = std::mem::take(&mut app.collab.new_password);
-                app.collab.send(ClientMsg::ChangePassword { old_proof: String::new(), new_password: p });
+                // The current password is proved over this connection's login challenge, as
+                // at sign-in: it never crosses the network itself.
+                match app.collab.client.as_ref().and_then(|c| c.proof(&old)) {
+                    Some(old_proof) => {
+                        if app.collab.try_send(ClientMsg::ChangePassword { old_proof, new_password: p.clone() }) {
+                            app.collab.new_password_sent = Some(p);
+                            app.toast = Some(("Changing the password…".into(), crate::now_ms()));
+                        }
+                    }
+                    None => app.collab.error = Some("Not connected to the office server: the password was not changed.".into()),
+                }
             }
         });
     });
@@ -1798,14 +1906,22 @@ pub fn versions_pane(app: &mut SheetApp, ui: &mut Ui) {
     };
     let (book, name) = (sd.book.id.clone(), sd.book.name.clone());
     let can_edit = !sd.read_only;
+    // Keeping and restoring versions are requests to the server: not while it cannot be reached.
+    let online = app.collab.client.as_ref().is_some_and(Client::online);
+    let offline_hint = "Not connected to the office server right now.";
     ui.label(
         RichText::new("The server keeps a version every hour while people edit, whenever someone presses Save, and before any restore.")
             .color(t.text_dim)
             .small(),
     );
+    if !online {
+        ui.label(
+            RichText::new("Not connected to the office server: versions can be kept and restored once you are back online.").color(t.danger).small(),
+        );
+    }
     ui.horizontal(|ui| {
         ui.add(egui::TextEdit::singleline(&mut app.collab.version_label).hint_text("label, e.g. Issued for review Rev B").desired_width(180.0));
-        if ui.button("Keep version").clicked() {
+        if ui.add_enabled(online, egui::Button::new("Keep version")).on_disabled_hover_text(offline_hint).clicked() {
             let label = std::mem::take(&mut app.collab.version_label);
             app.collab.send(ClientMsg::SaveVersion { book: book.clone(), label });
         }
@@ -1829,14 +1945,14 @@ pub fn versions_pane(app: &mut SheetApp, ui: &mut Ui) {
             if can_edit {
                 if app.collab.confirm_restore.as_deref() == Some(v.id.as_str()) {
                     ui.label(RichText::new("Replace the workbook for everyone?").color(t.danger));
-                    if ui.small_button("Restore").clicked() {
+                    if ui.add_enabled(online, egui::Button::new("Restore").small()).on_disabled_hover_text(offline_hint).clicked() {
                         app.collab.send(ClientMsg::RestoreVersion { book: book.clone(), version: v.id.clone() });
                         app.collab.confirm_restore = None;
                     }
                     if ui.small_button("Cancel").clicked() {
                         app.collab.confirm_restore = None;
                     }
-                } else if ui.small_button("Restore…").clicked() {
+                } else if ui.add_enabled(online, egui::Button::new("Restore…").small()).on_disabled_hover_text(offline_hint).clicked() {
                     app.collab.confirm_restore = Some(v.id.clone());
                 }
             }

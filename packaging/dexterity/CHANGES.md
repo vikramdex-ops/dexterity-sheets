@@ -17,6 +17,17 @@ automatically and don't go here.
 - The administrator's update policy **Never offer** now works as described: a newer version is shown only when a person checks for updates.
 - The office server fetches new versions from the official GitHub releases from the start; the Server Manager's App updates page shows that, and **Turn off** really turns it off. (Before, nothing was fetched until IT typed the repository.)
 - The release notes and What's New are never empty after an automatic upstream sync: a release with no change of Dexterity's own says so and points at GridCraft's list.
+- The office server keeps the release before the newest one too, so **Roll Back** always has a version to go to; a version's status (known issue, deprecated, blocked) reaches the people running it even when its installer is no longer on the server.
+- Fixed: an edit the server refused was sent again after every reload, so the shared workbook reloaded for ever; it is now taken back once, and the reload also picks up your current access (view-only or edit). A reload that failed asked the server again every frame; it is now said once and you can reopen the workbook from File › Shared.
+- Fixed: "Others changed a shared spreadsheet while you were away" now also appears when you quit the app with the workbook still open, not only after closing its tab first.
+- Fixed: a refused open left "Opening…" for ever, and a refused share left "Sharing · uploading…" in the status bar.
+- Fixed: Keep version, Restore, sharing changes, Delete and Change password sent while reconnecting were silently lost. They are now refused with a message; Ctrl+S says honestly that no version was kept while offline, and the Versions buttons wait until you are back online.
+- **Change my password** now asks for your current password. An account the administrator disables is disconnected within half a minute. Signing out no longer leaves you listed as "open now by" on the server. Links copied from the Share dialog name the server you are actually signed in to.
+- **Recover Unsaved Work**: **Compare** now opens the Compare window; a recovered copy is kept until this session has made its own copy (or the workbook is saved), and a recovery folder whose lock cannot be read is left alone instead of deleted.
+- **Compare Files** has **Browse…** buttons for the earlier and later files.
+- **Templates**: saving a personal template over an existing name asks for a new name (or to replace it); creating from an office template shows progress and says when the server does not answer within 20 seconds.
+- **Automation rules**: a rule cannot be added with a missing column, an invalid time (HH:MM) or no step; the window says what to fix.
+- For scripts and the control channel: `file.newFromTemplate`, `automate.rules`, `review.compareFiles`, `file.recoverUnsaved` and the Help commands return their data when called with no parameters and open their window only with `show: true`.
 
 ## 1.3.0 · 29 October 2026
 

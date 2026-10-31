@@ -507,7 +507,10 @@ fn a_damaged_upload_is_refused() {
         sha256: Some(crate::proto::sha256_hex(b"something else")),
     });
     match recv(&a, |e| matches!(e, crate::client::Event::Message(ServerMsg::Error { .. } | ServerMsg::Opened { .. }))) {
-        crate::client::Event::Message(ServerMsg::Error { message }) => assert!(message.contains("damaged"), "{message}"),
+        crate::client::Event::Message(ServerMsg::Error { message, book }) => {
+            assert!(message.contains("damaged"), "{message}");
+            assert_eq!(book.as_deref(), Some("Damaged"), "the refusal names the workbook being shared, so the window stops waiting");
+        }
         _ => panic!("a damaged upload must not become a shared workbook"),
     }
     assert!(!lab.dir.join("books").read_dir().is_ok_and(|mut d| d.next().is_some()), "nothing was stored");
@@ -692,10 +695,18 @@ fn books(c: &Client) -> Vec<BookInfo> {
     }
 }
 
-fn error_or_opened(c: &Client) -> Result<(), String> {
+/// `Err((message, book))` when the server refused; the refusal names the workbook asked for.
+fn error_or_opened(c: &Client) -> Result<(), (String, Option<String>)> {
     match recv(c, |e| matches!(e, crate::client::Event::Message(ServerMsg::Error { .. } | ServerMsg::Opened { .. }))) {
-        crate::client::Event::Message(ServerMsg::Error { message }) => Err(message),
+        crate::client::Event::Message(ServerMsg::Error { message, book }) => Err((message, book)),
         _ => Ok(()),
+    }
+}
+
+fn error(c: &Client) -> (String, Option<String>) {
+    match recv(c, |e| matches!(e, crate::client::Event::Message(ServerMsg::Error { .. }))) {
+        crate::client::Event::Message(ServerMsg::Error { message, book }) => (message, book),
+        _ => unreachable!(),
     }
 }
 
@@ -719,8 +730,12 @@ fn specific_people_see_and_edit_only_what_they_are_given() {
     assert_eq!((n.kind.as_str(), n.book.as_str(), n.by.as_str(), n.permission.as_str()), ("shared", id.as_str(), "User A", "viewer"));
     assert!(books(&c).iter().all(|x| x.id != id), "not in C's list");
     c.send(ClientMsg::OpenBook { book: id.clone() });
-    let e = error_or_opened(&c).expect_err("C may not open it");
+    let (e, about) = error_or_opened(&c).expect_err("C may not open it");
     assert!(e.contains("ask User A"), "{e}");
+    assert_eq!(about.as_deref(), Some(id.as_str()), "the refusal names the workbook, so \"Opening…\" ends");
+    // Nor show where C is in it: presence needs access too.
+    c.send(ClientMsg::Presence { book: id.clone(), sheet: "Sheet1".into(), range: "A1".into(), editing: false });
+    assert_eq!(error(&c).1.as_deref(), Some(id.as_str()));
     // B opens it as a viewer: content yes, edits no.
     let bl = books(&b);
     assert_eq!(bl.iter().find(|x| x.id == id).map(|x| x.permission.as_str()), Some("viewer"));
@@ -764,12 +779,16 @@ fn an_expired_link_opens_for_nobody_but_the_owner_and_changes_are_summarised_at_
     share(&a, "Register", &rich_workbook());
     let mut ra = Replica::opened(&a);
     let id = ra.sd.book.id.clone();
-    // B opens and closes it (the server remembers where B left it).
+    // B opens it and quits the app with it open: no CloseBook, the connection just ends. The
+    // server still remembers where B left it.
     b.send(ClientMsg::OpenBook { book: id.clone() });
     let _ = Replica::opened(&b);
-    b.send(ClientMsg::CloseBook { book: id.clone() });
-    std::thread::sleep(Duration::from_millis(200));
     drop(b);
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    while books(&a).iter().any(|x| x.id == id && x.open_by.iter().any(|w| w == "User B")) {
+        assert!(std::time::Instant::now() < deadline, "the server never noticed B's connection ending");
+        std::thread::sleep(Duration::from_millis(100));
+    }
     // A edits while B is away: B hears one summary at the next sign-in, not one per edit.
     for i in 0..5 {
         a.send(ra.edit("cell.set", json!({"sheet": "Sheet1", "cell": format!("H{}", i + 1), "input": "x"})));
@@ -1037,4 +1056,133 @@ fn a_change_rule_stamps_the_row_and_tells_people_and_a_schedule_rule_writes_a_re
         .collect::<Vec<_>>()
         .join("|");
     assert!(all.contains("row 2") && all.contains("Overdue"), "{all}");
+}
+
+// ---------------------------------------------------------------------------------------------
+// Reload loops, refused requests, passwords and disabled accounts.
+
+/// A refused edit is dropped for good (sending it again after the reload would be refused again,
+/// reloading for ever), the reload refreshes what the person may do, and a reload that fails is
+/// over too (never asked for again every frame).
+#[test]
+fn a_rejected_edit_is_dropped_and_a_reload_ends_whether_it_works_or_not() {
+    let base = gridcraft_engine::io::save_bytes(&Workbook::new(), "x.xlsx").expect("xlsx");
+    let (mut sd, doc) = SharedDoc::open(book(), 0, &base, &[], vec![], vec![], false).expect("open");
+    let mut s = Session::new();
+    s.add_document(doc);
+    s.execute("cell.set", json!({"cell": "A1", "input": "not allowed"})).expect("set");
+    let (cseq, _) = sd.local_changes(s.active_mut().expect("doc")).expect("diff").expect("an edit");
+    assert_eq!(sd.pending_len(), 1);
+
+    sd.rejected(Some(cseq), "view-only account");
+    assert!(!sd.has_pending(), "the server's decision is final: the edit is not kept to be sent again");
+    assert!(sd.base_of(cseq).is_none());
+    assert!(sd.needs_reload.is_some());
+
+    // The reload: the server's state comes back with the person now a viewer.
+    let mut viewer = book();
+    viewer.permission = "viewer".into();
+    let resend = sd.resync(s.active_mut().expect("doc"), 0, &base, &[], viewer, &[], true).expect("resync");
+    assert!(resend.is_empty(), "nothing to send again");
+    assert!(sd.read_only, "the permission the server sent now applies");
+    assert!(sd.needs_reload.is_none());
+    let at = gridcraft_engine::core::CellRef::new(0, 0);
+    assert!(wb(&s).sheet(0).and_then(|sh| sh.cell(at)).is_none(), "the refused edit is gone from what the person sees");
+
+    // A reload that fails (the server sent something that is not a workbook) is said once: the
+    // replica is left as it was and no further reload is pending.
+    sd.needs_reload = Some("missed edits".into());
+    assert!(sd.resync(s.active_mut().expect("doc"), 0, b"not a workbook", &[], book(), &[], false).is_err());
+    assert!(sd.needs_reload.is_none(), "an endless OpenBook storm otherwise");
+    assert!(!sd.read_only);
+}
+
+/// Changing the password needs the current one; afterwards the new one signs in.
+#[test]
+fn changing_the_password_needs_the_current_one() {
+    let lab = Lab::new("password");
+    let a = lab.connect("usera", "pass-a-111");
+    let wrong = a.proof("not-my-password").expect("logged in");
+    a.send(ClientMsg::ChangePassword { old_proof: wrong, new_password: "pass-a-999".into() });
+    let (e, _) = error(&a);
+    assert!(e.contains("current password"), "{e}");
+    // The password did not change: a fresh sign-in with the old one still works.
+    drop(lab.connect("usera", "pass-a-111"));
+    // An empty proof (what older apps sent) is refused too.
+    a.send(ClientMsg::ChangePassword { old_proof: String::new(), new_password: "pass-a-999".into() });
+    assert!(error(&a).0.contains("current password"));
+
+    let right = a.proof("pass-a-111").expect("logged in");
+    a.send(ClientMsg::ChangePassword { old_proof: right, new_password: "pass-a-999".into() });
+    assert!(matches!(
+        recv(&a, |e| matches!(e, crate::client::Event::Message(ServerMsg::Ok { .. } | ServerMsg::Error { .. }))),
+        crate::client::Event::Message(ServerMsg::Ok { .. })
+    ));
+    let cfg = |p: &str| crate::client::Config {
+        server: format!("127.0.0.1:{}", lab.port),
+        user: "usera".into(),
+        password: p.into(),
+        app: "test".into(),
+        machine: "test".into(),
+    };
+    let old = Client::connect(cfg("pass-a-111"), Arc::new(|| {}));
+    assert!(matches!(recv(&old, |_| true), crate::client::Event::Failed(_)), "the old password no longer signs in");
+    let new = Client::connect(cfg("pass-a-999"), Arc::new(|| {}));
+    assert!(matches!(recv(&new, |_| true), crate::client::Event::Connected { .. }));
+}
+
+/// An account the administrator disables is cut off at once, with its open workbook recorded
+/// as seen, and cannot sign in again.
+#[test]
+fn a_disabled_account_is_disconnected_at_once() {
+    let lab = Lab::new("disabled");
+    let a = lab.connect("usera", "pass-a-111");
+    let b = lab.connect("userb", "pass-b-222");
+    share(&a, "Register", &rich_workbook());
+    let ra = Replica::opened(&a);
+    let id = ra.sd.book.id.clone();
+    b.send(ClientMsg::OpenBook { book: id.clone() });
+    let _ = Replica::opened(&b);
+    // The administrator's tool edits users.json; the server's housekeeping picks it up.
+    let mut users = crate::server::load_users(&lab.dir).expect("users");
+    for u in users.iter_mut().filter(|u| u.user == "userb") {
+        u.disabled = true;
+    }
+    crate::server::save_users(&lab.dir, &users).expect("save");
+    lab._server.unload_idle();
+    let why = match recv(&b, |e| matches!(e, crate::client::Event::Message(ServerMsg::Error { .. }))) {
+        crate::client::Event::Message(ServerMsg::Error { message, .. }) => message,
+        _ => unreachable!(),
+    };
+    assert!(why.contains("disabled"), "{why}");
+    assert!(matches!(recv(&b, |e| matches!(e, crate::client::Event::Disconnected(_))), crate::client::Event::Disconnected(_)));
+    // The reconnect is refused: the client gives up.
+    assert!(matches!(recv(&b, |e| matches!(e, crate::client::Event::Failed(_))), crate::client::Event::Failed(_)));
+    // Everyone else sees B gone from the workbook.
+    assert!(books(&a).iter().any(|x| x.id == id && !x.open_by.iter().any(|w| w == "User B")));
+    // A fresh sign-in is refused too.
+    let cfg = crate::client::Config {
+        server: format!("127.0.0.1:{}", lab.port),
+        user: "userb".into(),
+        password: "pass-b-222".into(),
+        app: "test".into(),
+        machine: "test".into(),
+    };
+    let again = Client::connect(cfg, Arc::new(|| {}));
+    assert!(matches!(recv(&again, |_| true), crate::client::Event::Failed(_)));
+}
+
+/// A workbook id whose random tail is taken is drawn again, never reused.
+#[test]
+fn a_taken_workbook_id_is_drawn_again() {
+    let seen = std::cell::RefCell::new(Vec::<String>::new());
+    let id = crate::server::slug("Line list", |candidate| {
+        let mut s = seen.borrow_mut();
+        s.push(candidate.to_string());
+        s.len() <= 3
+    });
+    let seen = seen.into_inner();
+    assert_eq!(seen.len(), 4, "three taken candidates, then a free one: {seen:?}");
+    assert!(id.starts_with("line-list-") && !seen[..3].contains(&id), "{id} {seen:?}");
+    assert!(crate::server::slug("", |_| false).starts_with("book-"));
 }

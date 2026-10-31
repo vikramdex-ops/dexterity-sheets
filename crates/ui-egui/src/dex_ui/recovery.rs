@@ -66,6 +66,10 @@ pub struct Recovery {
     /// Doc uid → the workbook as last copied, and when.
     written: HashMap<u64, (Arc<Workbook>, f64)>,
     writing: Option<std::sync::mpsc::Receiver<Written>>,
+    /// Copies recovered into open workbooks (doc uid → the copy), kept until this run's first
+    /// copy of that workbook lands or the workbook is saved: until then the copy is the only
+    /// place the unsaved work exists.
+    pending: HashMap<u64, Found>,
     pub found: Vec<Found>,
     pub show: bool,
     pub error: Option<String>,
@@ -115,7 +119,10 @@ impl Recovery {
     }
 
     /// Workbook copies of runs that ended without cleaning up. Empty folders of such runs are
-    /// removed; folders of runs still going (their lock is held) are left alone.
+    /// removed; folders of runs still going (their lock is held) are left alone, and so is any
+    /// folder whose lock cannot be examined (a permissions or disk problem is no reason to
+    /// delete somebody's unsaved work). Copies already recovered into an open workbook
+    /// (`pending`) are not offered again.
     pub fn scan(&mut self) -> Vec<Found> {
         let mut out = Vec::new();
         let Some(base) = self.base() else { return out };
@@ -126,10 +133,17 @@ impl Recovery {
             if Some(&dir) == mine.as_ref() || !e.file_name().to_string_lossy().starts_with("run-") {
                 continue;
             }
-            let Ok(lock) = std::fs::OpenOptions::new().write(true).open(dir.join("run.lock")) else {
-                // No lock file: an unfinished folder of a run that died at once.
-                let _ = std::fs::remove_dir_all(&dir);
-                continue;
+            let lock = match std::fs::OpenOptions::new().write(true).open(dir.join("run.lock")) {
+                Ok(l) => l,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                    // No lock file: an unfinished folder of a run that died at once.
+                    let _ = std::fs::remove_dir_all(&dir);
+                    continue;
+                }
+                Err(e) => {
+                    log::warn!("recovery: {} left alone: {e}", dir.display());
+                    continue;
+                }
             };
             if lock.try_lock().is_err() {
                 continue; // another window of the app, running
@@ -141,19 +155,42 @@ impl Recovery {
             }
             out.append(&mut items);
         }
+        out.retain(|f| !self.pending.values().any(|p| p.file == f.file));
         out.sort_by_key(|f| std::cmp::Reverse(f.meta.saved_at));
         out
+    }
+
+    /// A copy was recovered into the open workbook `uid`: it is kept until this run has its own
+    /// copy of that workbook (or it is saved), and is not offered again meanwhile.
+    pub fn keep_until_copied(&mut self, uid: u64, f: Found) {
+        self.pending.insert(uid, f);
+    }
+
+    /// This run's copy of `uid` landed (or the workbook was saved or closed): the copy it was
+    /// recovered from has done its work.
+    fn settled(&mut self, uid: u64) {
+        if let Some(f) = self.pending.remove(&uid) {
+            discard(&f);
+        }
+    }
+
+    /// Copies still kept from an earlier run for open workbooks (tests).
+    pub fn pending_files(&self) -> Vec<PathBuf> {
+        self.pending.values().map(|f| f.file.clone()).collect()
     }
 
     /// Copies a workbook (synchronously): `<uid>.xlsx` plus `<uid>.json`, each written to a
     /// temporary name first so a copy is never half written.
     pub fn write_copy(&mut self, uid: u64, wb: &Workbook, meta: &ItemMeta) -> Result<(), String> {
         let dir = self.run_dir()?;
-        write_item(&dir, uid, wb, meta)
+        write_item(&dir, uid, wb, meta)?;
+        self.settled(uid);
+        Ok(())
     }
 
     /// Removes a workbook's copy (saved, or closed).
     pub fn forget(&mut self, uid: u64) {
+        self.settled(uid);
         self.written.remove(&uid);
         if let Some(r) = &self.run {
             let _ = std::fs::remove_file(r.dir.join(format!("{uid}.xlsx")));
@@ -248,6 +285,7 @@ pub fn tick(app: &mut SheetApp) {
             Ok(()) => {
                 app.collab.recovery.written.insert(uid, (wb, crate::clock::monotonic_ms()));
                 app.collab.recovery.error = None;
+                app.collab.recovery.settled(uid);
             }
             Err(e) => {
                 log::error!("recovery copy: {e}");
@@ -338,16 +376,18 @@ fn when(ms: i64) -> String {
     }
 }
 
-/// Opens a copy as a new workbook with unsaved changes (Save asks where to keep it), and
-/// removes the copy: from now on this run protects it.
+/// Opens a copy as a new workbook with unsaved changes (Save asks where to keep it). The copy
+/// stays until this run's own copy of the workbook lands (or it is saved): a crash in between
+/// would otherwise lose it.
 fn recover(app: &mut SheetApp, f: &Found) -> Result<(), String> {
     let bytes = std::fs::read(&f.file).map_err(|e| format!("{}: {e}", f.file.display()))?;
     let (wb, _) = gridcraft_engine::io::open_bytes("recovered.xlsx", &bytes).map_err(|e| e.to_string())?;
     let stem = f.meta.title.trim_end_matches(".xlsx").to_string();
     let mut doc = gridcraft_engine::DocState::new(wb, None, format!("{stem} (Recovered)"), gridcraft_engine::Trust::FromFile);
     doc.saved = Arc::new(Workbook::new());
+    let uid = doc.uid;
     app.session.add_document(doc);
-    discard(f);
+    app.collab.recovery.keep_until_copied(uid, f.clone());
     Ok(())
 }
 
@@ -391,11 +431,9 @@ pub fn run_command(app: &mut SheetApp, p: &Json) -> Result<Json, String> {
         }
         "compare" => {
             let path = f.meta.path.clone().filter(|p| Path::new(p).is_file()).ok_or("this workbook has no saved file to compare with")?;
-            let r = app.session.run(
-                "review.compareFiles",
-                json!({"old": path, "new": f.file.to_string_lossy(), "oldLabel": "Last saved", "newLabel": "Recovered"}),
-            )?;
-            return Ok(r);
+            // Through the tools window, so the Compare result opens on screen (`tools.shown`).
+            let p = json!({"old": path, "new": f.file.to_string_lossy(), "oldLabel": "Last saved", "newLabel": "Recovered"});
+            return crate::dex_ui::tools::run_command(app, "review.compareFiles", &p).unwrap_or(Err("Compare Files is not available".into()));
         }
         "discard" => {
             discard(&f);
@@ -524,6 +562,63 @@ mod tests {
         live.clean_exit(&[]);
         discard(&found[0]);
         assert!(next.scan().is_empty());
+        let _ = std::fs::remove_dir_all(&b);
+    }
+
+    #[test]
+    fn a_folder_whose_lock_cannot_be_opened_is_left_alone() {
+        let b = base("lock-error");
+        // A crashed run whose lock is there but cannot be opened for writing (here: it is a
+        // directory, so opening it as a file fails with something other than NotFound).
+        let dir = b.join("run-1-1");
+        std::fs::create_dir_all(dir.join("run.lock")).unwrap();
+        let meta = ItemMeta { title: "Kept.xlsx".into(), ..ItemMeta::default() };
+        write_item(&dir, 4, &book("must survive"), &meta).unwrap();
+        // A folder with no lock at all is an unfinished one and goes.
+        let unfinished = b.join("run-2-2");
+        std::fs::create_dir_all(&unfinished).unwrap();
+
+        let found = Recovery::with_base(b.clone()).scan();
+        assert!(found.is_empty(), "{found:?}: a copy behind an unreadable lock is neither offered nor deleted");
+        assert!(dir.join("4.xlsx").is_file() && dir.join("4.json").is_file(), "the copy is left where it was");
+        assert!(!unfinished.exists(), "the folder without a lock is removed");
+        let _ = std::fs::remove_dir_all(&b);
+    }
+
+    #[test]
+    fn a_recovered_copy_stays_until_this_run_has_its_own() {
+        let b = base("pending");
+        let mut crashed = Recovery::with_base(b.clone());
+        let meta = ItemMeta { title: "Tracker.xlsx".into(), ..ItemMeta::default() };
+        crashed.write_copy(7, &book("unsaved"), &meta).unwrap();
+        drop(crashed.run.take());
+
+        let mut next = Recovery::with_base(b.clone());
+        let found = next.scan();
+        assert_eq!(found.len(), 1);
+        let f = found[0].clone();
+        next.keep_until_copied(42, f.clone());
+        assert!(f.file.is_file(), "recovering does not delete the copy");
+        assert!(next.scan().is_empty(), "a copy already recovered is not offered again");
+        assert_eq!(next.pending_files(), vec![f.file.clone()]);
+        // This run's first copy of the recovered workbook lands: the old copy has done its work.
+        next.write_copy(42, &book("unsaved"), &meta).unwrap();
+        assert!(!f.file.is_file() && !f.run.exists(), "the old copy and its empty run folder go");
+        assert!(next.pending_files().is_empty());
+        let _ = std::fs::remove_dir_all(&b);
+    }
+
+    #[test]
+    fn saving_or_closing_a_recovered_workbook_releases_its_copy() {
+        let b = base("forget");
+        let mut crashed = Recovery::with_base(b.clone());
+        crashed.write_copy(1, &book("x"), &ItemMeta::default()).unwrap();
+        drop(crashed.run.take());
+        let mut next = Recovery::with_base(b.clone());
+        let f = next.scan().into_iter().next().unwrap();
+        next.keep_until_copied(9, f.clone());
+        next.forget(9);
+        assert!(!f.file.is_file());
         let _ = std::fs::remove_dir_all(&b);
     }
 

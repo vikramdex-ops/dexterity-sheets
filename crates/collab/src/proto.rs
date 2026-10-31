@@ -634,6 +634,10 @@ pub enum ServerMsg {
     },
     Error {
         message: String,
+        /// The shared workbook the refused request concerned, when the server knows it: its id,
+        /// or for `CreateBook` the name asked for. Absent from servers older than this field.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        book: Option<String>,
     },
     Pong,
 }

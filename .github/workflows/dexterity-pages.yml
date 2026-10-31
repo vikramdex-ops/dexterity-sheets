@@ -30,6 +30,8 @@ jobs:
         with:
           ref: main
       - name: Assemble the site
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           mkdir -p _site/images _site/readme
           cp -r site/. _site/
@@ -39,7 +41,10 @@ jobs:
           cp assets/app-icon/dexterity-sheets-1024.png _site/icon-1024.png
           version=$(tr -d '[:space:]' < packaging/dexterity/VERSION)
           gridcraft=$(sed -n '/^\[workspace\.package\]/,/^\[/{s/^version = "\(.*\)"/\1/p}' Cargo.toml | head -1)
-          date=$(date -u +"%-d %B %Y")
+          # The release's own date (the page is also redeployed on docs changes); today's when the
+          # version has no published release yet.
+          published=$(gh release view "v$version" --json publishedAt --jq .publishedAt 2>/dev/null || true)
+          date=$(date -u -d "${published:-now}" +"%-d %B %Y")
           sed -i -e "s/{{VERSION}}/$version/g" -e "s/{{GRIDCRAFT}}/$gridcraft/g" -e "s/{{DATE}}/$date/g" _site/*.html
           # What's new: this version's items from CHANGES.md, the same list as the README's.
           python packaging/dexterity/site_whatsnew.py _site/index.html "$version"

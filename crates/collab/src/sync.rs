@@ -210,14 +210,25 @@ impl SharedDoc {
         Ok(RemoteEffect { cells: remote.cells.len(), user: user.to_string(), outgoing })
     }
 
-    /// The server could not order one of our patches: the replica must be reloaded.
-    pub fn rejected(&mut self, reason: &str) {
+    /// The server could not order one of our patches: the replica must be reloaded. `cseq` is
+    /// the refused patch; the server's decision is final, so it is dropped here rather than sent
+    /// again after every reload (which would reload for ever).
+    pub fn rejected(&mut self, cseq: Option<u64>, reason: &str) {
+        if let Some(c) = cseq {
+            self.pending.retain(|(pc, _)| *pc != c);
+            self.bases.remove(&c);
+        }
         self.needs_reload = Some(reason.to_string());
     }
 
     /// After a reconnect: the server's current state replaces `confirmed`, and our edits it never
     /// ordered are applied on top and returned to be sent again. Patches the log shows as
-    /// already ordered (`origin`) are dropped.
+    /// already ordered (`origin`) are dropped. `read_only`: what the person may do now (their
+    /// access may have changed while they were away).
+    ///
+    /// The reload is over either way: on an error the replica is left as it was and the caller
+    /// tells the person once, instead of asking the server again every frame.
+    #[allow(clippy::too_many_arguments)]
     pub fn resync(
         &mut self,
         d: &mut DocState,
@@ -226,7 +237,13 @@ impl SharedDoc {
         log: &[Logged],
         book: BookInfo,
         applied_cseqs: &[u64],
+        read_only: bool,
     ) -> Result<Vec<(u64, WbPatch)>> {
+        self.needs_reload = None;
+        self.read_only = read_only;
+        if !xlsx.starts_with(b"PK") {
+            return Err(Error::Protocol("the server sent something that is not a workbook".into()));
+        }
         let (mut wb, _) = gridcraft_engine::io::open_bytes("shared.xlsx", xlsx)?;
         let mut seq = snapshot_seq;
         for entry in log {
