@@ -62,7 +62,7 @@
 <tr>
 <td width="33%" valign="top"><img src="docs/readme/feature-versions.svg" width="100%" alt="Versions kept every hour and on Save, each one restorable"><p><b>Nothing gets lost.</b> Versions are kept every hour and on every save. Open any of them as a copy, or bring one back for everyone.</p></td>
 <td width="33%" valign="top"><img src="docs/readme/feature-excel.svg" width="100%" alt="An .xlsx file going in and coming out intact"><p><b>Excel in, Excel out.</b> Clients send <code>.xlsx</code>, you send <code>.xlsx</code> back. Formulas, formats, charts and tables survive the trip.</p></td>
-<td width="33%" valign="top"><img src="docs/readme/feature-updates.svg" width="100%" alt="An update arriving and installing itself"><p><b>Always up to date.</b> When there's a new version, the status bar says so. One click and it installs itself and reopens. Trouble with a new version? <b>Help › Roll Back</b>, and tell IT which feature broke.</p></td>
+<td width="33%" valign="top"><img src="docs/readme/feature-updates.svg" width="100%" alt="An update arriving and installing itself"><p><b>Always up to date.</b> When there's a new version, the status bar says so. One click and it installs itself and reopens (unsaved workbooks are asked about first). Trouble with a new version? <b>Automate › Roll Back Version</b>, and tell IT which feature broke.</p></td>
 </tr>
 <tr>
 <td width="33%" valign="top"><p><b>Share with the right people.</b> The whole office or named colleagues, as editors or viewers, until a date you pick. Copy a link into a chat; a Windows notification tells them it was shared.</p></td>
@@ -84,7 +84,7 @@
 <td width="50%" valign="top"><img src="docs/images/versions.png" alt="The Versions pane listing versions kept by the server with labels, authors and edit numbers, each with Open a copy and Restore"><p align="center"><sub><b>Versions.</b> Kept hourly, on Save, on request and before any restore. Open any of them as a copy, or restore it for everyone.</sub></p></td>
 </tr>
 <tr>
-<td width="50%" valign="top"><img src="docs/images/update.png" alt="The Dexterity Sheets updates dialog: a newer version is available with its release notes and an Update now button; the status bar shows Update to 9.9.9"><p align="center"><sub><b>Updates itself.</b> A new release shows up in every running copy; one click downloads it from the office server, checks it and installs it. No admin rights.</sub></p></td>
+<td width="50%" valign="top"><img src="docs/images/update.png" alt="The Dexterity Sheets updates dialog: a newer version is available with its release notes and an Update now button; the status bar shows Update to 9.9.9"><p align="center"><sub><b>Updates itself.</b> A new release shows up in every running copy; one click downloads it from the office server (or, without one, from this repository's releases), checks it and installs it. No admin rights.</sub></p></td>
 <td width="50%" valign="top"><img src="docs/images/sign-in.png" alt="The sign-in page listing the office server found on the network, with server, user name and password fields"><p align="center"><sub><b>Named accounts only.</b> The office server is found on the network automatically. No guests, no anonymous edits.</sub></p></td>
 </tr>
 <tr>
@@ -131,8 +131,9 @@ Dates and numbers follow your Windows settings (dd-mm-yyyy, 12,34,567) like Exce
 <summary><b>Do I need the internet?</b></summary>
 
 No. Everything runs on the office network: your files stay in your folders, and the office
-server passes edits between PCs and keeps the history. Nothing goes to anyone's cloud. Only the
-office server goes online, to fetch new versions.
+server passes edits between PCs and keeps the history. Nothing goes to anyone's cloud. The office
+server goes online to fetch new versions; a PC that has no office server reads this repository's
+releases page itself (only that, checksummed; switch it off in the updates dialog if you prefer).
 </details>
 
 <details>
@@ -196,8 +197,10 @@ the name of the person who made it.
 <summary><b>How do I update?</b></summary>
 
 You don't have to do anything. When a new version is out, the status bar shows
-<b>Update to X.Y.Z</b>: click it and Dexterity Sheets installs the update and reopens. You can also
-use <b>Automate › Check for Updates…</b>
+<b>Update to X.Y.Z</b>: click it and Dexterity Sheets installs the update and reopens (unsaved
+workbooks are asked about first). You can also use <b>Automate › Check for Updates…</b>, which asks
+the office server and this repository's releases page and tells you what each answered. A PC
+with no office server still gets updates this way, a few seconds after it starts and once a day.
 </details>
 
 <details>

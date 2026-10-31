@@ -70,6 +70,7 @@ HOOKS = [
     ("crates/ui-egui/src/{ribbon.rs,ribbon/*.rs}", "crate::dex_ui::tools::auditing_buttons(app, ui)", "Formulas: Diagnostics and Explain Error"),
     ("crates/ui-egui/src/{ribbon.rs,ribbon/*.rs}", "crate::dex_ui::tools::review_buttons(app, ui);", "Review: Compare Files and Quality Check"),
     ("crates/ui-egui/src/backstage.rs", "crate::dex_ui::templates::new_page(app, ui, &mut out.close);", "File › New: office and personal templates"),
+    ("crates/ui-egui/src/{ribbon.rs,ribbon/*.rs}", "crate::dex_ui::releases::help_buttons(app, ui);", "Automate: What's New, Report a Problem, Roll Back, Recover Unsaved Work"),
 ]
 
 # Strings that must not come back into the shipped app's code from upstream.

@@ -622,6 +622,7 @@ impl State {
                 channel: field("channel", "stable"),
                 status: field("status", "ok"),
                 note: field("note", ""),
+                url: String::new(),
             };
             // Two files of one version: keep one.
             if !found.iter().any(|(u, _)| u.version == info.version) {

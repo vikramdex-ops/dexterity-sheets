@@ -42,16 +42,22 @@ permissions:
   pages: write
   id-token: write
 
+# A push the upstream sync made (it fast-forwards main to its tested candidate) is released by the
+# sync's own publish stage; the push trigger is for a person's version bump only.
+concurrency:
+  group: dexterity-release-${{ inputs.ref || github.sha }}
+  cancel-in-progress: false
+
 jobs:
   ci:
-    if: ${{ !inputs.tested && (inputs.stage || 'all') != 'publish' }}
+    if: ${{ !inputs.tested && (inputs.stage || 'all') != 'publish' && !(github.event_name == 'push' && startsWith(github.event.head_commit.message, 'Sync with upstream GridCraft')) }}
     uses: ./.github/workflows/dexterity-ci.yml
     with:
       ref: ${{ inputs.ref || github.sha }}
 
   build:
     needs: ci
-    if: ${{ always() && (needs.ci.result == 'success' || needs.ci.result == 'skipped') && (inputs.stage || 'all') != 'publish' }}
+    if: ${{ always() && (needs.ci.result == 'success' || needs.ci.result == 'skipped') && (inputs.stage || 'all') != 'publish' && !(github.event_name == 'push' && startsWith(github.event.head_commit.message, 'Sync with upstream GridCraft')) }}
     runs-on: windows-latest
     timeout-minutes: 150
     outputs:
@@ -105,9 +111,11 @@ jobs:
         shell: pwsh
         run: |
           Push-Location dist
-          $sums = Get-ChildItem -File | Where-Object Name -ne 'SHA256SUMS' | Sort-Object Name | ForEach-Object { "{0}  {1}" -f (Get-FileHash $_.Name -Algorithm SHA256).Hash.ToLower(), $_.Name }
-          # LF line endings, so `sha256sum -c SHA256SUMS` works as well as Get-FileHash.
+          $sums = Get-ChildItem -File | Where-Object { $_.Name -ne 'SHA256SUMS' -and $_.Name -ne 'SHA256SUMS.txt' } | Sort-Object Name | ForEach-Object { "{0}  {1}" -f (Get-FileHash $_.Name -Algorithm SHA256).Hash.ToLower(), $_.Name }
+          # LF line endings, so `sha256sum -c SHA256SUMS` works as well as Get-FileHash. The same
+          # list as SHA256SUMS.txt too: the app's own update check (craft-update) looks for that name.
           [IO.File]::WriteAllText("$PWD/SHA256SUMS", (($sums -join "`n") + "`n"))
+          Copy-Item SHA256SUMS SHA256SUMS.txt
           Get-Content SHA256SUMS
           Pop-Location
       - name: Release notes
@@ -177,7 +185,7 @@ jobs:
           echo "VERSION=$v" >> "$GITHUB_ENV"
           cd dist
           sha256sum -c SHA256SUMS
-          for f in DexteritySheets-Setup.exe "dexterity-sheets-$v-windows-x64.msi" "dexterity-sheets-$v-windows-x64-portable.zip" DexSheetsServer-Setup.exe "DexSheetsServer-$v-x64.msi" SHA256SUMS; do
+          for f in DexteritySheets-Setup.exe "dexterity-sheets-$v-windows-x64.msi" "dexterity-sheets-$v-windows-x64-portable.zip" DexSheetsServer-Setup.exe "DexSheetsServer-$v-x64.msi" SHA256SUMS SHA256SUMS.txt; do
             test -s "$f" || { echo "::error::missing $f"; exit 1; }
           done
           ls -l

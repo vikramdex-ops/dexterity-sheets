@@ -203,7 +203,7 @@ pub enum ClientMsg {
 }
 
 /// A newer app version the server can hand out.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct UpdateInfo {
     pub version: String,
     /// What changed (Markdown or plain text).
@@ -220,6 +220,10 @@ pub struct UpdateInfo {
     /// The administrator's note for people running this version.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub note: String,
+    /// Where the app downloads the installer itself (a GitHub release asset). Empty: the office
+    /// server sends it (`GetUpdate`).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub url: String,
 }
 
 /// A problem report: what the person ticked and typed in Report a Problem.

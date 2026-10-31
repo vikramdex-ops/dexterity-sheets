@@ -538,20 +538,29 @@ fn message(app: &mut SheetApp, m: ServerMsg) {
         }
         ServerMsg::Update { update, current, older, policy } => {
             let update = update.filter(|u| proto::version_newer(&u.version, gridcraft_collab::APP_VERSION.trim()));
+            // Policy "manual": the administrator wants no prompting; a newer version is shown
+            // only when the person asked (Check for Updates).
+            let asked = std::mem::take(&mut app.collab.releases.asked);
+            let update = if policy == "manual" && !asked { None } else { update };
             crate::dex_ui::releases::on_update(app, update.as_ref(), current, older, policy);
-            if let Some(u) = &update
-                && app.collab.update.as_ref().map(|o| &o.version) != Some(&u.version)
-            {
-                app.toast = Some((
-                    format!("Dexterity Sheets {} is available. Click \"Update\" in the status bar to install it.", u.version),
-                    crate::now_ms(),
-                ));
-                let text = format!("Dexterity Sheets {} is available", u.version);
-                crate::dex_ui::share::local(app, "update", &text);
+            match update {
+                // The server's installer wins over a GitHub release of the same version.
+                Some(u) => offer_update(app, u),
+                // Nothing newer on the server; an offer from GitHub stands.
+                None => {
+                    if app.collab.update.as_ref().is_some_and(|o| o.url.is_empty()) {
+                        app.collab.update = None;
+                    }
+                }
             }
-            app.collab.update = update;
         }
-        ServerMsg::UpdateFile { info, data } => install_update(app, &info, &data),
+        ServerMsg::UpdateFile { info, data } => match proto::unb64(&data) {
+            Ok(bytes) => install_update(app, &info, bytes),
+            Err(e) => {
+                app.collab.update_state = None;
+                app.message = Some(("Dexterity Sheets".into(), format!("The update could not be installed: {e}")));
+            }
+        },
         ServerMsg::Notice { notice } => crate::dex_ui::share::notice(app, notice),
         ServerMsg::Templates { templates } => crate::dex_ui::templates::on_list(app, templates),
         ServerMsg::Rules { book, rules } => crate::dex_ui::automation::on_rules(app, book, rules),
@@ -599,23 +608,24 @@ pub fn run_command(app: &mut SheetApp, id: &str, p: &Json) -> Option<Result<Json
         }
         "collab.share" => share_active(app, p.get("name").and_then(Json::as_str)),
         "collab.stopSharing" => stop_sharing(app),
-        // Help > Check for Updates asks the office server.
+        // Check for Updates asks the office server (when signed in) and the GitHub releases page
+        // (unless turned off); the dialog shows what each said.
         "collab.checkUpdate" | "app.checkForUpdates" | "help.checkForUpdates" => {
-            if !app.collab.signed_in() {
-                app.open_backstage(crate::backstage::Page::Shared);
-                return Some(Err("Updates come from the office server: sign in first (File > Shared).".into()));
+            if app.collab.signed_in() {
+                app.collab.releases.asked = true;
+                app.collab.send(crate::dex_ui::releases::check_msg(app));
+                app.collab.last_update_check = crate::now_ms();
             }
-            app.collab.send(crate::dex_ui::releases::check_msg(app));
-            app.collab.last_update_check = crate::now_ms();
+            crate::updates_ui::start(app, true);
             app.collab.update_dialog = true;
-            Ok(json!({"current": gridcraft_collab::APP_VERSION.trim(), "available": app.collab.update.as_ref().map(|u| u.version.clone())}))
+            Ok(json!({
+                "current": gridcraft_collab::APP_VERSION.trim(),
+                "available": app.collab.update.as_ref().map(|u| u.version.clone()),
+                "sources": {"server": app.collab.signed_in(), "github": app.collab.releases.prefs.github_updates},
+            }))
         }
         "collab.installUpdate" => match app.collab.update.clone() {
-            Some(u) => {
-                app.collab.update_state = Some(format!("Downloading {}...", u.version));
-                app.collab.send(ClientMsg::GetUpdate { version: u.version });
-                Ok(Json::Null)
-            }
+            Some(u) => crate::dex_ui::releases::request_install(app, &u.version).map(|()| Json::Null),
             None => Err("No update is available.".into()),
         },
         // Scriptable sign-in, for tests and the control channel.
@@ -1838,20 +1848,31 @@ pub fn versions_pane(app: &mut SheetApp, ui: &mut Ui) {
 // ---------------------------------------------------------------------------------------------
 // Updates
 
-/// Saves the installer the server sent, checks it, starts it and closes the app; the installer
-/// replaces this version and opens the new one.
+/// A newer version became available (from the office server or GitHub): the status bar shows
+/// "Update to X", and the person is told once per version.
+pub(crate) fn offer_update(app: &mut SheetApp, u: UpdateInfo) {
+    if app.collab.update.as_ref().map(|o| &o.version) != Some(&u.version) {
+        let from = if u.url.is_empty() { "" } else { " on the GitHub releases page" };
+        app.toast =
+            Some((format!("Dexterity Sheets {} is available{from}. Click \"Update\" in the status bar to install it.", u.version), crate::now_ms()));
+        let text = format!("Dexterity Sheets {} is available", u.version);
+        crate::dex_ui::share::local(app, "update", &text);
+    }
+    app.collab.update = Some(u);
+}
+
 /// Dexterity Sheets' MSI UpgradeCode (`packaging/windows/gridcraft.wxs`; never changes).
 const UPGRADE_CODE: &str = "FE2AD491-38E3-4E1B-8441-FDF652AB8443";
 
-fn install_update(app: &mut SheetApp, info: &UpdateInfo, data: &str) {
+/// Checks the installer that arrived (from the office server or GitHub), saves it, and asks the
+/// app to close: every unsaved workbook is asked about first, as on File › Exit, and the installer
+/// starts only once the app really exits (`run_installer`, from `on_exit`). Cancelling the Save
+/// dialog cancels the update; the installer file is thrown away.
+pub(crate) fn install_update(app: &mut SheetApp, info: &UpdateInfo, bytes: Vec<u8>) {
     use sha2::Digest;
     let fail = |app: &mut SheetApp, why: String| {
         app.collab.update_state = None;
         app.message = Some(("Dexterity Sheets".into(), format!("The update could not be installed: {why}")));
-    };
-    let bytes = match proto::unb64(data) {
-        Ok(b) => b,
-        Err(e) => return fail(app, e.to_string()),
     };
     let got = gridcraft_collab::auth::hex(&sha2::Sha256::digest(&bytes));
     if got != info.sha256 {
@@ -1864,6 +1885,20 @@ fn install_update(app: &mut SheetApp, info: &UpdateInfo, data: &str) {
     if let Err(e) = std::fs::write(&path, &bytes) {
         return fail(app, e.to_string());
     }
+    for l in &mut app.collab.links {
+        l.flush();
+    }
+    app.collab.releases.installer = Some((info.clone(), path));
+    app.collab.update_state = Some(format!("Installing {}... the app closes now and reopens when done.", info.version));
+    if let Some(ctx) = app.collab_ctx.clone() {
+        app.request_quit(&ctx);
+    }
+}
+
+/// Starts the saved installer as the app exits (called from `on_exit` through
+/// `dex_ui::recovery::clean_exit`); msiexec replaces the installed version and reopens the app.
+pub(crate) fn run_installer(app: &mut SheetApp) {
+    let Some((info, path)) = app.collab.releases.installer.take() else { return };
     let exe = std::env::current_exe().map(|p| p.display().to_string()).unwrap_or_default();
     // msiexec replaces the installed version; afterwards the app opens again.
     let log = path.with_extension("log");
@@ -1893,18 +1928,18 @@ fn install_update(app: &mut SheetApp, info: &UpdateInfo, data: &str) {
     #[cfg(not(windows))]
     let started: std::io::Result<std::process::Child> =
         Err(std::io::Error::other(format!("automatic install runs on Windows; the installer is at {} ({script})", path.display())));
-    match started {
-        Ok(_) => {
-            for l in &mut app.collab.links {
-                l.flush();
-            }
-            app.collab.update_state = Some(format!("Installing {}... the app closes now and reopens when done.", info.version));
-            if let Some(ctx) = app.collab_ctx.clone() {
-                app.request_quit(&ctx);
-            }
-        }
-        Err(e) => fail(app, format!("{e} (installer saved at {})", path.display())),
+    if let Err(e) = started {
+        log::error!("Dexterity Sheets {}: the installer could not start: {e} (it is at {})", info.version, path.display());
     }
+}
+
+/// The update was not installed after all (the person kept a workbook open): forget the
+/// installer file.
+pub(crate) fn cancel_install(app: &mut SheetApp) {
+    if let Some((_, path)) = app.collab.releases.installer.take() {
+        let _ = std::fs::remove_file(path);
+    }
+    app.collab.update_state = None;
 }
 
 /// The status-bar badge and the update dialog. Drawn whatever workbook is open.
@@ -1944,12 +1979,16 @@ pub fn update_badge(app: &mut SheetApp, ui: &mut Ui, t: &Tokens) {
     }
     let mut open = true;
     let mut install = false;
+    let mut again = false;
+    let mut run: Option<&str> = None;
+    let mut prefs_changed = false;
     egui::Window::new("Dexterity Sheets updates").collapsible(false).resizable(false).open(&mut open).anchor(egui::Align2::CENTER_CENTER, vec2(0.0, 0.0)).show(ui.ctx(), |ui| {
-        ui.set_max_width(420.0);
+        ui.set_max_width(440.0);
         ui.label(format!("You have version {}.", gridcraft_collab::APP_VERSION.trim()));
         match &app.collab.update {
             Some(u) => {
-                ui.label(RichText::new(format!("Version {} is available ({:.1} MB).", u.version, u.size as f64 / 1_048_576.0)).strong());
+                let from = if u.url.is_empty() { "from the office server" } else { "from the GitHub releases page" };
+                ui.label(RichText::new(format!("Version {} is available {from} ({:.1} MB).", u.version, u.size as f64 / 1_048_576.0)).strong());
                 if !u.notes.trim().is_empty() {
                     ui.add_space(6.0);
                     egui::ScrollArea::vertical().max_height(180.0).show(ui, |ui| {
@@ -1965,23 +2004,96 @@ pub fn update_badge(app: &mut SheetApp, ui: &mut Ui, t: &Tokens) {
                         });
                     }
                     None => {
-                        ui.label(RichText::new("Shared workbooks are saved on the server, so nothing is lost. Other unsaved workbooks will ask to be saved first.").color(t.text_dim).small());
+                        ui.label(RichText::new("Shared workbooks are saved on the server, so nothing is lost. Other unsaved workbooks are asked about first, as when you close the app.").color(t.text_dim).small());
                         if ui.button("Update now").clicked() {
                             install = true;
                         }
                     }
                 }
             }
-            None if app.collab.signed_in() => {
-                ui.label("You have the latest version.");
-            }
             None => {
-                ui.label("Sign in to the office server (File > Shared) to check for updates.");
+                // What each source said; never "latest" before an answer came.
+                let server = if app.collab.signed_in() {
+                    if app.collab.releases.answered {
+                        "Office server: nothing newer than this version."
+                    } else {
+                        "Office server: asking..."
+                    }
+                } else {
+                    "Office server: not signed in (File › Shared)."
+                };
+                ui.label(server);
+                let rt = &app.updates_rt;
+                if rt.checking {
+                    ui.horizontal(|ui| {
+                        ui.spinner();
+                        ui.label("GitHub releases: checking...");
+                    });
+                } else if let Some(e) = &rt.error {
+                    ui.label(RichText::new(format!("GitHub releases: {e}")).color(t.text_dim));
+                } else if let Some(at) = &rt.checked_at {
+                    ui.label(format!("GitHub releases: nothing newer than this version (checked at {at})."));
+                } else if !app.collab.releases.prefs.github_updates {
+                    ui.label("GitHub releases: not checked (turned off below).");
+                }
+                let up_to_date = (app.collab.signed_in() && app.collab.releases.answered) || (rt.checked_at.is_some() && rt.error.is_none());
+                if up_to_date && !rt.checking {
+                    ui.add_space(4.0);
+                    ui.label(RichText::new("You have the latest version.").strong());
+                }
             }
         }
+        ui.add_space(8.0);
+        ui.separator();
+        let p = &mut app.collab.releases.prefs;
+        ui.horizontal(|ui| {
+            ui.label("Channel");
+            let mut testing = p.channel == "testing";
+            if ui.selectable_label(!testing, "Stable").clicked() {
+                testing = false;
+            }
+            if ui.selectable_label(testing, "Testing").on_hover_text("Versions the administrator marked for testing, before everyone gets them").clicked() {
+                testing = true;
+            }
+            let want = if testing { "testing" } else { "stable" };
+            if p.channel != want && !(p.channel.is_empty() && want == "stable") {
+                p.channel = want.into();
+                prefs_changed = true;
+            }
+        });
+        if ui.checkbox(&mut p.github_updates, "Also check the GitHub releases page (needs internet)").on_hover_text("Used when there is no office server, or it holds nothing newer. Only the official repository is read, and every download is checked against the release's checksum.").changed() {
+            prefs_changed = true;
+        }
+        ui.horizontal(|ui| {
+            if ui.button("Check again").clicked() {
+                again = true;
+            }
+            if ui.link("What's new").clicked() {
+                run = Some("help.whatsNew");
+            }
+            if ui.link("Report a problem").clicked() {
+                run = Some("help.reportProblem");
+            }
+            if ui.link("Roll back to an earlier version").clicked() {
+                run = Some("help.rollBack");
+            }
+        });
     });
+    if prefs_changed {
+        crate::dex_ui::releases::save_prefs(&app.collab.releases.prefs);
+        if app.collab.signed_in() {
+            app.collab.send(crate::dex_ui::releases::check_msg(app));
+        }
+    }
     if install {
         let _ = run_command(app, "collab.installUpdate", &json!({}));
+    }
+    if again {
+        let _ = run_command(app, "collab.checkUpdate", &json!({}));
+    }
+    if let Some(id) = run {
+        let _ = app.run(id, json!({"show": true}));
+        app.collab.update_dialog = false;
     }
     if !open {
         app.collab.update_dialog = false;

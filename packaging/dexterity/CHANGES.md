@@ -8,6 +8,16 @@ automatically and don't go here.
 
 ## Unreleased
 
+- **Updates without an office server**: Dexterity Sheets now also reads its own GitHub releases page, a few seconds after it starts, once a day while it stays open, and whenever you choose **Automate › Check for Updates**. A newer version shows as **Update to X.Y.Z** in the status bar exactly as one from the office server does; the office server's installer is preferred when it has one. Every download is checked against the release's checksum. Turn the GitHub check off in the updates dialog if a PC must not reach the internet.
+- Fixed: **Check for Updates** said "You have the latest version" before any answer had come back (and when the PC was not signed in to a server). The dialog now says what the office server and the GitHub releases page each answered, and when.
+- Fixed: **Update now** and **Roll Back** started the installer while workbooks still had unsaved changes. Both now ask about each unsaved workbook first, as closing the app does; cancelling keeps the current version.
+- **Roll Back** lists earlier versions from the office server and from the GitHub releases page, with the source beside each.
+- The updates dialog now has the **Stable / Testing** channel switch, the GitHub check switch, **Check again**, and links to What's New, Report a Problem and Roll Back.
+- **Automate** tab: **What's New**, **Report a Problem**, **Roll Back Version** and **Recover Unsaved Work** sit next to Check for Updates, so they no longer need the command search.
+- The administrator's update policy **Never offer** now works as described: a newer version is shown only when a person checks for updates.
+- The office server fetches new versions from the official GitHub releases from the start; the Server Manager's App updates page shows that, and **Turn off** really turns it off. (Before, nothing was fetched until IT typed the repository.)
+- The release notes and What's New are never empty after an automatic upstream sync: a release with no change of Dexterity's own says so and points at GridCraft's list.
+
 ## 1.3.0 · 29 October 2026
 
 - The Server Manager has a **Dashboard**: **Installed versions** (which version each PC runs), **Releases** (mark a version stable or testing, OK, known issue, deprecated or blocked, with a note for the people running it; see what stable and testing PCs are offered and where a blocked version rolls back to; choose whether updates are offered, installed on their own or never offered), **Feedback** (problem reports by version and feature, each readable in full, with **Open GitHub issue** that leaves out the names of people and PCs), **System health** (failed updates, recoveries after a crash, errors) and **Feature adoption** (the most and least used commands).

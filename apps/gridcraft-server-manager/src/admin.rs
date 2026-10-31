@@ -237,7 +237,7 @@ impl Mode {
         match self {
             Mode::Prompt => "Ask first: the app offers the update and the person installs it",
             Mode::Auto => "Install on its own: when no workbook has unsaved changes",
-            Mode::Manual => "Never offer: people use Help › Check for Updates",
+            Mode::Manual => "Never offer: people use Automate › Check for Updates",
         }
     }
     fn parse(s: &str) -> Option<Mode> {
@@ -1199,7 +1199,7 @@ impl App {
             });
             if r.mode == Mode::Manual {
                 ui.label(
-                    RichText::new("The policy is Never offer: the apps find this version only with Help › Check for Updates.").color(DIM).small(),
+                    RichText::new("The policy is Never offer: the apps find this version only with Automate › Check for Updates.").color(DIM).small(),
                 );
             }
             let blocked: Vec<&String> = rows.iter().filter(|v| r.get(v).status == Status::Blocked).collect();

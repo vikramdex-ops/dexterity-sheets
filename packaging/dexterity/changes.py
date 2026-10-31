@@ -38,7 +38,9 @@ def roll(version):
         return False
     unreleased = section(text, "Unreleased")
     if not unreleased:
-        return False
+        # An automatic upstream sync with nothing of Dexterity's own still gets a section, so
+        # What's New after the update is not empty (the release notes list GridCraft's changes).
+        unreleased = ["- Brings in the latest fixes and features of official GridCraft (listed in the release notes on GitHub). Nothing else changed in Dexterity Sheets."]
     date = datetime.date.today().strftime("%d %B %Y").lstrip("0")
     head = re.search(r"^## Unreleased[^\n]*\n(.*?)(?=^## |\Z)", text, re.M | re.S)
     new = "## Unreleased\n\n## " + f"{version} · {date}\n\n" + "\n".join(unreleased) + "\n\n"

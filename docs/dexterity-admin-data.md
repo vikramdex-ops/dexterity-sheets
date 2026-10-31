@@ -27,7 +27,7 @@ Written by the Server Manager (App updates › Releases), read by the server eve
 
 - `policy.mode`: `prompt` (the app offers the update; the person installs it, the default),
   `auto` (the app installs a newer version on its own when no workbook has unsaved changes), or
-  `manual` (the app never offers; people use Help › Check for Updates).
+  `manual` (the app never offers; people use Automate › Check for Updates).
 - `policy.defaultChannel`: the channel of an app that has not chosen one: `stable` or `testing`.
 - `releases.<version>.channel`: `stable` (everyone) or `testing` (only apps on the testing
   channel). An installer with no entry is `stable`.

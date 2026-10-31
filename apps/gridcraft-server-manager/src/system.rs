@@ -338,21 +338,25 @@ pub fn remove_installer(i: &Installer) -> Result<(), String> {
     Ok(())
 }
 
-/// `update-source.json`: fetch new app versions from GitHub releases.
+/// The releases of Dexterity Sheets itself: the server fetches from here until IT says otherwise
+/// (the same default as the server's `github.rs`).
+pub const DEFAULT_REPO: &str = "vikramdex-ops/dexterity-sheets";
+
+/// `update-source.json`: fetch new app versions from GitHub releases. No file means the official
+/// repository; a file with an empty `repo` means off.
 pub fn update_source(dir: &Path) -> (String, String) {
-    let v: serde_json::Value = std::fs::read(dir.join("update-source.json")).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default();
+    let Some(v) = std::fs::read(dir.join("update-source.json")).ok().and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok()) else {
+        return (DEFAULT_REPO.into(), String::new());
+    };
     let s = |k: &str| v.get(k).and_then(serde_json::Value::as_str).unwrap_or("").to_string();
     (s("repo"), s("token"))
 }
 
+/// An empty `repo` turns fetching off (written down, since no file means the default repository).
 pub fn set_update_source(dir: &Path, repo: &str, token: &str) -> Result<(), String> {
     let path = dir.join("update-source.json");
     if repo.trim().is_empty() {
-        return match std::fs::remove_file(&path) {
-            Ok(()) => Ok(()),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-            Err(e) => Err(e.to_string()),
-        };
+        return std::fs::write(&path, b"{\"repo\": \"\"}\n").map_err(|e| e.to_string());
     }
     let repo = repo.trim().trim_start_matches("https://github.com/").trim_end_matches('/');
     if repo.split('/').count() != 2 || repo.split('/').any(str::is_empty) {

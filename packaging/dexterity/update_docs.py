@@ -75,15 +75,15 @@ def gridcraft_version():
 
 
 def whatsnew(notes, version):
-    # Dexterity's own changes first (CHANGES.md, via the notes), then GridCraft's.
+    # Dexterity's own changes (CHANGES.md, via the notes). GridCraft's commit subjects are for the
+    # release notes, not the README: readers get the link.
     items = []
     if notes and os.path.exists(notes):
         with open(notes, encoding="utf-8") as f:
             text = f.read()
-        for title in ("What's new in Dexterity Sheets", "New from official GridCraft"):
-            section = re.search(r"### " + re.escape(title) + r"[^\n]*\n(.*?)(?:\n\n|\Z)", text, re.S)
-            if section:
-                items += [l for l in section.group(1).splitlines() if l.startswith("- ")]
+        section = re.search(r"### What's new in Dexterity Sheets[^\n]*\n(.*?)(?:\n\n|\Z)", text, re.S)
+        if section:
+            items += [l for l in section.group(1).splitlines() if l.startswith("- ")]
     link = f"[Everything in {version}]({REPO}/releases/tag/v{version})"
     if not items:
         return f"\n{link}\n"

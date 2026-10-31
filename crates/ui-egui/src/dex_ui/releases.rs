@@ -52,11 +52,14 @@ pub struct Prefs {
     pub last_version: String,
     /// Set when this PC rolled back from that version (pre-ticks "I rolled back").
     pub rolled_back_from: Option<String>,
+    /// Also read the GitHub releases page (`updates_ui`): for PCs without an office server, and
+    /// when the server holds nothing newer.
+    pub github_updates: bool,
 }
 
 impl Default for Prefs {
     fn default() -> Prefs {
-        Prefs { channel: String::new(), share_usage: true, last_version: String::new(), rolled_back_from: None }
+        Prefs { channel: String::new(), share_usage: true, last_version: String::new(), rolled_back_from: None, github_updates: true }
     }
 }
 
@@ -92,6 +95,12 @@ pub struct Releases {
     auto_tried: Option<String>,
     pub splash_until: f64,
     health_sent: bool,
+    /// The office server answered the last update check (so "latest" is a fact, not a guess).
+    pub answered: bool,
+    /// The next answer is to a check the person asked for (policy "manual" shows updates then).
+    pub asked: bool,
+    /// An installer checked and saved, started when the app exits (`collab_ui::run_installer`).
+    pub installer: Option<(UpdateInfo, std::path::PathBuf)>,
 }
 
 fn version() -> &'static str {
@@ -191,7 +200,14 @@ pub fn tick(app: &mut SheetApp) {
             save_prefs(&r.prefs);
         }
     }
+    // An update waiting for the Save Changes dialogs: the person cancelled one (the dialog is
+    // gone, a workbook is still unsaved), so the update is off.
+    if app.collab.releases.installer.is_some() && app.dialog.is_none() && app.session.documents().iter().any(|d| d.is_dirty()) {
+        crate::collab_ui::cancel_install(app);
+        app.toast = Some(("The update was not installed: a workbook was left unsaved. Update again when you are ready.".into(), crate::now_ms()));
+    }
     if !app.collab.signed_in() {
+        app.collab.releases.answered = false;
         return;
     }
     if !app.collab.releases.health_sent && !app.collab.recovery.found.is_empty() {
@@ -216,7 +232,16 @@ pub fn tick(app: &mut SheetApp) {
 /// The server's answer to the update check: this version's status, what it can roll back to,
 /// and the policy (`auto` installs a newer version when nothing is unsaved).
 pub fn on_update(app: &mut SheetApp, update: Option<&UpdateInfo>, current: Option<UpdateInfo>, older: Vec<UpdateInfo>, policy: String) {
-    app.collab.releases.older = older;
+    // The server's list first; GitHub's releases (`url` set) stay as further choices.
+    let mut all = older;
+    let github: Vec<UpdateInfo> = app.collab.releases.older.drain(..).filter(|g| !g.url.is_empty()).collect();
+    for g in github {
+        if !all.iter().any(|s| s.version == g.version) {
+            all.push(g);
+        }
+    }
+    app.collab.releases.older = all;
+    app.collab.releases.answered = true;
     app.collab.releases.policy = policy;
     if let Some(c) = &current
         && c.status != "ok"
@@ -247,6 +272,47 @@ pub fn on_update(app: &mut SheetApp, update: Option<&UpdateInfo>, current: Optio
         app.collab.update_state = Some(format!("Downloading {}...", u.version));
         app.collab.send(ClientMsg::GetUpdate { version: u.version.clone() });
     }
+}
+
+/// What the GitHub releases page said (`updates_ui`): a newer release is offered like one from
+/// the office server, unless the server already offers that version or a newer one; the older
+/// releases join the roll-back choices.
+pub(crate) fn on_github(app: &mut SheetApp, found: crate::updates_ui::Found, manual: bool) {
+    let mine = version();
+    if let Some(u) = found.update.filter(|u| proto::version_newer(&u.version, mine)) {
+        let better = app.collab.update.as_ref().is_some_and(|s| s.version == u.version || proto::version_newer(&s.version, &u.version));
+        if !better {
+            crate::collab_ui::offer_update(app, u);
+        }
+    }
+    for g in found.older {
+        if !app.collab.releases.older.iter().any(|o| o.version == g.version) {
+            app.collab.releases.older.push(g);
+        }
+    }
+    let _ = manual;
+}
+
+/// Installs `version` (an update or a roll-back): from the office server when it holds it, else
+/// from GitHub. Unsaved workbooks are asked about once the installer is here (`install_update`).
+pub(crate) fn request_install(app: &mut SheetApp, version: &str) -> Result<(), String> {
+    if app.collab.releases.installer.is_some() || app.updates_rt.downloading.is_some() {
+        return Err("An update is already on its way.".into());
+    }
+    let known = app.collab.update.iter().chain(app.collab.releases.older.iter()).find(|u| u.version == version).cloned();
+    let Some(u) = known else {
+        return Err(format!("Neither the office server nor the GitHub releases page has Dexterity Sheets {version}."));
+    };
+    if u.url.is_empty() {
+        if !app.collab.signed_in() {
+            return Err("Sign in to the office server first (File › Shared): this version comes from it.".into());
+        }
+        app.collab.update_state = Some(format!("Downloading {}...", u.version));
+        app.collab.send(ClientMsg::GetUpdate { version: u.version });
+    } else {
+        crate::updates_ui::download(app, u);
+    }
+    Ok(())
 }
 
 /// Rolling back: the installer of an older version is about to run.
@@ -302,9 +368,12 @@ fn send_report(app: &mut SheetApp) -> Result<Json, String> {
 /// The Help commands (the engine's entries are the catalogue; the window does the work).
 pub fn run_command(app: &mut SheetApp, id: &str, p: &Json) -> Option<Result<Json, String>> {
     let s = |k: &str| p.get(k).and_then(Json::as_str).map(str::to_string);
+    // Menu-style calls pass `show: true` and get the window; a programmatic call (control
+    // channel, MCP) gets the data and opens nothing.
+    let show = p.get("show").and_then(Json::as_bool) == Some(true);
     Some(match id {
         "help.whatsNew" => {
-            app.collab.releases.whats_new = true;
+            app.collab.releases.whats_new |= show;
             let (title, notes) = notes_for(version());
             Ok(json!({"version": version(), "title": title, "notes": notes}))
         }
@@ -327,31 +396,29 @@ pub fn run_command(app: &mut SheetApp, id: &str, p: &Json) -> Option<Result<Json
             }
             if p.get("send").and_then(Json::as_bool) == Some(true) {
                 send_report(app)
-            } else {
+            } else if show {
                 app.collab.releases.report = true;
                 Ok(Json::Null)
+            } else {
+                Err("Give `send: true` with the report's fields, or `show: true` for the form.".into())
             }
         }
         "help.rollBack" => match s("version") {
             None => {
-                app.collab.releases.rollback = true;
+                app.collab.releases.rollback |= show;
                 if app.collab.signed_in() {
                     app.collab.send(check_msg(app));
                 }
+                crate::updates_ui::start(app, false);
                 Ok(
-                    json!({"current": version(), "older": app.collab.releases.older.iter().map(|u| json!({"version": u.version, "status": u.status, "note": u.note})).collect::<Vec<_>>()}),
+                    json!({"current": version(), "older": app.collab.releases.older.iter().map(|u| json!({"version": u.version, "status": u.status, "note": u.note, "source": if u.url.is_empty() { "server" } else { "github" }})).collect::<Vec<_>>()}),
                 )
             }
             Some(v) => {
-                if !app.collab.signed_in() {
-                    return Some(Err("Sign in to the office server first (File › Shared): earlier versions come from it.".into()));
+                if !is_rollback(&v) {
+                    return Some(Err(format!("{v} is not older than this version ({}).", version())));
                 }
-                if !app.collab.releases.older.iter().any(|u| u.version == v) {
-                    return Some(Err(format!("The office server has no {v} to roll back to.")));
-                }
-                app.collab.update_state = Some(format!("Downloading {v}..."));
-                app.collab.send(ClientMsg::GetUpdate { version: v.clone() });
-                Ok(json!({"rollingBackTo": v}))
+                request_install(app, &v).map(|()| json!({"rollingBackTo": v}))
             }
         },
         "help.updateChannel" => {
@@ -370,6 +437,33 @@ pub fn run_command(app: &mut SheetApp, id: &str, p: &Json) -> Option<Result<Json
         }
         _ => return None,
     })
+}
+
+/// Automate › Help group, next to Check for Updates: What's New, Report a Problem, Roll Back and
+/// Recover Unsaved Work, so none of them needs the command search.
+pub fn help_buttons(app: &mut SheetApp, ui: &mut egui::Ui) {
+    use crate::icons::Icon;
+    use crate::widgets::small_button;
+    let mut run = None;
+    ui.vertical(|ui| {
+        if small_button(ui, Icon::Info, "What's New", "What changed in this version of Dexterity Sheets", false).clicked() {
+            run = Some("help.whatsNew");
+        }
+        if small_button(ui, Icon::Comment, "Report a Problem", "Tell the office server's administrator what went wrong, by feature", false).clicked()
+        {
+            run = Some("help.reportProblem");
+        }
+        if small_button(ui, Icon::Undo, "Roll Back Version", "Install an earlier version of the app; your workbooks are not touched", false).clicked()
+        {
+            run = Some("help.rollBack");
+        }
+        if small_button(ui, Icon::OpenFolder, "Recover Unsaved Work", "Copies kept while workbooks had unsaved changes", false).clicked() {
+            run = Some("file.recoverUnsaved");
+        }
+    });
+    if let Some(id) = run {
+        app.run_or_alert(id, json!({"show": true}));
+    }
 }
 
 /// Help › About: build, update channel and repository, beside the version line.
@@ -613,21 +707,29 @@ fn rollback(app: &mut SheetApp, ctx: &egui::Context) {
         |ui| {
             ui.set_max_width(520.0);
             ui.label(format!(
-                "You have Dexterity Sheets {}. Rolling back installs an earlier version from the office server and restarts the app.",
+                "You have Dexterity Sheets {}. Rolling back installs an earlier version (from the office server, or from the GitHub releases page) and restarts the app.",
                 version()
             ));
             ui.label(
                 egui::RichText::new("Only the app changes: your workbooks, shared workbooks and their versions stay exactly as they are.").strong(),
             );
             ui.add_space(6.0);
-            if !app.collab.signed_in() {
-                ui.label("Sign in to the office server first (File › Shared): earlier versions come from it.");
-            } else if app.collab.releases.older.is_empty() {
-                ui.label("The office server holds no earlier version to roll back to.");
+            if app.collab.releases.older.is_empty() {
+                if app.updates_rt.checking {
+                    ui.horizontal(|ui| {
+                        ui.spinner();
+                        ui.label("Looking for earlier versions...");
+                    });
+                } else if !app.collab.signed_in() && !app.collab.releases.prefs.github_updates {
+                    ui.label("Sign in to the office server (File › Shared), or allow the GitHub check in the updates dialog: earlier versions come from there.");
+                } else {
+                    ui.label("No earlier version to roll back to was found.");
+                }
             }
             for u in &app.collab.releases.older {
                 ui.horizontal(|ui| {
                     ui.strong(&u.version);
+                    ui.label(egui::RichText::new(if u.url.is_empty() { "office server" } else { "GitHub" }).weak());
                     if u.status == "knownIssue" {
                         ui.colored_label(Color32::from_rgb(0xd0, 0x70, 0x00), "known issue");
                     }

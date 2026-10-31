@@ -904,11 +904,11 @@ impl App {
 
     fn updates(&mut self, ui: &mut Ui) {
         ui.heading("App updates");
-        ui.label(RichText::new("Every Dexterity Sheets on the network asks this server for new versions and installs them with one click. Nothing on the office PCs needs internet access.").color(DIM));
+        ui.label(RichText::new("Every Dexterity Sheets on the network asks this server for new versions and installs them with one click. Office PCs need no internet access for that; a PC without a server reads the GitHub releases page itself.").color(DIM));
         ui.add_space(8.0);
         card(ui, |ui| {
             ui.label(RichText::new("Fetch new versions automatically").strong());
-            ui.label(RichText::new("The server checks the GitHub releases every 30 minutes, checks each download against the release's checksums, and offers it to every PC.").color(DIM));
+            ui.label(RichText::new(format!("The server checks the GitHub releases of {} every 30 minutes (from the start, until turned off here), checks each download against the release's checksums, and offers it to every PC.", system::DEFAULT_REPO)).color(DIM));
             egui::Grid::new("src").num_columns(2).spacing(vec2(14.0, 6.0)).show(ui, |ui| {
                 ui.label("Repository");
                 ui.add(egui::TextEdit::singleline(&mut self.repo).hint_text("vikramdex-ops/dexterity-sheets").desired_width(300.0));
@@ -933,6 +933,9 @@ impl App {
                     self.token.clear();
                     let r = system::set_update_source(&self.dir, "", "").map(|()| "Automatic fetching is off.".to_string());
                     self.say(r);
+                }
+                if self.repo.trim().is_empty() {
+                    ui.label(RichText::new("Off: new versions reach the PCs only as installers you add below.").color(DIM));
                 }
             });
         });

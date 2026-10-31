@@ -287,6 +287,15 @@ replace(MAIN, '"../../../assets/app-icon/gridcraft-macos-512.png"', '"../../../a
 replace(MAIN, '.map(|c| c.join("gridcraft"))', '.map(|c| c.join("dexterity-sheets"))', required=False)
 replace(MAIN, "//! GridCraft desktop app.\n", "//! Dexterity Sheets desktop app (GridCraft-based; the binary is `DexteritySheets`).\n", required=False)
 replace(MAIN, "//! Usage: `gridcraft [", "//! Usage: `DexteritySheets [", required=False)
+for p in glob.glob(os.path.join(ROOT, UI, "ribbon", "*.rs")):
+    rel = os.path.relpath(p, ROOT).replace("\\", "/")
+    if '"app.checkForUpdates"' in read(rel):
+        insert(
+            rel,
+            "crate::dex_ui::releases::help_buttons(app, ui);",
+            '        app.run_or_alert("app.checkForUpdates", json!({}));\n    }\n',
+            "    crate::dex_ui::releases::help_buttons(app, ui);\n",
+        )
 insert(
     MAIN,
     "dex_ui::enable_desktop(",

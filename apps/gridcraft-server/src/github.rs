@@ -40,10 +40,18 @@ struct Asset {
     url: String,
 }
 
+/// The releases of Dexterity Sheets itself: what a server fetches from until IT says otherwise.
+pub const DEFAULT_REPO: &str = "vikramdex-ops/dexterity-sheets";
+
+/// The update source: `update-source.json` when it exists, else the official repository. A file
+/// with an empty `repo` turns fetching off (the Server Manager's "Turn off").
 pub fn load(dir: &Path) -> Option<Source> {
-    let bytes = std::fs::read(dir.join("update-source.json")).ok()?;
+    let Ok(bytes) = std::fs::read(dir.join("update-source.json")) else {
+        return Some(Source { repo: DEFAULT_REPO.into(), token: None, every_minutes: None });
+    };
     match serde_json::from_slice::<Source>(&bytes) {
         Ok(s) if s.repo.contains('/') => Some(s),
+        Ok(s) if s.repo.trim().is_empty() => None,
         Ok(_) => {
             log::warn!("update-source.json: \"repo\" must be owner/name");
             None

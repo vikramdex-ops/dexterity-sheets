@@ -318,6 +318,8 @@ pub fn clean_exit(app: &mut SheetApp) {
     if !crate::dex_ui::desktop() {
         return;
     }
+    // An update or roll-back that waited for this exit starts its installer now.
+    crate::collab_ui::run_installer(app);
     let dirty: Vec<(u64, Arc<Workbook>, ItemMeta)> = app
         .session
         .documents()
@@ -363,7 +365,8 @@ pub fn run_command(app: &mut SheetApp, p: &Json) -> Result<Json, String> {
     let index = p.get("index").and_then(Json::as_u64).map(|i| i as usize);
     if action == "list" {
         app.collab.recovery.found = app.collab.recovery.scan();
-        app.collab.recovery.show = true;
+        // The window opens for a menu-style call (`show: true`); a programmatic call gets the list.
+        app.collab.recovery.show |= p.get("show").and_then(Json::as_bool) == Some(true);
         return Ok(json!({"items": app.collab.recovery.found.iter().map(|f| json!({
             "title": f.meta.title, "path": f.meta.path, "savedAt": f.meta.saved_at, "cells": f.meta.cells,
         })).collect::<Vec<_>>()}));

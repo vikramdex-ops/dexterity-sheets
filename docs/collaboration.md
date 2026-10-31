@@ -134,8 +134,32 @@ books/<id>/snapshot-<n>.xlsx  the workbook as of edit n (ordinary .xlsx files Ex
 books/<id>/log.jsonl          every edit, in order (replayed after the newest snapshot)
 books/<id>/audit.jsonl        one line per changed cell: who, when, old → new
 books/<id>/versions/*.xlsx    kept versions (ordinary .xlsx files)
+books/<id>/automation.json    the workbook's automation rules
 trash/                        deleted workbooks
+updates/                      app installers offered to the PCs, their notes, releases.json
+update-source.json            where new versions are fetched from (absent = the official releases)
+templates/                    the office's approved templates
+notices/<user>.jsonl          notifications waiting for people who were offline
+clients.json  feedback/  health.jsonl  adoption.json   the Server Manager's dashboard data
 ```
+
+### App updates and releases
+
+- From the moment it runs, the server fetches each new release of Dexterity Sheets from the
+  official GitHub releases (`vikramdex-ops/dexterity-sheets`), checks it against the release's
+  checksums and puts the installer in `updates/`. Every signed-in app hears of it at once (and asks
+  every four hours); the status bar shows **Update to X.Y.Z**. The Server Manager's **App updates**
+  page changes the repository (a private one needs a token), turns fetching off, or takes an
+  `.msi` added by hand for a server without internet.
+- **Releases** (Server Manager › Dashboard) gives each version a channel (stable or testing) and a
+  status (OK, known issue, deprecated, blocked) with a note, and sets the policy: **Offer** (the
+  default), **Install on their own** when nothing is unsaved, or **Never offer** (people use
+  Automate › Check for Updates). `docs/dexterity-admin-data.md` has the file formats.
+- A PC that is not signed in to any server reads the GitHub releases page itself: a few seconds
+  after it starts, once a day, and on Check for Updates. Only that repository is read and every
+  download is checksummed; the switch is in the updates dialog.
+- **Roll back**: Automate › Roll Back Version lists the earlier versions the server holds and those
+  on the releases page; installing one never touches workbooks, shared workbooks or their versions.
 
 ## Using it (everyone)
 
