@@ -144,12 +144,10 @@ insert(
     "# package keeps its name `gridcraft` (`cargo run -p gridcraft`).\n"
     '[[bin]]\nname = "DexteritySheets"\npath = "src/main.rs"\n',
 )
-s = read(APP)
-s2 = re.sub(r"# Same craft-libs revision as the workspace's craft-update and craft-window \(see the root\n# Cargo\.toml\)\.\n",
-            "# Same craft-libs revision as the workspace's craft-window (see the root Cargo.toml).\n", s)
-s2 = re.sub(r"craft-update = \{[^\n]*\}\n", "# Dexterity Sheets: no craft-update (no update checker; the app never contacts the internet).\n", s2)
-if s2 != s:
-    write(APP, s2)
+# Earlier Dexterity Sheets builds removed upstream's craft-update; it is back (the GitHub update
+# check in dex_ui/releases.rs uses its client), so a tree from those builds gets the lines again.
+replace(APP, "# Dexterity Sheets: no craft-update (no update checker; the app never contacts the internet).\n", "craft-update = { workspace = true }\n", required=False)
+replace("crates/ui-egui/Cargo.toml", "# Dexterity Sheets: no craft-update (no update checker; the app never contacts the internet).\n", "craft-update = { workspace = true }\n", required=False)
 insert(
     APP,
     "windows-registry",
@@ -172,6 +170,17 @@ insert(
     "pub dex: cmd::dex::DexState,",
     "    pub comments_pane: bool,\n",
     "    /// Dexterity Sheets command state (Repeat, Focus Cell, validation circles).\n    pub dex: cmd::dex::DexState,\n",
+)
+insert(
+    "crates/engine/src/lib.rs",
+    "pub fn document_mut(&mut self, uid: u64)",
+    "    pub fn active_mut(&mut self) -> Option<&mut DocState> {\n",
+    "    /// The open workbook with this [`DocState::uid`], for changes that don't go through a command\n"
+    "    /// (LAN co-authoring applies other people's edits this way).\n"
+    "    pub fn document_mut(&mut self, uid: u64) -> Option<&mut DocState> {\n"
+    "        self.docs.iter_mut().find(|d| d.uid == uid)\n"
+    "    }\n",
+    after=False,
 )
 insert(
     "crates/engine/src/lib.rs",
@@ -265,8 +274,21 @@ insert(
     '            ui.label(format!("Version {}", gridcraft_collab::APP_VERSION.trim()));\n',
     "            crate::dex_ui::releases::about_details(ui);\n",
 )
+MAIN = "apps/gridcraft/src/main.rs"
+insert(MAIN, "mod regional;", "mod print;\n", "mod regional;\n")
 insert(
-    "apps/gridcraft/src/main.rs",
+    MAIN,
+    "regional::apply();",
+    "    let mut session = Session::new();\n",
+    "    // Regional settings (date order and separator, digit grouping) before any workbook is read.\n    regional::apply();\n",
+    after=False,
+)
+replace(MAIN, '"../../../assets/app-icon/gridcraft-macos-512.png"', '"../../../assets/app-icon/dexterity-sheets-macos-512.png"', required=False)
+replace(MAIN, '.map(|c| c.join("gridcraft"))', '.map(|c| c.join("dexterity-sheets"))', required=False)
+replace(MAIN, "//! GridCraft desktop app.\n", "//! Dexterity Sheets desktop app (GridCraft-based; the binary is `DexteritySheets`).\n", required=False)
+replace(MAIN, "//! Usage: `gridcraft [", "//! Usage: `DexteritySheets [", required=False)
+insert(
+    MAIN,
     "dex_ui::enable_desktop(",
     "    let mut app = SheetApp::new(session, services());\n",
     "    // Dexterity Sheets: crash recovery, links and notifications belong to the desktop app only.\n    gridcraft_ui_egui::dex_ui::enable_desktop();\n",

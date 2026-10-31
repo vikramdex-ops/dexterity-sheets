@@ -8,6 +8,18 @@
 
 use crate::SheetApp;
 
+/// Dexterity Sheets as the update check knows it: releases are only ever read from this
+/// repository (never GridCraft's), and its installers are named `dexterity-sheets-<version>-…`.
+#[cfg(not(target_arch = "wasm32"))]
+pub const APP: craft_update::App = craft_update::App {
+    former_ids: &[],
+    former_names: &[],
+    icon_png: Some(include_bytes!("../../../assets/app-icon/hicolor/128x128/apps/ai.storyteller.gridcraft.png")),
+    accent: Some([0x1f, 0x4e, 0x9c]),
+    developer: "Dexterity Design Services",
+    ..craft_update::App::new("dexterity-sheets", "Dexterity Sheets", "Spreadsheets and data", "vikramdex-ops/dexterity-sheets")
+};
+
 /// What a manual Check for Updates (the `app.checkForUpdates` command) reports.
 pub(crate) const UPDATES_DISABLED: &str =
     "Dexterity Sheets does not check the internet for updates. New versions are distributed by Dexterity Design Services IT.";

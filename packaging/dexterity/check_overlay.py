@@ -36,6 +36,9 @@ HOOKS = [
     ("crates/ui-egui/src/{ribbon.rs,ribbon/*.rs}", "collab_ui::share_menu(app, ui)", "title-bar Share menu"),
     ("apps/gridcraft/Cargo.toml", 'name = "DexteritySheets"', "executable name"),
     ("apps/gridcraft/src/main.rs", "regional::apply();", "Windows regional settings (dates, grouping) like Excel"),
+    ("apps/gridcraft/src/main.rs", "mod regional;", "the regional-settings module is compiled in"),
+    ("apps/gridcraft/src/main.rs", "dexterity-sheets-macos-512.png", "the macOS window icon is ours (the GridCraft one is not in the tree)"),
+    ("crates/ui-egui/src/updates_ui.rs", "pub const APP: craft_update::App", "the update check looks at the Dexterity Sheets releases, never GridCraft's"),
     ("packaging/windows/gridcraft.wxs", 'UpgradeCode="FE2AD491-38E3-4E1B-8441-FDF652AB8443"', "installer identity (never change)"),
     ("packaging/windows/gridcraft.wxs", 'Scope="perUser"', "per-user install so updates need no admin"),
     # Excel parity additions (docs/dexterity-parity-audit.md): commands in cmd/dex.rs, UI in dex_ui.rs.
@@ -71,8 +74,6 @@ HOOKS = [
 
 # Strings that must not come back into the shipped app's code from upstream.
 FORBIDDEN = [
-    ("crates/ui-egui/Cargo.toml", "craft-update = {", "upstream internet update checker"),
-    ("apps/gridcraft/Cargo.toml", "craft-update = {", "upstream internet update checker"),
     ("packaging/windows/package.ps1", "check-install-policy.ps1') -MsiPath", "GridCraft's install-identity check (fails on our installer)"),
 ]
 

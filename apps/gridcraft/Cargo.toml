@@ -36,7 +36,7 @@ winit = { version = "0.30", default-features = false, features = ["x11"] }
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 # Same craft-libs revision as the workspace's craft-window (see the root Cargo.toml).
 craft-print = { git = "https://github.com/storytold/craft-libs", rev = "92d392cff132eaf53e13afff77f38b5c11b73aa0" }
-# Dexterity Sheets: no craft-update (no update checker; the app never contacts the internet).
+craft-update = { workspace = true }
 rfd = { workspace = true }
 arboard = { workspace = true }
 gridcraft-mcp = { workspace = true }

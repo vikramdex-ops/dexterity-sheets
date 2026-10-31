@@ -72,6 +72,7 @@ DELETED_BY_US = [
 ]
 # Files whose only Dexterity change is branding text.
 BRANDING_ONLY = [
+    "apps/gridcraft/src/main.rs",
     "crates/ui-egui/src/i18n/*.rs",
     "crates/ui-egui/src/credits.rs",
     "crates/ui-egui/src/dialogs.rs",
@@ -99,6 +100,32 @@ def is_ancestor(a, b):
 
 def matches(path, patterns):
     return any(fnmatch.fnmatch(path, p) for p in patterns)
+
+
+def conflicts():
+    """Every unmerged path with its two-letter status (UU, AA, DU, UD, AU, UA, DD)."""
+    out = []
+    for line in git("status", "--porcelain", "-z").split("\0"):
+        if line[:2] in ("UU", "AA", "DU", "UD", "AU", "UA", "DD"):
+            out.append((line[:2], line[3:]))
+    return out
+
+
+def has_stage(path, stage):
+    """Whether the index holds a version of `path` for `stage` (2 = ours, 3 = upstream)."""
+    return any(l.split()[2] == str(stage) for l in git("ls-files", "-u", "-z", "--", path).split("\0") if l.strip())
+
+
+def remove(path):
+    try:
+        os.remove(path)
+    except OSError:
+        pass
+
+
+def manifests_changed(a, b):
+    names = git("diff", "--name-only", a, b, "--", "Cargo.lock", "Cargo.toml", "*/Cargo.toml", "*/*/Cargo.toml").splitlines()
+    return bool(names)
 
 
 def rebrand(text: str) -> str:
@@ -196,27 +223,42 @@ def main() -> int:
     merge = subprocess.run(["git", "merge", "--no-ff", "--no-commit", f"upstream/{UPSTREAM_BRANCH}"], capture_output=True, text=True, encoding="utf-8")
     unresolved = []
     reapplied = []
+    relock = False
     if merge.returncode != 0:
-        status_lines = git("status", "--porcelain").splitlines()
-        conflicted = [(l[:2], l[3:].strip().strip('"')) for l in status_lines if l[:2] in ("UU", "AA", "DU", "UD", "AU", "UA", "DD")]
-        for code, path in conflicted:
-            if code in ("UD", "DD") or (code == "DU" and matches(path, DELETED_BY_US)):
-                # We deleted it (or both did): it stays deleted.
-                git("rm", "-q", "--", path, check=False)
-            elif matches(path, OURS):
-                git("checkout", "--ours", "--", path)
-                git("add", "--", path)
-            elif matches(path, BRANDING_ONLY) and code == "UU":
+        for code, path in conflicts():
+            ours, theirs = has_stage(path, 2), has_stage(path, 3)
+            if matches(path, OURS):
+                # Our file: ours wins, and a file we removed or renamed (the old icon names)
+                # stays removed even when upstream keeps editing its copy.
+                if ours:
+                    git("checkout", "--ours", "--", path)
+                    git("add", "--", path)
+                else:
+                    git("rm", "-q", "--cached", "--", path, check=False)
+                    remove(path)
+            elif matches(path, DELETED_BY_US) or not theirs:
+                # We dropped it on purpose, upstream deleted it, or both did: it stays deleted.
+                # A hook that lived in a file upstream deleted is caught by check_overlay.py.
+                git("rm", "-q", "--cached", "--", path, check=False)
+                remove(path)
+            elif not ours:
+                # Upstream changed a file we deleted and that is not on any list: a person decides.
+                unresolved.append(f"{code} {path} (deleted here, changed upstream)")
+            elif matches(path, BRANDING_ONLY):
                 git("checkout", "--theirs", "--", path)
                 rebrand_file(path)
-            elif code == "UU":
+                reapplied.append(path)
+            elif path == "Cargo.lock":
+                # Upstream's lock, then the entries our own crates need are added back below.
+                git("checkout", "--theirs", "--", path)
+                git("add", "--", path)
+                relock = True
+            else:
                 # Upstream changed code we also touched (often a refactor that moved it): take
                 # upstream's file; reapply_overlay.py puts our hooks and branding back below.
                 git("checkout", "--theirs", "--", path)
                 git("add", "--", path)
                 reapplied.append(path)
-            else:
-                unresolved.append(f"{code} {path}")
     # Upstream may add new workflows; Dexterity runs only its own.
     for wf in git("diff", "--cached", "--name-only", "--diff-filter=A").splitlines():
         if matches(wf, [".github/workflows/*"]) and not matches(wf, [".github/workflows/dexterity-*", ".github/workflows/upstream-sync.yml"]):
@@ -226,6 +268,15 @@ def main() -> int:
     if unresolved:
         output(status="conflict", upstream=head, main=main_sha, subject=subject, unresolved=unresolved)
         return 0
+    if relock or manifests_changed(previous, head):
+        # Upstream's Cargo.lock has no entries for our crates' own dependencies (reqwest, the
+        # server manager's), and a dependency upstream bumped must land in the lock too; the
+        # CI build runs --locked. `--workspace` touches only what the manifests require.
+        lock = subprocess.run(["cargo", "update", "--workspace", "--quiet"], capture_output=True, text=True, encoding="utf-8")
+        if lock.returncode != 0:
+            output(status="conflict", upstream=head, main=main_sha, subject=subject, unresolved=["Cargo.lock could not be brought up to date:", *lock.stderr.splitlines()[:20]])
+            return 0
+        git("add", "--", "Cargo.lock")
     if reapplied:
         again = subprocess.run([sys.executable, "packaging/dexterity/reapply_overlay.py"], capture_output=True, text=True, encoding="utf-8")
         if again.returncode != 0:
