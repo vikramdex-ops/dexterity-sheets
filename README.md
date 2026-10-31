@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <sub><!-- dex:release -->Version <b>1.3.0</b> · 29 October 2026 · based on GridCraft 0.12.1<!-- /dex:release --> · Windows 10 and 11 · no administrator rights needed · updates itself</sub>
+  <sub><!-- dex:release -->Version <b>1.3.1</b> · 29 October 2026 · based on GridCraft 0.13.0<!-- /dex:release --> · Windows 10 and 11 · no administrator rights needed · updates itself</sub>
 </p>
 
 <p align="center">
@@ -104,14 +104,12 @@
 ## What's new
 
 <!-- dex:whatsnew -->
-- The Server Manager has a **Dashboard**: **Installed versions** (which version each PC runs), **Releases** (mark a version stable or testing, OK, known issue, deprecated or blocked, with a note for the people running it; see what stable and testing PCs are offered and where a blocked version rolls back to; choose whether updates are offered, installed on their own or never offered), **Feedback** (problem reports by version and feature, each readable in full, with **Open GitHub issue** that leaves out the names of people and PCs), **System health** (failed updates, recoveries after a crash, errors) and **Feature adoption** (the most and least used commands).
-- **F4** repeats your last action (formatting, inserting rows, typing an entry…) on the cells now selected, as in Excel. **Ctrl+Y** does the same when there is nothing to redo.
-- Fixed: **Data › Data Validation › Circle Invalid Data** found the cells but drew nothing. It now circles them in red; a circle goes away when the value is corrected, and the new **Clear Validation Circles** removes them all.
-- **Formulas › Remove Arrows** now also offers **Remove Precedent Arrows** and **Remove Dependent Arrows**.
-- **Data › Auto Outline** groups the rows (and columns) that your SUM and subtotal formulas add up, with a grand total one level up; **Clear Outline** removes the outline.
-- **View › Focus Cell** highlights the active cell's row and column so it is easy to follow across a wide sheet; pick the colour from its arrow.
+- Honor CARGO_BUILD_TARGET in FreeBSD packaging for aarch64 release builds (#2847) ([146161b4](https://github.com/storytold/gridcraft/commit/146161b4b450a56e5e59a083ba0478582d1e602b))
+- Grant network access so update checks can reach GitHub (#2841) ([70327cd3](https://github.com/storytold/gridcraft/commit/70327cd3d9b7de9af1bcaa33488c0736a0d346d8))
+- Release 0.13.0 ([43284377](https://github.com/storytold/gridcraft/commit/43284377d2466037628e57d8ad0c891778fdb45c))
+- Enforce Rust coding standards via Clippy ([GridCraft #2711](https://github.com/storytold/gridcraft/pull/2711))
 
-[Everything in 1.3.0](https://github.com/vikramdex-ops/dexterity-sheets/releases/tag/v1.3.0) and 24 more.
+[Everything in 1.3.1](https://github.com/vikramdex-ops/dexterity-sheets/releases/tag/v1.3.1).
 <!-- /dex:whatsnew -->
 
 Dexterity Sheets is built on the open-source [GridCraft](https://github.com/storytold/gridcraft)
