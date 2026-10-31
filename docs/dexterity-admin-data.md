@@ -41,7 +41,8 @@ Written by the Server Manager (App updates › Releases), read by the server eve
 
 ## `clients.json` — installed versions
 
-Written by the server when an app signs in and when it asks for updates.
+Written by the server each time an app asks for updates (every app does so right after signing
+in, and every four hours while open).
 
 ```json
 { "clients": { "anita|PC-ENG-07": { "user": "anita", "machine": "PC-ENG-07", "version": "1.2.2", "channel": "stable", "lastSeen": 1793194586383 } } }

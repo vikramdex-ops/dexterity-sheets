@@ -83,30 +83,47 @@ fn get(c: &reqwest::blocking::Client, url: &str, token: Option<&str>, accept: &s
     resp.bytes().map(|b| b.to_vec()).map_err(|e| e.to_string())
 }
 
-/// One check: downloads the latest release's installer if it is newer than what `updates/` holds.
-/// Returns the version downloaded.
+/// One check: downloads the newest release's installer when `updates/` lacks it, and the release
+/// before it when that is missing too, so Roll Back always has somewhere to go. Returns the
+/// newest version downloaded.
 pub fn check_once(src: &Source, updates: &Path, newest_local: Option<&str>) -> Result<Option<String>, String> {
     let c = client()?;
     let token = src.token.as_deref();
-    let body = get(&c, &format!("https://api.github.com/repos/{}/releases/latest", src.repo), token, "application/vnd.github+json")?;
-    let rel: Release = serde_json::from_slice(&body).map_err(|e| e.to_string())?;
-    if rel.draft || rel.prerelease {
-        return Ok(None);
+    let body = get(&c, &format!("https://api.github.com/repos/{}/releases?per_page=10", src.repo), token, "application/vnd.github+json")?;
+    let list: Vec<Release> = serde_json::from_slice(&body).map_err(|e| e.to_string())?;
+    let published: Vec<Release> = list.into_iter().filter(|r| !r.draft && !r.prerelease).collect();
+    let local = local_versions(updates);
+    let mut newest = None;
+    for rel in published.iter().take(2) {
+        let version = rel.tag_name.trim_start_matches(['v', 'V']).to_string();
+        if local.iter().any(|v| v == &version) {
+            continue;
+        }
+        if newest.is_none() && newest_local.is_some_and(|v| !gridcraft_collab::proto::version_newer(&version, v)) {
+            // The newest release is already here (under another file name): nothing to fetch.
+            continue;
+        }
+        download(&c, token, rel, &version, updates)?;
+        if newest.is_none() {
+            newest = Some(version);
+        }
     }
-    let version = rel.tag_name.trim_start_matches(['v', 'V']).to_string();
-    if newest_local.is_some_and(|v| !gridcraft_collab::proto::version_newer(&version, v)) {
-        return Ok(None);
-    }
+    Ok(newest)
+}
+
+/// Fetches one release's app installer and its notes into `updates/`, checked against the
+/// release's `SHA256SUMS` when it publishes one.
+fn download(c: &reqwest::blocking::Client, token: Option<&str>, rel: &Release, version: &str, updates: &Path) -> Result<(), String> {
     // The app's installer only: a release also carries the server's own installer, which must
     // never be offered to office PCs.
     let app_msi = |a: &&Asset| gridcraft_collab::server::is_app_installer(&a.name);
     let Some(msi) = rel.assets.iter().filter(app_msi).find(|a| a.name.contains("x64")).or_else(|| rel.assets.iter().find(app_msi)) else {
         return Err(format!("release {} has no .msi asset", rel.tag_name));
     };
-    let data = get(&c, &msi.url, token, "application/octet-stream")?;
+    let data = get(c, &msi.url, token, "application/octet-stream")?;
     // The release's SHA256SUMS, when published, must match.
     if let Some(sums) = rel.assets.iter().find(|a| a.name.eq_ignore_ascii_case("SHA256SUMS") || a.name.eq_ignore_ascii_case("SHA256SUMS.txt")) {
-        let text = String::from_utf8_lossy(&get(&c, &sums.url, token, "application/octet-stream")?).to_string();
+        let text = String::from_utf8_lossy(&get(c, &sums.url, token, "application/octet-stream")?).to_string();
         let have = gridcraft_collab::auth::hex(&sha2::Sha256::digest(&data));
         let expect = text.lines().find(|l| l.contains(&msi.name)).and_then(|l| l.split_whitespace().next()).map(str::to_ascii_lowercase);
         if expect.as_deref() != Some(have.as_str()) {
@@ -114,13 +131,28 @@ pub fn check_once(src: &Source, updates: &Path, newest_local: Option<&str>) -> R
         }
     }
     // Name it so the version is a part the server recognises.
-    let name = if msi.name.contains(&version) { msi.name.clone() } else { format!("DexteritySheets-{version}-x64.msi") };
+    let name = if msi.name.contains(version) { msi.name.clone() } else { format!("DexteritySheets-{version}-x64.msi") };
     let part = updates.join(format!("{name}.part"));
     std::fs::write(&part, &data).map_err(|e| e.to_string())?;
     let notes = updates.join(Path::new(&name).with_extension("md"));
-    let _ = std::fs::write(notes, rel.body.unwrap_or_default());
+    let _ = std::fs::write(notes, rel.body.clone().unwrap_or_default());
     std::fs::rename(&part, updates.join(&name)).map_err(|e| e.to_string())?;
-    Ok(Some(version))
+    log::info!("downloaded Dexterity Sheets {version} ({name})");
+    Ok(())
+}
+
+/// The versions of the app installers in `updates/`.
+fn local_versions(updates: &Path) -> Vec<String> {
+    let Ok(rd) = std::fs::read_dir(updates) else { return Vec::new() };
+    rd.flatten()
+        .filter_map(|e| {
+            let n = e.file_name().to_string_lossy().to_string();
+            if !gridcraft_collab::server::is_app_installer(&n) {
+                return None;
+            }
+            n.trim_end_matches(".msi").split('-').find(|p| p.starts_with(|c: char| c.is_ascii_digit()) && p.contains('.')).map(str::to_string)
+        })
+        .collect()
 }
 
 /// Runs forever: checks GitHub every `every_minutes`.

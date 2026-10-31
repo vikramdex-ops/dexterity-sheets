@@ -198,7 +198,13 @@ jobs:
 
           The run summary has the details. Fix on \`sync/candidate\` (or on main), bump packaging/dexterity/VERSION and push: the release workflow tests, builds and publishes it. See packaging/dexterity/UPSTREAM.md."
             if [ -n "$open" ]; then
-              gh issue comment "$open" -R "$GITHUB_REPOSITORY" --body "$body"
+              # One note a day on a failure that keeps repeating (the sync runs every 6 hours).
+              last=$(gh issue view "$open" -R "$GITHUB_REPOSITORY" --json comments --jq '.comments[-1].createdAt // ""')
+              if [ -z "$last" ] || [ "$(date -u -d "$last" +%s)" -lt "$(( $(date -u +%s) - 20*3600 ))" ]; then
+                gh issue comment "$open" -R "$GITHUB_REPOSITORY" --body "$body"
+              else
+                echo "Issue #$open was told within the last day; see $RUN"
+              fi
             else
               gh issue create -R "$GITHUB_REPOSITORY" --title "Upstream sync needs a person" --label sync-failure --body "$body"
             fi
@@ -209,8 +215,11 @@ jobs:
           fi
 
   ai-assist:
-    needs: merge
-    if: needs.merge.outputs.status == 'conflict'
+    needs: [merge, test, build]
+    # A conflict the script could not resolve, or a merge that compiled but failed the full CI or
+    # the build (new upstream lints, a moved API): the assistant proposes the resolution in a
+    # pull request when an ANTHROPIC_API_KEY secret is set.
+    if: ${{ always() && (needs.merge.outputs.status == 'conflict' || needs.test.result == 'failure' || needs.build.result == 'failure') }}
     runs-on: ubuntu-latest
     steps:
       - name: Check for an API key
@@ -228,9 +237,19 @@ jobs:
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           prompt: |
-            Merge branch `upstream` (official GridCraft) into `main` on a new branch `sync/ai-resolution`.
+            The automatic sync with official GridCraft stopped: status "${{ needs.merge.outputs.status }}",
+            test job "${{ needs.test.result }}", build job "${{ needs.build.result }}" (run
+            ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}).
+            If the status is "conflict": merge branch `upstream` (official GridCraft) into `main` on a new
+            branch `sync/ai-resolution`. Otherwise start from branch `sync/candidate` (the merge that
+            failed CI) on `sync/ai-resolution` and fix what the failed job reports (new upstream lints,
+            a moved API, a changed test).
             Follow packaging/dexterity/UPSTREAM.md: keep Dexterity-owned files, keep every hook that
             packaging/dexterity/check_overlay.py checks, take upstream's logic everywhere else, re-apply
-            branding text. Make `python packaging/dexterity/check_overlay.py` and
-            `cargo check -p gridcraft -p gridcraft-server` pass. Bump packaging/dexterity/VERSION (patch).
+            branding text, keep Dexterity's own code in both-changed files (regional dates in numfmt,
+            for example) on top of upstream's. Make `python packaging/dexterity/check_overlay.py`,
+            `cargo fmt --all --check`, `cargo clippy --locked -p gridcraft-collab -p gridcraft-server
+            -p gridcraft-server-manager -p gridcraft-ui-egui -p gridcraft --tests -- -D warnings` and
+            `cargo test --locked -p gridcraft-collab -p gridcraft-numfmt` pass. Make sure
+            packaging/dexterity/VERSION is a patch above the newest `v*` tag.
             Open a pull request into main describing every conflict and how it was resolved. Do not merge it.

@@ -18,14 +18,17 @@ Safety checks before anything is merged (a failure → status `blocked`, a perso
 - `main` itself must pass check_overlay.py (never build on a broken base).
 
 Conflict policy (see packaging/dexterity/UPSTREAM.md):
-1. Files Dexterity Sheets owns: keep ours.
-2. Files Dexterity Sheets deleted (upstream CI, ArtCraft brand files, old icons): stay deleted.
+1. Files Dexterity Sheets owns: keep ours (one we removed stays removed).
+2. Files Dexterity Sheets deleted (upstream CI, ArtCraft brand files) or upstream deleted: stay
+   deleted.
 3. Files where our only change is user-visible branding text (translations, About text…): take
    upstream's file and re-apply the branding rule. Upstream text added to these files merges
    cleanly, so they are rebranded on clean merges too.
-4. Other files both sides changed: take upstream's file and re-apply Dexterity's hooks, branding
-   and test updates with reapply_overlay.py. If an anchor can't be found, stop for a person.
-5. Anything else (delete/modify, add/add): stop and report; the workflow opens a pull request.
+4. Other files both sides changed, when check_overlay.py has a hook for the file (or the overlay
+   restores it): take upstream's file and re-apply Dexterity's hooks, branding and test updates
+   with reapply_overlay.py. If an anchor can't be found, stop for a person.
+5. Anything else (a both-changed file nothing verifies, delete/modify off the lists, add/add):
+   stop and report; the workflow opens a pull request.
 Afterwards check_overlay.py verifies that every hook into upstream files is still present, other
 new user-visible "GridCraft" text is listed for review, and the version becomes the next patch
 number without a tag. The full CI (build, every test, the three-window end-to-end test) and the

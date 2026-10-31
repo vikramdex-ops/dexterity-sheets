@@ -35,14 +35,22 @@ Every 6 hours (or Actions › Upstream sync › Run workflow; tick *dry run* to 
    if upstream rewrote its history (the commit we mirrored last time is no longer in upstream
    main), if `main` itself fails `check_overlay.py`, or if the checkout is dirty.
 2. **Merge** into a candidate commit, never into `main` directly:
-   - our files: ours win;
-   - files we deleted (upstream CI, ArtCraft brand files): stay deleted; new upstream workflows are dropped;
+   - our files: ours win; one of ours that we removed or renamed (the old icon names) stays
+     removed even when upstream keeps editing its copy;
+   - files we deleted (upstream CI, ArtCraft brand files) and files upstream deleted: stay
+     deleted; new upstream workflows are dropped;
    - files where we only changed branding text: upstream's file + the branding rule (also on
      clean merges, so new upstream text gets rebranded too);
-   - other files both sides changed (upstream refactors that move code): upstream's file, then
-     `reapply_overlay.py` puts our hooks, branding and test updates back in the new layout, and
-     `cargo fmt` formats the re-added lines;
-   - delete/modify or add/add conflicts, or a hook the overlay can't place: stop → pull request.
+   - other files both sides changed, **when `check_overlay.py` has a hook for the file** (or the
+     overlay restores it: test files, docs): upstream's file, then `reapply_overlay.py` puts our
+     hooks, branding and test updates back in the new layout, `cargo fmt` formats the re-added
+     lines, and `check_overlay.py` proves every hook is there;
+   - a both-changed file nothing can verify (numfmt's regional dates live in several files with
+     no marker), a file we deleted that is on no list, or a hook the overlay can't place: stop →
+     pull request. Taking upstream's copy blindly once dropped half of a feature and broke the
+     build; a person (or the `ai-assist` job, with an `ANTHROPIC_API_KEY` secret) merges those.
+   - `Cargo.lock`: upstream's, then `cargo update --workspace` adds the entries our crates need
+     (after the overlay, which adds dependencies to upstream manifests); CI builds `--locked`.
    - new user-visible "GridCraft" text outside the auto-rebranded files → a `branding` issue to review.
    The version becomes the next patch number that has no tag yet. The `upstream` branch is
    fast-forwarded to official GridCraft (never forced).
