@@ -102,6 +102,32 @@ def matches(path, patterns):
     return any(fnmatch.fnmatch(path, p) for p in patterns)
 
 
+# Upstream files whose Dexterity changes reapply_overlay.py restores but check_overlay.py has no
+# marker for (test updates, branding of test names, generated docs); upstream's copy may be taken.
+REAPPLIED_WITHOUT_CHECK = [
+    "crates/engine/src/io/tests.rs",
+    "apps/gridcraft/tests/mac_menu_appkit.rs",
+    "docs/*.md",
+    "*.md",
+]
+
+
+def verified(path):
+    """Whether taking upstream's copy of `path` is safe: every Dexterity change in it is either a
+    hook check_overlay.py checks (and reapply_overlay.py re-adds) or on the list above."""
+    if matches(path, REAPPLIED_WITHOUT_CHECK):
+        return True
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import check_overlay  # noqa: E402
+
+    for hooked, _marker, _what in check_overlay.HOOKS:
+        m = re.search(r"\{([^}]*)\}", hooked)
+        options = [hooked[: m.start()] + o + hooked[m.end() :] for o in m.group(1).split(",")] if m else [hooked]
+        if matches(path, options):
+            return True
+    return False
+
+
 def conflicts():
     """Every unmerged path with its two-letter status (UU, AA, DU, UD, AU, UA, DD)."""
     out = []
@@ -253,12 +279,17 @@ def main() -> int:
                 git("checkout", "--theirs", "--", path)
                 git("add", "--", path)
                 relock = True
-            else:
+            elif verified(path):
                 # Upstream changed code we also touched (often a refactor that moved it): take
-                # upstream's file; reapply_overlay.py puts our hooks and branding back below.
+                # upstream's file; reapply_overlay.py puts our hooks and branding back below, and
+                # check_overlay.py proves they are there.
                 git("checkout", "--theirs", "--", path)
                 git("add", "--", path)
                 reapplied.append(path)
+            else:
+                # Both sides changed a file whose Dexterity part nothing can put back or check
+                # (numfmt's regional dates once lost their lib.rs half this way): a person merges.
+                unresolved.append(f"{code} {path} (both changed; no hook check covers it)")
     # Upstream may add new workflows; Dexterity runs only its own.
     for wf in git("diff", "--cached", "--name-only", "--diff-filter=A").splitlines():
         if matches(wf, [".github/workflows/*"]) and not matches(wf, [".github/workflows/dexterity-*", ".github/workflows/upstream-sync.yml"]):
@@ -268,15 +299,6 @@ def main() -> int:
     if unresolved:
         output(status="conflict", upstream=head, main=main_sha, subject=subject, unresolved=unresolved)
         return 0
-    if relock or manifests_changed(previous, head):
-        # Upstream's Cargo.lock has no entries for our crates' own dependencies (reqwest, the
-        # server manager's), and a dependency upstream bumped must land in the lock too; the
-        # CI build runs --locked. `--workspace` touches only what the manifests require.
-        lock = subprocess.run(["cargo", "update", "--workspace", "--quiet"], capture_output=True, text=True, encoding="utf-8")
-        if lock.returncode != 0:
-            output(status="conflict", upstream=head, main=main_sha, subject=subject, unresolved=["Cargo.lock could not be brought up to date:", *lock.stderr.splitlines()[:20]])
-            return 0
-        git("add", "--", "Cargo.lock")
     if reapplied:
         again = subprocess.run([sys.executable, "packaging/dexterity/reapply_overlay.py"], capture_output=True, text=True, encoding="utf-8")
         if again.returncode != 0:
@@ -288,6 +310,16 @@ def main() -> int:
             output(status="conflict", upstream=head, main=main_sha, subject=subject, unresolved=reapplied + ["cargo fmt failed:", *fmt.stderr.splitlines()[:20]])
             return 0
         git("add", "-A")
+    if relock or manifests_changed(previous, head):
+        # After the overlay (it adds dependencies of ours to upstream manifests): upstream's
+        # Cargo.lock has no entries for our crates' own dependencies, and a dependency upstream
+        # bumped must land in the lock too; the CI build runs --locked. `--workspace` touches
+        # only what the manifests require.
+        lock = subprocess.run(["cargo", "update", "--workspace", "--quiet"], capture_output=True, text=True, encoding="utf-8")
+        if lock.returncode != 0:
+            output(status="conflict", upstream=head, main=main_sha, subject=subject, unresolved=["Cargo.lock could not be brought up to date:", *lock.stderr.splitlines()[:20]])
+            return 0
+        git("add", "--", "Cargo.lock")
     changed = git("diff", "--name-only", previous, head).splitlines()
     for path in changed:
         if matches(path, BRANDING_ONLY) and os.path.exists(path):
