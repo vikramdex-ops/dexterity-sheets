@@ -80,6 +80,20 @@ Tested on a real case: replaying upstream PR #2690 (which split `grid.rs`, `ribb
 and `dialogs.rs` into modules) through `sync_upstream.py` produces a tree identical to the
 hand-resolved v1.0.1 merge.
 
+## The SYNC_TOKEN secret
+
+GitHub's built-in Actions token may not push a commit that adds or changes a file under
+`.github/workflows/`, and official GridCraft's history does (for example `windows-arm64.yml`).
+Without a token of its own the sync still merges, tests, builds and releases, but it cannot
+update the informational `upstream` mirror branch (a warning in the run), and a push to `main`
+or `sync/candidate` that carries such an upstream commit can be refused the same way.
+
+To remove the limit, add a repository secret named **`SYNC_TOKEN`**: a fine-grained personal
+access token of the repository owner (the account that may push), limited to this repository,
+with **Contents**, **Workflows**, **Pull requests** and **Issues** set to read and write, and an
+expiry you note in the calendar. The workflow uses it wherever it exists and the built-in token
+otherwise; nothing else changes.
+
 ## Resolving a sync by hand
 
 ```

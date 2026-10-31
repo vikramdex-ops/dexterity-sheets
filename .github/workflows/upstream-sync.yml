@@ -13,6 +13,9 @@ name: Upstream sync
 #   release   draft → upload → verify → publish, then README/screenshots and the landing page.
 #   report    any failure opens (or updates) one "sync-failure" issue with the run link; the next
 #             successful sync closes it. Conflicts get a pull request (or an issue with a link).
+# Pushes use the SYNC_TOKEN secret when it exists (a fine-grained token of the repository owner
+# with Contents, Workflows, Pull requests and Issues read/write): GitHub's own token may not push
+# upstream commits that add or change a workflow file. See packaging/dexterity/UPSTREAM.md.
 # Office servers with update-source.json pick up the release within 30 minutes and every open
 # Dexterity Sheets offers "Update to X.Y.Z". Run by hand with dry_run to test everything up to
 # (not including) promote.
@@ -49,6 +52,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          token: ${{ secrets.SYNC_TOKEN || github.token }}
           ref: main
           fetch-depth: 0
       - uses: dtolnay/rust-toolchain@stable
@@ -63,7 +67,17 @@ jobs:
         run: python packaging/dexterity/sync_upstream.py
       - name: Mirror upstream into the `upstream` branch (fast-forward only)
         if: steps.sync.outputs.status != 'blocked'
-        run: git push origin "refs/remotes/upstream/main:refs/heads/upstream"
+        run: |
+          if ! git push origin "refs/remotes/upstream/main:refs/heads/upstream" 2>push.log; then
+            cat push.log
+            # GitHub's own token may not push a commit that adds or changes a workflow file, and
+            # upstream's history does. The mirror is informational; the merge itself goes on.
+            if grep -q "workflows. permission" push.log; then
+              echo "::warning::The upstream mirror branch was not updated: upstream changed a workflow file, which needs the SYNC_TOKEN secret (packaging/dexterity/UPSTREAM.md)."
+            else
+              exit 1
+            fi
+          fi
       - name: Push the merge candidate
         if: steps.sync.outputs.status == 'merged'
         run: git push --force origin HEAD:refs/heads/sync/candidate
@@ -80,7 +94,7 @@ jobs:
       - name: Pull request for a person (conflicts)
         if: steps.sync.outputs.status == 'conflict'
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.SYNC_TOKEN || github.token }}
         run: |
           sha="${{ steps.sync.outputs.upstream }}"
           title="Sync with upstream GridCraft ${sha:0:10} (needs a person)"
@@ -110,7 +124,7 @@ jobs:
       - name: Branding review (new user-visible "GridCraft" text)
         if: steps.sync.outputs.status == 'merged'
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.SYNC_TOKEN || github.token }}
         run: |
           python - <<'EOF' > review.md
           import json
@@ -148,6 +162,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          token: ${{ secrets.SYNC_TOKEN || github.token }}
           ref: ${{ needs.merge.outputs.candidate }}
           fetch-depth: 0
       - name: Fast-forward main to the tested candidate
@@ -177,7 +192,7 @@ jobs:
     if: always()
     runs-on: ubuntu-latest
     env:
-      GH_TOKEN: ${{ github.token }}
+      GH_TOKEN: ${{ secrets.SYNC_TOKEN || github.token }}
       RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
     steps:
       - name: Open, update or close the sync-failure issue
@@ -228,6 +243,8 @@ jobs:
           K: ${{ secrets.ANTHROPIC_API_KEY }}
         run: echo "present=$([ -n "$K" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.SYNC_TOKEN || github.token }}
         if: steps.key.outputs.present == 'true'
         with:
           ref: main

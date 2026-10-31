@@ -596,13 +596,15 @@ mod tests {
             ("-3-4i", "1-2i"),
             ("-2i", "1-i"),
             ("2i", "1+i"),
-            ("i", "0.707106781186548+0.707106781186547i"),
             ("5-12i", "3-2i"),
             ("-5+12i", "2+3i"),
             ("1E10+1E10i", "109868.411346781+45508.9860562227i"),
         ] {
             is_text(ev("IMSQRT", vec![t(input)]), want);
         }
+        // cos(pi/4) differs in its last bit between C libraries, so the 15th digit of IMSQRT("i")
+        // is 7 on some platforms and 8 on others (Windows): checked numerically, not as text.
+        cx(ev("IMSQRT", vec![t("i")]), 0.707_106_781_186_547_5, 0.707_106_781_186_547_5);
         is_text(ev("IMSQRT", vec![t("4")]), "2");
         is_text(ev("IMSQRT", vec![t("-2i")]), "1-i");
         is_text(ev("IMPOWER", vec![t("2+3i"), n(3.0)]), "-46+9i");
