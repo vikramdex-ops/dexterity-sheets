@@ -258,8 +258,14 @@ fn main() -> eframe::Result<()> {
         }
     }));
     let args: Vec<String> = std::env::args().skip(1).collect();
-    // Dexterity Sheets has no self-update (an internal LAN tool never contacts the internet), so
-    // upstream's craft-update restart helper is gone.
+    // The restart helper a self-update spawns: it finishes the swap and relaunches, then exits.
+    if let Some(done) = craft_update::self_update::finish(&gridcraft_ui_egui::UPDATE_APP, &std::env::args_os().skip(1).collect::<Vec<_>>()) {
+        if let Err(e) = done {
+            eprintln!("Dexterity Sheets update helper failed: {e}");
+            std::process::exit(1);
+        }
+        return Ok(());
+    }
     if args.iter().any(|a| a == "--version" || a == "-V") {
         println!("Dexterity Sheets {}", env!("CARGO_PKG_VERSION"));
         return Ok(());
@@ -310,16 +316,18 @@ fn main() -> eframe::Result<()> {
     {
         log::warn!("sample {s}: {e}");
     }
-    if session.documents().is_empty() {
-        session.new_workbook();
-    }
     let mut app = SheetApp::new(session, services());
     // Dexterity Sheets: crash recovery, links and notifications belong to the desktop app only.
     gridcraft_ui_egui::dex_ui::enable_desktop();
     app.watch_desktop_theme();
-    app.after_engine(); // Show warnings from the sample.
+    app.start_update_check();
     let control_port = control_port;
     load_prefs(&mut app);
+    // Stamp the startup workbook's author from the persisted user name.
+    if app.session.documents().is_empty() {
+        app.session.new_workbook();
+    }
+    app.after_engine(); // Show warnings from the sample.
     // Files named on the command line (a double-click on Windows and Linux) open as File › Open
     // opens them: a password-protected one asks for its password, and errors are shown, not
     // only logged. Each replaces the untouched blank Book1, as a file opened from Finder does.
