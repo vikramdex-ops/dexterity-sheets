@@ -8,6 +8,10 @@ automatically and don't go here.
 
 ## Unreleased
 
+## 1.4.1 · 1 November 2026
+
+- Brings in the latest fixes and features of official GridCraft (listed in the release notes on GitHub). Nothing else changed in Dexterity Sheets.
+
 ## 1.4.0 · 1 November 2026
 
 - Fixed: opening a `dexterity:` link in a running window through automation (`collab.openLink` over the control channel or MCP) could close that window when a second Dexterity Sheets was open under the same Windows account, losing anything unsaved in it. Only a copy just started with a link now hands it to the one already running.
