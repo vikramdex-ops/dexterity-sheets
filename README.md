@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <sub><!-- dex:release -->Version <b>1.3.3</b> · 1 November 2026 · based on GridCraft 0.14.2<!-- /dex:release --> · Windows 10 and 11 · no administrator rights needed · updates itself</sub>
+  <sub><!-- dex:release -->Version <b>1.4.0</b> · 1 November 2026 · based on GridCraft 0.14.2<!-- /dex:release --> · Windows 10 and 11 · no administrator rights needed · updates itself</sub>
 </p>
 
 <p align="center">
@@ -104,7 +104,10 @@
 ## What's new
 
 <!-- dex:whatsnew -->
-[Everything in 1.3.3](https://github.com/vikramdex-ops/dexterity-sheets/releases/tag/v1.3.3)
+- Fixed: opening a `dexterity:` link in a running window through automation (`collab.openLink` over the control channel or MCP) could close that window when a second Dexterity Sheets was open under the same Windows account, losing anything unsaved in it. Only a copy just started with a link now hands it to the one already running.
+- **@mentions in comments.** Type **@** in a comment or a reply in the Comments pane and pick a colleague from the list (↑/↓ and Enter or Tab, or click; Esc closes it): their name goes in as **@Name**. When the comment reaches the office server, each person mentioned gets a Windows notification saying who mentioned them, in which spreadsheet and cell, and what the comment says; clicking it opens the spreadsheet at that cell with the Comments pane. Someone signed out is told at their next sign-in. If a person you mention can't open the spreadsheet, you are told so you can share it with them. Mentions only count in shared spreadsheets, and the list says so in one that isn't shared. Turn them off in Notifications › Settings ("I am mentioned in a comment").
+
+[Everything in 1.4.0](https://github.com/vikramdex-ops/dexterity-sheets/releases/tag/v1.4.0).
 <!-- /dex:whatsnew -->
 
 Dexterity Sheets is built on the open-source [GridCraft](https://github.com/storytold/gridcraft)
