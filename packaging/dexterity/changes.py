@@ -31,6 +31,12 @@ def items(version):
     return section(text, re.escape(version) + r"\b") or section(text, "Unreleased")
 
 
+def date(version):
+    """The date on `version`'s heading ("1 November 2026"), or None before it is rolled."""
+    m = re.search(r"^## " + re.escape(version) + r"\b[^\n]*\u00b7\s*(\d{1,2} \w+ \d{4})", read(), re.M)
+    return m.group(1) if m else None
+
+
 def roll(version):
     """Moves the Unreleased items under a new heading for `version`. Idempotent."""
     text = read()

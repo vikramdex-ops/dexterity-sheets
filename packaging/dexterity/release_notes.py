@@ -88,7 +88,8 @@ def main():
     ups = upstream_changes(prev, upstream)
     own = own_changes(prev, upstream)
     news = changes.items(version)
-    date = datetime.date.today().strftime("%d %b %Y")
+    # The same date as CHANGES.md's heading (the jobs can straddle midnight UTC).
+    date = changes.date(version) or datetime.date.today().strftime("%d %B %Y").lstrip("0")
     lines = [
         f"**Dexterity Sheets {version}** · {date} · based on GridCraft {gridcraft_version()}",
         "",
