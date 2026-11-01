@@ -8,6 +8,8 @@ automatically and don't go here.
 
 ## Unreleased
 
+## 1.3.2 · 1 November 2026
+
 - **Updates without an office server**: Dexterity Sheets now also reads its own GitHub releases page, a few seconds after it starts, once a day while it stays open, and whenever you choose **Automate › Check for Updates**. A newer version shows as **Update to X.Y.Z** in the status bar exactly as one from the office server does; the office server's installer is preferred when it has one. Every download is checked against the release's checksum. Turn the GitHub check off in the updates dialog if a PC must not reach the internet.
 - Fixed: **Check for Updates** said "You have the latest version" before any answer had come back (and when the PC was not signed in to a server). The dialog now says what the office server and the GitHub releases page each answered, and when.
 - Fixed: **Update now** and **Roll Back** started the installer while workbooks still had unsaved changes. Both now ask about each unsaved workbook first, as closing the app does; cancelling keeps the current version.

@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <sub><!-- dex:release -->Version <b>1.3.1</b> · 29 October 2026 · based on GridCraft 0.13.0<!-- /dex:release --> · Windows 10 and 11 · no administrator rights needed · updates itself</sub>
+  <sub><!-- dex:release -->Version <b>1.3.2</b> · 1 November 2026 · based on GridCraft 0.14.2<!-- /dex:release --> · Windows 10 and 11 · no administrator rights needed · updates itself</sub>
 </p>
 
 <p align="center">
@@ -104,12 +104,14 @@
 ## What's new
 
 <!-- dex:whatsnew -->
-- Honor CARGO_BUILD_TARGET in FreeBSD packaging for aarch64 release builds (#2847) ([146161b4](https://github.com/storytold/gridcraft/commit/146161b4b450a56e5e59a083ba0478582d1e602b))
-- Grant network access so update checks can reach GitHub (#2841) ([70327cd3](https://github.com/storytold/gridcraft/commit/70327cd3d9b7de9af1bcaa33488c0736a0d346d8))
-- Release 0.13.0 ([43284377](https://github.com/storytold/gridcraft/commit/43284377d2466037628e57d8ad0c891778fdb45c))
-- Enforce Rust coding standards via Clippy ([GridCraft #2711](https://github.com/storytold/gridcraft/pull/2711))
+- **Updates without an office server**: Dexterity Sheets now also reads its own GitHub releases page, a few seconds after it starts, once a day while it stays open, and whenever you choose **Automate › Check for Updates**. A newer version shows as **Update to X.Y.Z** in the status bar exactly as one from the office server does; the office server's installer is preferred when it has one. Every download is checked against the release's checksum. Turn the GitHub check off in the updates dialog if a PC must not reach the internet.
+- Fixed: **Check for Updates** said "You have the latest version" before any answer had come back (and when the PC was not signed in to a server). The dialog now says what the office server and the GitHub releases page each answered, and when.
+- Fixed: **Update now** and **Roll Back** started the installer while workbooks still had unsaved changes. Both now ask about each unsaved workbook first, as closing the app does; cancelling keeps the current version.
+- **Roll Back** lists earlier versions from the office server and from the GitHub releases page, with the source beside each.
+- The updates dialog now has the **Stable / Testing** channel switch, the GitHub check switch, **Check again**, and links to What's New, Report a Problem and Roll Back.
+- **Automate** tab: **What's New**, **Report a Problem**, **Roll Back Version** and **Recover Unsaved Work** sit next to Check for Updates, so they no longer need the command search.
 
-[Everything in 1.3.1](https://github.com/vikramdex-ops/dexterity-sheets/releases/tag/v1.3.1).
+[Everything in 1.3.2](https://github.com/vikramdex-ops/dexterity-sheets/releases/tag/v1.3.2) and 14 more.
 <!-- /dex:whatsnew -->
 
 Dexterity Sheets is built on the open-source [GridCraft](https://github.com/storytold/gridcraft)
