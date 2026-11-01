@@ -12,12 +12,14 @@
 //! - [`sync`]: keeping an open workbook in step with the server.
 //! - [`server`]: the server.
 //! - [`discovery`]: finding servers on the LAN.
+//! - [`mention`]: @mentions in comments.
 
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 pub mod auth;
 pub mod client;
 pub mod discovery;
+pub mod mention;
 pub mod patch;
 pub mod proto;
 pub mod server;

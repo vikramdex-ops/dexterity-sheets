@@ -55,7 +55,18 @@ app.
   recovered. Clicking one opens the spreadsheet. Notices for someone who is not signed in wait on
   the server (`notices/<user>.jsonl`). The status bar's **Notifications** lists them; its
   settings turn notifications off, pick the kinds, mute single workbooks, or collect them into one
-  summary an hour. Not done yet: @mentions in comments.
+  summary an hour.
+- **@mentions.** Typing `@` in a comment (Review › New Comment) or a reply in the Comments pane
+  lists the people on the office server; picking one writes `@Display Name` (↑/↓, Enter or Tab,
+  or a click; Esc closes the list). Mentions are plain text, so they survive saving as .xlsx. The
+  server finds mentions that are new in an edit (a new comment or reply, or a name added to an
+  edited one; moving, resolving or deleting a comment tells nobody again) and sends each person a
+  notice with the sheet, cell and comment text (`crates/collab/src/mention.rs`). Clicking it opens
+  the workbook at that cell with the Comments pane, through a link that carries the cell:
+  `dexterity://open/<server>/<id>?at=<sheet>!<cell>`. Someone signed out is told at sign-in.
+  Nobody hears about their own comment, and a person who can't open the workbook is not told:
+  the author gets a notice naming them instead, so they can share it. Mentions only reach people
+  from a shared workbook; in one that isn't shared, the suggestion list says nobody will be told.
 - **Templates.** File › New lists the office's approved templates (from the server's
   `templates/` folder) and your own (`%APPDATA%\Dexterity Sheets\Templates`). Creating from a
   template makes a new, unsaved copy; a template's next version never changes it. Administrators

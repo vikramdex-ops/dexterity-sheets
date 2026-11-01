@@ -399,7 +399,8 @@ pub struct TemplateInfo {
 pub struct Notice {
     pub id: String,
     pub time: i64,
-    /// `shared`, `permission`, `revoked`, `mention`, `changed`, `update`, `recovery`.
+    /// `shared`, `permission`, `revoked`, `mention`, `mentionNoAccess`, `changed`, `update`,
+    /// `recovery`.
     pub kind: String,
     #[serde(skip_serializing_if = "String::is_empty")]
     pub book: String,
@@ -411,12 +412,66 @@ pub struct Notice {
     #[serde(skip_serializing_if = "String::is_empty")]
     pub permission: String,
     pub text: String,
+    /// Where it happened (a mention: the comment's sheet and cell), opened with the workbook.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub sheet: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub cell: String,
 }
 
 /// A `dexterity://` link to a shared workbook on `server` (`host:port`), which opens it in the
 /// app after the person's own permissions are checked. It carries no secret.
 pub fn link(server: &str, book: &str) -> String {
     format!("dexterity://open/{server}/{book}")
+}
+
+/// A [`link`] that also goes to a cell once the workbook is open:
+/// `dexterity://open/<server>/<book>?at=<sheet>!<cell>`, the sheet name percent-encoded.
+pub fn link_at(server: &str, book: &str, sheet: &str, cell: &str) -> String {
+    if cell.is_empty() {
+        return link(server, book);
+    }
+    let enc: String = sheet
+        .bytes()
+        .map(|b| if b.is_ascii_alphanumeric() || b"-._~".contains(&b) { char::from(b).to_string() } else { format!("%{b:02X}") })
+        .collect();
+    format!("{}?at={enc}!{cell}", link(server, book))
+}
+
+/// A sheet and a cell a link goes to.
+pub type LinkTarget = (String, String);
+
+/// `(server, book, (sheet, cell))` of a [`link`] or [`link_at`].
+pub fn parse_link_at(s: &str) -> Option<(String, String, Option<LinkTarget>)> {
+    let (base, at) = match s.trim().split_once("?at=") {
+        Some((b, a)) => (b, Some(a)),
+        None => (s, None),
+    };
+    let (server, book) = parse_link(base)?;
+    let at = at.and_then(|a| {
+        let (sheet, cell) = a.trim().trim_end_matches('/').rsplit_once('!')?;
+        let bytes = sheet.as_bytes();
+        let mut raw = Vec::with_capacity(bytes.len());
+        let mut i = 0;
+        while let Some(&b) = bytes.get(i) {
+            if b == b'%' {
+                let hex = std::str::from_utf8(bytes.get(i + 1..i + 3)?).ok()?;
+                raw.push(u8::from_str_radix(hex, 16).ok()?);
+                i += 3;
+            } else {
+                raw.push(b);
+                i += 1;
+            }
+        }
+        let sheet = String::from_utf8(raw).ok()?;
+        let ok = !sheet.is_empty()
+            && sheet.chars().count() <= 31
+            && !cell.is_empty()
+            && cell.len() <= 12
+            && cell.chars().all(|c| c.is_ascii_alphanumeric() || c == '$');
+        ok.then(|| (sheet, cell.to_string()))
+    });
+    Some((server, book, at))
 }
 
 /// The browser fallback for [`link`]: a page on the office server that opens the app or offers

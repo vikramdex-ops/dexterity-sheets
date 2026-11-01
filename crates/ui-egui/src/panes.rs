@@ -98,7 +98,9 @@ fn comments(app: &mut SheetApp, ui: &mut Ui) {
                             app.run_or_alert("review.resolveComment", json!({"cell": cell, "resolved": !c.resolved}));
                         }
                         let send = ui.small_button("Send").clicked();
-                        let r = ui.add(egui::TextEdit::singleline(&mut draft).hint_text("Reply…").desired_width(ui.available_width()));
+                        let r = crate::dex_ui::mention::field(ui, &mut draft, c.threaded, |ui, s| {
+                            ui.add(egui::TextEdit::singleline(s).hint_text("Reply…").desired_width(ui.available_width()))
+                        });
                         if (r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) || send) && !draft.is_empty() {
                             app.run_or_alert("review.replyComment", json!({"cell": cell, "text": draft}));
                             draft.clear();

@@ -9,7 +9,7 @@
 //!   (the office server serves it on its usual port). A second copy of the app hands a link to
 //!   the one already running (a local port) and closes.
 //! - **Notifications:** what the server tells a person (shared with you, access changed or
-//!   removed, changes while you were away) and what the app notices itself (a new version,
+//!   removed, mentioned in a comment, changes while you were away) and what the app notices itself (a new version,
 //!   unsaved work to recover): a Windows notification that opens the workbook when clicked, and
 //!   a history panel. People choose which kinds they get, mute single workbooks, and get them
 //!   at once or as an hourly summary. Never one per cell edit.
@@ -67,6 +67,8 @@ pub struct Share {
     form_for: Option<u64>,
     pending_access: Option<(String, Access)>,
     pending_link: Option<(String, String)>,
+    /// A cell to go to once its shared workbook is open (a mention): book, sheet, cell, since.
+    goto: Option<(String, String, String, f64)>,
     inbox: Option<Receiver<String>>,
     inbox_tried: bool,
     loaded: bool,
@@ -112,8 +114,10 @@ pub fn open_link(app: &mut SheetApp, s: &str) -> bool {
     if !s.to_ascii_lowercase().starts_with("dexterity:") {
         return false;
     }
+    // Only a copy just started with the link (before its first frame) hands it over and closes.
+    // A running window never does, even one that couldn't take the link port: it may hold work.
     #[cfg(not(target_arch = "wasm32"))]
-    if crate::dex_ui::desktop() && app.collab.share.inbox.is_none() && forward(s) {
+    if crate::dex_ui::desktop() && !app.collab.share.loaded && app.collab.share.inbox.is_none() && forward(s) {
         // The running app has it; this copy has nothing to do.
         std::process::exit(0);
     }
@@ -121,8 +125,11 @@ pub fn open_link(app: &mut SheetApp, s: &str) -> bool {
         app.collab.share.panel = true;
         return true;
     }
-    match proto::parse_link(s) {
-        Some((server, book)) => {
+    match proto::parse_link_at(s) {
+        Some((server, book, at)) => {
+            if let Some((sheet, cell)) = at {
+                app.collab.share.goto = Some((book.clone(), sheet, cell, crate::clock::monotonic_ms()));
+            }
             app.collab.share.pending_link = Some((server.clone(), book));
             if !app.collab.signed_in() {
                 app.collab.set_form_server(&server);
@@ -194,8 +201,13 @@ pub fn tick(app: &mut SheetApp) {
     if app.collab.signed_in()
         && let Some((_, book)) = app.collab.share.pending_link.take()
     {
-        app.collab.open_book(&book);
+        // Already open here: just bring it forward (and go to the cell, if any).
+        match app.collab.docs.iter().find(|d| d.book.id == book).map(|d| d.doc_uid) {
+            Some(uid) => activate(app, uid),
+            None => app.collab.open_book(&book),
+        }
     }
+    go_to_pending(app);
     let now = crate::clock::monotonic_ms();
     if !app.collab.share.summary.is_empty() && now - app.collab.share.summary_at >= SUMMARY_EVERY_MS {
         app.collab.share.summary_at = now;
@@ -232,6 +244,12 @@ pub fn notice(app: &mut SheetApp, n: Notice) {
     if !n.permission.is_empty() {
         lines.push(format!("Permission: {}", if n.permission == "editor" { "Editor" } else { "Viewer" }));
     }
+    match n.kind.as_str() {
+        "mention" => lines.push(format!("{}: {}", place(&n), n.text)),
+        "mentionNoAccess" => lines.push(n.text.clone()),
+        _ => {}
+    }
+    let launch = if n.cell.is_empty() { launch } else { proto::link_at(&server, &n.book, &n.sheet, &n.cell) };
     native(&title_of(&n), &lines, &launch);
 }
 
@@ -253,13 +271,69 @@ fn title_of(n: &Notice) -> String {
         "permission" => format!("Your access to {} changed", n.name),
         "revoked" => "Your access to a shared spreadsheet has changed".into(),
         "changed" if !n.by.is_empty() => format!("{} updated a shared spreadsheet", n.by),
+        "mention" => format!("{} mentioned you in a comment", if n.by.is_empty() { "Someone" } else { &n.by }),
+        "mentionNoAccess" => "Someone you mentioned can't open the spreadsheet".into(),
         _ => n.text.clone(),
     }
 }
 
 fn notice_line(n: &Notice) -> String {
     let t = title_of(n);
-    if n.name.is_empty() || t.contains(&n.name) { t } else { format!("{t}: {}", n.name) }
+    let line = if n.name.is_empty() || t.contains(&n.name) { t } else { format!("{t}: {}", n.name) };
+    match n.kind.as_str() {
+        "mention" if !n.cell.is_empty() => format!("{line} ({}): \u{201c}{}\u{201d}", place(n), n.text),
+        "mentionNoAccess" => n.text.clone(),
+        _ => line,
+    }
+}
+
+/// `Sheet1!B4`: where a notice points.
+fn place(n: &Notice) -> String {
+    if n.sheet.is_empty() { n.cell.clone() } else { format!("{}!{}", n.sheet, n.cell) }
+}
+
+/// Brings the shared workbook in window `uid` to the front.
+fn activate(app: &mut SheetApp, uid: u64) {
+    if let Some(i) = app.session.documents().iter().position(|d| d.uid == uid) {
+        let _ = app.run("window.activate", json!({"index": i}));
+    }
+}
+
+/// Opens a shared workbook at a cell (a mention): now if it is open here, otherwise once the
+/// server has sent it.
+fn go_to(app: &mut SheetApp, book: &str, sheet: &str, cell: &str) {
+    if !cell.is_empty() {
+        app.collab.share.goto = Some((book.into(), sheet.into(), cell.into(), crate::clock::monotonic_ms()));
+    }
+    match app.collab.docs.iter().find(|d| d.book.id == book).map(|d| d.doc_uid) {
+        Some(uid) => activate(app, uid),
+        None => app.collab.open_book(book),
+    }
+    go_to_pending(app);
+}
+
+/// Most a cell waits for its workbook to arrive before it is forgotten.
+const GOTO_WAIT_MS: f64 = 60_000.0;
+
+/// Goes to the waiting cell once its workbook is open: its sheet, the cell, and the Comments
+/// pane, so the comment that mentioned the person is in front of them.
+fn go_to_pending(app: &mut SheetApp) {
+    let Some((book, sheet, cell, since)) = app.collab.share.goto.clone() else { return };
+    if crate::clock::monotonic_ms() - since > GOTO_WAIT_MS {
+        app.collab.share.goto = None;
+        return;
+    }
+    let Some(uid) = app.collab.docs.iter().find(|d| d.book.id == book).map(|d| d.doc_uid) else { return };
+    app.collab.share.goto = None;
+    activate(app, uid);
+    if !sheet.is_empty() && app.run("sheet.activate", json!({"sheet": sheet})).is_err() {
+        app.toast = Some((format!("The sheet \"{sheet}\" is no longer in this spreadsheet."), crate::now_ms()));
+        return;
+    }
+    if app.run("selection.set", json!({"cell": cell})).is_ok() {
+        app.grid.ensure_visible = true;
+        let _ = app.run("review.showComments", json!({"on": true}));
+    }
 }
 
 /// A Windows notification under the app's own name and icon (the Start menu shortcut's
@@ -582,7 +656,7 @@ fn panel(app: &mut SheetApp, ctx: &egui::Context) {
         return;
     }
     let mut open = true;
-    let mut go: Option<String> = None;
+    let mut go: Option<(String, String, String)> = None;
     let mut mute: Option<(String, bool)> = None;
     let mut changed = false;
     egui::Window::new("Notifications").collapsible(false).open(&mut open).default_width(440.0).show(ctx, |ui| {
@@ -591,7 +665,7 @@ fn panel(app: &mut SheetApp, ctx: &egui::Context) {
             if p.history.is_empty() {
                 ui.label(
                     RichText::new(
-                        "Nothing yet. You are told here when someone shares a spreadsheet with you, your access changes, or a new version is ready.",
+                        "Nothing yet. You are told here when someone shares a spreadsheet with you, mentions you in a comment, your access changes, or a new version is ready.",
                     )
                     .weak(),
                 );
@@ -601,7 +675,7 @@ fn panel(app: &mut SheetApp, ctx: &egui::Context) {
                     ui.label(when(n.time));
                     ui.label(notice_line(n));
                     if !n.book.is_empty() && n.kind != "revoked" && ui.small_button("Open").clicked() {
-                        go = Some(n.book.clone());
+                        go = Some((n.book.clone(), n.sheet.clone(), n.cell.clone()));
                     }
                     if !n.book.is_empty() {
                         let muted = p.muted.contains(&n.book);
@@ -645,8 +719,8 @@ fn panel(app: &mut SheetApp, ctx: &egui::Context) {
         }
         save(&app.collab.share.prefs);
     }
-    if let Some(b) = go {
-        app.collab.open_book(&b);
+    if let Some((b, sheet, cell)) = go {
+        go_to(app, &b, &sheet, &cell);
     }
     if !open {
         app.collab.share.panel = false;
@@ -694,5 +768,39 @@ mod tests {
         assert_eq!(title_of(&n), "Vikram shared a spreadsheet with you");
         assert_eq!(notice_line(&n), "Vikram shared a spreadsheet with you: Project_Tracker");
         assert!(kinds().contains_key("changed"));
+    }
+
+    #[test]
+    fn a_mention_says_who_where_and_what_and_links_to_the_cell() {
+        let n = Notice {
+            kind: "mention".into(),
+            by: "Vikram".into(),
+            name: "Line List 100".into(),
+            book: "line-list-100-3f2a".into(),
+            sheet: "Line List".into(),
+            cell: "B4".into(),
+            text: "@Anita Rao please check the length".into(),
+            ..Notice::default()
+        };
+        assert_eq!(title_of(&n), "Vikram mentioned you in a comment");
+        assert_eq!(
+            notice_line(&n),
+            "Vikram mentioned you in a comment: Line List 100 (Line List!B4): \u{201c}@Anita Rao please check the length\u{201d}"
+        );
+        assert!(kinds().contains_key("mention"), "people can turn mentions off");
+        let l = proto::link_at("PC-SERVER:47810", &n.book, &n.sheet, &n.cell);
+        assert_eq!(l, "dexterity://open/PC-SERVER:47810/line-list-100-3f2a?at=Line%20List!B4");
+        assert_eq!(proto::parse_link_at(&l), Some(("PC-SERVER:47810".into(), n.book.clone(), Some(("Line List".into(), "B4".into())))));
+        assert_eq!(proto::parse_link_at("dexterity://open/s:1/b?at=Odd%21Name!$C$7").and_then(|x| x.2), Some(("Odd!Name".into(), "$C$7".into())));
+        // A link without a cell, or with a damaged one, still opens the workbook.
+        assert_eq!(proto::parse_link_at("dexterity://open/s:1/b"), Some(("s:1".into(), "b".into(), None)));
+        assert_eq!(proto::parse_link_at("dexterity://open/s:1/b?at=Sheet1!B4;rm"), Some(("s:1".into(), "b".into(), None)));
+        assert_eq!(proto::parse_link_at("dexterity://open/s:1/b?at=%ZZ!B4"), Some(("s:1".into(), "b".into(), None)));
+        let no = Notice {
+            kind: "mentionNoAccess".into(),
+            text: "Rahul doesn't have access to \"Line List 100\", so they weren't told.".into(),
+            ..Notice::default()
+        };
+        assert_eq!(notice_line(&no), no.text);
     }
 }

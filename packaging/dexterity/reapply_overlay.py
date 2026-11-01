@@ -217,6 +217,19 @@ if '("edit.repeat", DEX)' not in s:
         write(FUZZ, s2)
 insert(f"{UI}/lib.rs", "pub mod dex_ui;", "pub mod collab_ui;\n", "pub mod dex_ui;\n")
 insert("crates/ui-egui/tests/it/main.rs", "mod dex_parity;", "mod control_timeout;\n", "mod dex_parity;\n")
+# @mentions in comments: suggestions in the New Comment field and in replies.
+replace(
+    f"{UI}/dialogs/show.rs",
+    '                            ui.add(egui::TextEdit::multiline(&mut s).desired_rows(4).desired_width(320.0)).labelled_by(label.id)\n',
+    '                            crate::dex_ui::mention::field(ui, &mut s, d.name == "comment", |ui, s| {\n                                ui.add(egui::TextEdit::multiline(s).desired_rows(4).desired_width(320.0))\n                            })\n                            .labelled_by(label.id)\n',
+    required=False,
+)
+replace(
+    f"{UI}/panes.rs",
+    '                        let r = ui.add(egui::TextEdit::singleline(&mut draft).hint_text("Reply…").desired_width(ui.available_width()));\n',
+    '                        let r = crate::dex_ui::mention::field(ui, &mut draft, c.threaded, |ui, s| {\n                            ui.add(egui::TextEdit::singleline(s).hint_text("Reply…").desired_width(ui.available_width()))\n                        });\n',
+    required=False,
+)
 insert(
     f"{UI}/dialogs/cond_format_rules.rs",
     "crate::dex_ui::new_rule_button(app, ui);",

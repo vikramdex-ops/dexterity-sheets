@@ -31,7 +31,7 @@ use crate::proto::{
     self, Access, BookInfo, Change, ClientMsg, Conflict, FileSource, LastEdit, Logged, Notice, Peer, Role, Rule, ServerMsg, TemplateInfo, UpdateInfo,
     UserInfo, VersionInfo,
 };
-use crate::{Error, Result, auth, now_ms};
+use crate::{Error, Result, auth, mention, now_ms};
 
 /// Write a fresh snapshot after this many edits.
 const SNAPSHOT_EVERY: u64 = 300;
@@ -41,6 +41,9 @@ const AUTO_VERSION_MS: i64 = 60 * 60 * 1000;
 /// opened), so a server that runs for months doesn't hold every workbook it ever served.
 const IDLE_UNLOAD_MS: i64 = 10 * 60 * 1000;
 const DAY_MS: i64 = 24 * 60 * 60 * 1000;
+/// Keeps notice ids apart when several are made in the same millisecond (one comment mentioning
+/// two people).
+static NOTICE_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 /// Most changes a history query returns.
 const HISTORY_MAX: usize = 5000;
 
@@ -629,10 +632,61 @@ impl State {
         }
     }
 
+    /// Tells each person mentioned in a comment, with the cell, once they can open the workbook.
+    /// The person who wrote it hears about anyone mentioned who can't open it (they were not
+    /// told), so they can share it with them.
+    fn tell_mentioned(&self, book: &str, user: &str, display: &str, mentions: &[mention::Mention]) {
+        let Some(m) = self.metas.get(book) else { return };
+        let now = now_ms();
+        let mut no_access: Vec<String> = Vec::new();
+        for men in mentions {
+            for who in men.users.iter().filter(|w| *w != user) {
+                let Some(rec) = self.users.iter().find(|u| u.user == *who && !u.disabled) else { continue };
+                if permission(m, who, rec.role, now).is_none() {
+                    if !no_access.contains(&rec.display) {
+                        no_access.push(rec.display.clone());
+                    }
+                    continue;
+                }
+                log::info!("{book}: {user} mentioned {who} in a comment on {}!{}", men.sheet, men.cell);
+                self.notify(
+                    who,
+                    Notice {
+                        kind: "mention".into(),
+                        book: book.to_string(),
+                        name: m.name.clone(),
+                        by: display.to_string(),
+                        text: men.quote.clone(),
+                        sheet: men.sheet.clone(),
+                        cell: men.cell.clone(),
+                        ..Notice::default()
+                    },
+                );
+            }
+        }
+        if !no_access.is_empty() {
+            let names = no_access.join(", ");
+            let they = if no_access.len() == 1 { "doesn't have access" } else { "don't have access" };
+            self.notify(
+                user,
+                Notice {
+                    kind: "mentionNoAccess".into(),
+                    book: book.to_string(),
+                    name: m.name.clone(),
+                    text: format!(
+                        "{names} {they} to \"{}\", so they weren't told about your mention. Share it with them to let them see the comment.",
+                        m.name
+                    ),
+                    ..Notice::default()
+                },
+            );
+        }
+    }
+
     /// Tells `user` now if they are connected, otherwise at their next sign-in.
     fn notify(&self, user: &str, mut n: Notice) {
         n.time = now_ms();
-        n.id = format!("n-{}-{}", n.time, n.kind);
+        n.id = format!("n-{}-{}-{}", n.time, n.kind, NOTICE_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
         let online: Vec<&Conn> = self.conns.values().filter(|c| c.user == user).collect();
         if online.is_empty() {
             let path = self.dir.join("notices").join(format!("{user}.jsonl"));
@@ -671,8 +725,8 @@ impl State {
                     book: m.id.clone(),
                     name: m.name.clone(),
                     by,
-                    permission: String::new(),
                     text: format!("{} edit(s) since you last had it open", m.seq - seen),
+                    ..Notice::default()
                 });
             }
         }
@@ -1624,6 +1678,8 @@ impl State {
         let changes = describe(&b.wb, &patch, b.meta.seq + 1, time, user, display);
         let mut next = b.wb.clone();
         patch::apply(&mut next, &patch)?;
+        let people: Vec<mention::Person> = self.users.iter().filter(|u| !u.disabled).map(|u| (u.user.clone(), u.display.clone())).collect();
+        let mentions = if user == AUTOMATION { Vec::new() } else { mention::new_mentions(&b.wb, &next, &patch, &people) };
         // Cells someone else changed after the last edit this client had seen.
         let mut conflicts = Vec::new();
         if let Some(base) = base {
@@ -1695,6 +1751,7 @@ impl State {
         let msg =
             ServerMsg::Patched { book: book.to_string(), seq, time, user: user.to_string(), origin: entry.origin, patch: entry.patch, conflicts };
         self.broadcast(book, &msg, None);
+        self.tell_mentioned(book, user, display, &mentions);
         if version_due {
             if let Err(e) = self.save_version(book, "auto", "automatic") {
                 log::error!("{book}: automatic version failed: {e}");
@@ -2322,6 +2379,63 @@ mod housekeeping_tests {
         let mut st = Server::open(d.to_path_buf(), "T".into()).expect("open").state.into_inner().unwrap_or_else(|p| p.into_inner());
         st.load_book(id).expect("load");
         st
+    }
+
+    /// Notices kept for `user` (nobody is connected in these tests).
+    fn kept(d: &Path, user: &str) -> Vec<Notice> {
+        fs::read_to_string(d.join("notices").join(format!("{user}.jsonl")))
+            .unwrap_or_default()
+            .lines()
+            .map(|l| serde_json::from_str(l).expect("notice"))
+            .collect()
+    }
+
+    #[test]
+    fn a_mention_in_a_comment_tells_that_person_and_only_once() {
+        let d = dir("mention");
+        set_user(&d, "anita", "Anita Rao", "pipe-456", Role::Editor).expect("user");
+        set_user(&d, "rahul", "Rahul", "pipe-789", Role::Editor).expect("user");
+        let (mut st, id, wb) = fresh(&d);
+        // Shared with Anita only: Rahul can't open it.
+        st.metas.get_mut(&id).expect("meta").access =
+            Access { mode: "people".into(), people: [("anita".to_string(), "editor".to_string())].into(), ..Access::default() };
+        let mut s = Session::new();
+        s.add_document(DocState::new((*wb).clone(), None, "t".into(), Trust::Local));
+        let edit = |s: &mut Session, st: &mut State, seq: u64, cmd: &str, p: serde_json::Value, wb: &mut Arc<Workbook>| {
+            s.execute(cmd, p).expect("command");
+            let after = s.active().expect("doc").wb.clone();
+            let patch = patch::diff(wb, &after, &mut patch::DiffCache::default()).expect("diff");
+            *wb = after;
+            st.take_patch(0, "vikram", "Vikram", Role::Admin, &id, seq, patch, None).expect("taken");
+        };
+        let mut wb = wb;
+        edit(
+            &mut s,
+            &mut st,
+            1,
+            "review.newComment",
+            serde_json::json!({"cell": "B4", "text": "@Anita Rao please check the length, cc @Rahul"}),
+            &mut wb,
+        );
+        let a = kept(&d, "anita");
+        assert_eq!(a.len(), 1, "{a:?}");
+        assert_eq!((a[0].kind.as_str(), a[0].by.as_str(), a[0].sheet.as_str(), a[0].cell.as_str()), ("mention", "Vikram", "Sheet1", "B4"));
+        assert_eq!(a[0].text, "@Anita Rao please check the length, cc @Rahul");
+        assert!(kept(&d, "rahul").is_empty(), "Rahul can't open the workbook, so he isn't told about it");
+        let v = kept(&d, "vikram");
+        assert_eq!(v.len(), 1);
+        assert_eq!(v[0].kind, "mentionNoAccess");
+        assert!(v[0].text.starts_with("Rahul doesn't have access"), "{}", v[0].text);
+        // Typing in other cells, resolving, or a reply that names nobody new tells nobody.
+        let _ = fs::remove_dir_all(d.join("notices"));
+        edit(&mut s, &mut st, 2, "cell.set", serde_json::json!({"cell": "A1", "input": "Line No"}), &mut wb);
+        edit(&mut s, &mut st, 3, "review.replyComment", serde_json::json!({"cell": "B4", "text": "checked, 12.5 m"}), &mut wb);
+        edit(&mut s, &mut st, 4, "review.resolveComment", serde_json::json!({"cell": "B4"}), &mut wb);
+        assert!(kept(&d, "anita").is_empty() && kept(&d, "vikram").is_empty());
+        // Mentioning yourself tells nobody either.
+        edit(&mut s, &mut st, 5, "review.replyComment", serde_json::json!({"cell": "B4", "text": "note to @Vikram: issue Rev B"}), &mut wb);
+        assert!(kept(&d, "vikram").is_empty());
+        let _ = fs::remove_dir_all(&d);
     }
 
     #[test]

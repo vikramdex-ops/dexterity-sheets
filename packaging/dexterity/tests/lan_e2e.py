@@ -262,6 +262,44 @@ def shared_files(a, b, c):
     a.shot(os.path.join(OUT, "vikram-shared-file.png"))
 
 
+def mentions(a, b, c, server):
+    """@mentions: the person named in a comment is told, with the cell; nobody else is; someone
+    signed out hears at their next sign-in; the notification opens the comment's cell."""
+
+    def told(app):
+        return [n for n in (app.run("collab.notifications") or {}).get("history", []) if n.get("kind") == "mention"]
+
+    a.run("review.newComment", cell="E2", text="@Anita please check this length against the iso")
+    got = wait(lambda: told(b) or None)
+    n = got[0] if got else {}
+    check(
+        "anita is told vikram mentioned her, with the cell",
+        n.get("by") == "Vikram" and n.get("cell") == "E2" and n.get("name") == "Line List 100" and "check this length" in n.get("text", ""),
+        json.dumps(n),
+    )
+    time.sleep(1.0)
+    check("rahul (not mentioned) and vikram (the author) are not told", not told(c) and not told(a), f"rahul={told(c)} vikram={told(a)}")
+
+    # Anita follows the notification from elsewhere in the workbook.
+    b.run("selection.set", cell="A1")
+    b.run("collab.openLink", link=f"dexterity://open/{server}/{n.get('book')}?at={n.get('sheet')}!{n.get('cell')}")
+    want = f"{n.get('sheet')}!E2"
+    ok = wait(lambda: (lambda st: st if st.get("commentsPane") and any(d["active"] and d.get("at") == want for d in st["docs"]) else None)(b.status()))
+    check("the notification opens the comment's cell and the Comments pane", ok, json.dumps([d.get("at") for d in b.status()["docs"]]))
+
+    # Rahul is signed out when Anita mentions him in a reply: he is told when he signs back in.
+    c.run("collab.signOut")
+    wait(lambda: c.status()["status"] != "Online")
+    b.run("review.replyComment", cell="E2", text="Checked, 12.5 m is right. Over to you @Rahul")
+    time.sleep(1.0)
+    c.run("collab.signIn", server=server, user="rahul", password="pass-rah-3")
+    got = wait(lambda: told(c) or None, timeout=30, step=0.25)
+    n = got[0] if got else {}
+    check("rahul, signed out, is told at his next sign-in", n.get("by") == "Anita" and "Over to you" in n.get("text", ""), json.dumps(n))
+    time.sleep(1.0)
+    check("anita's reply doesn't tell anita again", len(told(b)) == 1, json.dumps(told(b)))
+
+
 def main():
     if not APP or not os.path.exists(SERVER):
         print("build first: app or server exe missing in", REL)
@@ -386,6 +424,7 @@ def main():
         users = {json.loads(l)["user"] for l in lines}
         check("server audit trail names every editor", {"vikram", "anita", "rahul"} <= users, f"{len(lines)} audit lines, users={sorted(users)}")
         a.shot(os.path.join(OUT, "vikram-window.png"))
+        mentions(a, b, c, server)
         shared_files(a, b, c)
         time.sleep(1.5)
     finally:

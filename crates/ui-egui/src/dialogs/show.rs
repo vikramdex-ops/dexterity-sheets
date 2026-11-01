@@ -516,7 +516,10 @@ pub(super) fn form_fields(ui: &mut egui::Ui, d: &mut Dialog) {
                             .unwrap_or_default();
                         let multiline = key == "text";
                         let r = if multiline {
-                            ui.add(egui::TextEdit::multiline(&mut s).desired_rows(4).desired_width(320.0)).labelled_by(label.id)
+                            crate::dex_ui::mention::field(ui, &mut s, d.name == "comment", |ui, s| {
+                                ui.add(egui::TextEdit::multiline(s).desired_rows(4).desired_width(320.0))
+                            })
+                            .labelled_by(label.id)
                         } else {
                             ui.add(egui::TextEdit::singleline(&mut s).desired_width(320.0)).labelled_by(label.id)
                         };

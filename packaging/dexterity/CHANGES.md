@@ -8,6 +8,9 @@ automatically and don't go here.
 
 ## Unreleased
 
+- Fixed: opening a `dexterity:` link in a running window through automation (`collab.openLink` over the control channel or MCP) could close that window when a second Dexterity Sheets was open under the same Windows account, losing anything unsaved in it. Only a copy just started with a link now hands it to the one already running.
+- **@mentions in comments.** Type **@** in a comment or a reply in the Comments pane and pick a colleague from the list (↑/↓ and Enter or Tab, or click; Esc closes it): their name goes in as **@Name**. When the comment reaches the office server, each person mentioned gets a Windows notification saying who mentioned them, in which spreadsheet and cell, and what the comment says; clicking it opens the spreadsheet at that cell with the Comments pane. Someone signed out is told at their next sign-in. If a person you mention can't open the spreadsheet, you are told so you can share it with them. Mentions only count in shared spreadsheets, and the list says so in one that isn't shared. Turn them off in Notifications › Settings ("I am mentioned in a comment").
+
 ## 1.3.3 · 1 November 2026
 
 - Brings in the latest fixes and features of official GridCraft (listed in the release notes on GitHub). Nothing else changed in Dexterity Sheets.

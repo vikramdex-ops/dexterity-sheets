@@ -72,7 +72,7 @@
 <tr>
 <td width="33%" valign="top"><p><b>Start from the office's templates.</b> <b>File › New</b> lists the approved project trackers, registers and minutes, with a preview. A new spreadsheet is your own copy: a later version of the template never changes it.</p></td>
 <td width="33%" valign="top"><p><b>Let the server do the routine checks.</b> <b>Automation rules</b> on a shared spreadsheet: every Monday find overdue items and run the Quality Check, or stamp the date when a status becomes Completed. Fixed steps only, no macros.</p></td>
-<td width="33%" valign="top"><p><b>Told when it matters.</b> Windows notifications when something is shared with you, your access changes, others edited while you were away (one summary), or a new version is ready. Mute a spreadsheet or get one summary an hour.</p></td>
+<td width="33%" valign="top"><p><b>Told when it matters.</b> Type <b>@</b> in a comment to mention a colleague: they get a Windows notification that opens the cell. You also hear when something is shared with you, your access changes, others edited while you were away (one summary), or a new version is ready.</p></td>
 </tr>
 </table>
 
@@ -281,6 +281,7 @@ only by administrators; uninstalling never deletes it. Full guide:
 | **Versions** | *Review › Versions*: keep a labelled version ("Issued for review Rev B"), open any version as a separate copy, or restore one for everyone (the current state is kept first). Ctrl+S keeps a version too. |
 | **Offline** | Edits made while the server can't be reached are kept and sent on reconnect; the status bar shows how many are waiting. |
 | **Conflicts** | Two people changing the same cell at the same moment: the later edit wins, both are told who changed it and which value was kept, and the replaced value stays in Edit History. Different cells never conflict. |
+| **@mentions** | Type **@** in a comment or reply and pick a colleague: they get a Windows notification with the spreadsheet, cell and comment, and clicking it opens that cell. Someone signed out is told at sign-in; if a person you mention can't open the spreadsheet, you are told so you can share it. |
 | **Automation rules** | *Share › Automation rules…*: on a schedule or when a value changes, the office server finds overdue items, runs the Quality Check, writes a report, stamps a completion time or notifies people. Fixed steps only: no macros or scripts. |
 
 What the server keeps on disk, and why nothing acknowledged can be lost, is in

@@ -116,7 +116,8 @@ is used.
 | Edit history (who changed which cell, when, old → new) and versions | present (Dexterity) | `crates/ui-egui/src/collab_ui.rs:1493` (`history_pane`) | — | |
 | Review ▸ Show Changes | present | `catalog.rs:248`; `keytip_table/generated.rs:323` reserved | H (the name Excel users look for) | added `07a0f893`: opens Edit History |
 | Threaded comments with replies and resolve, notes | present | `review.*` commands; `docs/file-format-parity.md` (#300) | — | |
-| @mentions in comments, comment filtering | missing | no `mention` in `crates/` | L | |
+| @mentions in comments | present (Dexterity) | `crates/collab/src/mention.rs`; `crates/ui-egui/src/dex_ui/mention.rs`; `lan_e2e.py` mention checks | L | added: suggestions while typing `@`, a notification that opens the cell |
+| Comment filtering | missing | no comment filter in `crates/ui-egui/src/panes.rs` | L | |
 | Sheet View (personal sort/filter while co-authoring) | missing | no sheet-view feature in `crates/ui-egui/src` | L | |
 | Track Changes (legacy shared workbook) | n/a: replaced by live co-authoring and edit history, as in Excel | — | — | |
 

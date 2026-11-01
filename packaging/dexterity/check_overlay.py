@@ -50,6 +50,8 @@ HOOKS = [
     ("crates/ui-egui/src/lib.rs", "pub mod dex_ui;", "Dexterity UI module"),
     ("crates/ui-egui/tests/it/main.rs", "mod dex_parity;", "UI tests of the Dexterity additions"),
     ("crates/ui-egui/src/{dialogs.rs,dialogs/*.rs}", "crate::dex_ui::new_rule_button(app, ui);", "Rules Manager: New Rule…"),
+    ("crates/ui-egui/src/{dialogs.rs,dialogs/*.rs}", "crate::dex_ui::mention::field(ui, &mut s, d.name == \"comment\"", "New Comment: @mention suggestions"),
+    ("crates/ui-egui/src/{panes.rs,panes/*.rs}", "crate::dex_ui::mention::field(ui, &mut draft, c.threaded", "Comments pane replies: @mention suggestions"),
     ("crates/ui-egui/src/{dialogs.rs,dialogs/*.rs}", "crate::dex_ui::result_view(", "result dialogs (Statistics, Accessibility, Error Checking, Evaluate Formula) readable, not raw JSON"),
     ("crates/ui-egui/src/{lib.rs,app.rs,app/*.rs}", "crate::dex_ui::run_command(self, id, p)", "Remove Arrows variants clear the trace arrows"),
     ("crates/ui-egui/src/{lib.rs,app.rs,app/*.rs}", "crate::dex_ui::dialog_alias(name)", "engine dialog requests under other names (New Formatting Rule)"),

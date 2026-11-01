@@ -288,6 +288,7 @@ pub fn tick(app: &mut SheetApp, ctx: &egui::Context) {
     crate::dex_ui::recovery::tick(app);
     crate::dex_ui::releases::tick(app);
     crate::dex_ui::share::tick(app);
+    crate::dex_ui::mention::publish(app, ctx);
     if app.collab.client.is_none() && app.collab.docs.is_empty() {
         if let Some(rx) = &app.collab.finding
             && let Ok(found) = rx.try_recv()
@@ -757,6 +758,8 @@ pub fn run_command(app: &mut SheetApp, id: &str, p: &Json) -> Option<Result<Json
                         "book": d.book.name, "id": d.book.id, "seq": d.seq, "pending": d.pending_len(), "state": sync_state(c, d).key(),
                         "peers": d.peers.iter().map(|p| json!({"user": p.user, "sheet": p.sheet, "range": p.range, "editing": p.editing})).collect::<Vec<_>>(),
                         "active": app.session.active().is_some_and(|a| a.uid == d.doc_uid),
+                        // Where that window is: the active sheet and cell.
+                        "at": app.session.documents().iter().find(|x| x.uid == d.doc_uid).and_then(|x| x.wb.active().map(|s| format!("{}!{}", s.name, x.selection.active.a1()))),
                         "source": d.book.source.as_ref().map(|s| json!({"path": s.path, "user": s.user, "machine": s.machine})),
                         "file": c.links.iter().find(|l| l.book == d.book.id).map(|l| json!({
                             "path": l.path, "saved": l.up_to_date() && l.error.is_none(), "error": l.error,
@@ -770,6 +773,7 @@ pub fn run_command(app: &mut SheetApp, id: &str, p: &Json) -> Option<Result<Json
                 "books": c.books.iter().map(|b| json!({"name": b.name, "id": b.id, "openBy": b.open_by, "file": b.source.as_ref().map(|s| s.path.clone())})).collect::<Vec<_>>(),
                 "docs": docs,
                 "sharing": c.joining.iter().map(|j| j.name.clone()).collect::<Vec<_>>(),
+                "commentsPane": app.session.comments_pane || app.grid.pane.as_deref() == Some("comments"),
                 "error": c.error,
             }))
         }
