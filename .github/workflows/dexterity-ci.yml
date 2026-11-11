@@ -57,9 +57,11 @@ jobs:
       - name: Clippy (Dexterity crates and the app)
         run: cargo clippy --release --locked -p gridcraft-collab -p gridcraft-server -p gridcraft-server-manager -p gridcraft-ui-egui -p gridcraft --tests -- -D warnings
       - name: Collaboration and Server Manager tests (patches, convergence, real TCP server, bulk import, backups)
-        run: cargo test --release --locked -p gridcraft-collab -p gridcraft-server-manager
+        run: cargo test --release --locked --no-fail-fast -p gridcraft-collab -p gridcraft-server-manager
       - name: Engine, formula and file-format tests
-        run: cargo test --release --locked -p gridcraft-core -p gridcraft-numfmt -p gridcraft-formula -p gridcraft-functions -p gridcraft-model -p gridcraft-calc -p gridcraft-xlsx -p gridcraft-engine
+        # --no-fail-fast: one run names every failing test in every crate (an upstream merge can
+        # change expectations in several at once), instead of stopping at the first crate.
+        run: cargo test --release --locked --no-fail-fast -p gridcraft-core -p gridcraft-numfmt -p gridcraft-formula -p gridcraft-functions -p gridcraft-model -p gridcraft-calc -p gridcraft-xlsx -p gridcraft-engine
       - name: Build app, CLI, server and Server Manager
         run: cargo build --release --locked -p gridcraft -p gridcraft-cli -p gridcraft-server -p gridcraft-server-manager
       - name: Three windows editing one shared workbook (end to end)

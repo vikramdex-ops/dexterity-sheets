@@ -616,6 +616,31 @@ replace(edit_tests, "    // The default is unchanged: the dates swap, the thousa
         "    // The default is unchanged: the thousands separator is a decimal point. A dotted date is\n    // text where `.` isn't the date separator, as in Excel (en-US).\n", required=False)
 replace(edit_tests, 'assert_eq!(get(&mut s, "A1")["text"], "5/4/2026", "dd.mm.yyyy read as mm.dd.yyyy");',
         'assert_eq!(get(&mut s, "A1")["value"], json!("05.04.2026"), "dotted dates stay text");', required=False)
+# Upstream's range.setValues tests (GridCraft 0.15, #2255) take `05.04.2026` for a date. Here it
+# is text, as above, so it is not among the conversions reported, and the date that survives the
+# round trip is one typed with the separator.
+replace(
+    edit_tests,
+    '    assert_eq!(r["convertedCount"], 4, "{r}");\n'
+    '    assert_eq!(r["converted"][0], json!({"cell": "A1", "input": "05.04.2026", "stored": "5/4/2026"}), "{r}");\n'
+    '    assert_eq!(r["converted"][1], json!({"cell": "B1", "input": "02/11/2026", "stored": "2/11/2026"}), "{r}");\n'
+    '    assert_eq!(r["converted"][2], json!({"cell": "C1", "input": "2.500", "stored": "2.5"}), "{r}");\n'
+    '    assert_eq!(r["converted"][3], json!({"cell": "D1", "input": "4.25 %", "stored": "4.25%"}), "{r}");\n',
+    "    // Dexterity Sheets: a dotted date is text where `.` isn't the date separator (en-US), as in\n"
+    "    // Excel, so A1 is stored as typed and is not a conversion.\n"
+    '    assert_eq!(r["convertedCount"], 3, "{r}");\n'
+    '    assert_eq!(r["converted"][0], json!({"cell": "B1", "input": "02/11/2026", "stored": "2/11/2026"}), "{r}");\n'
+    '    assert_eq!(r["converted"][1], json!({"cell": "C1", "input": "2.500", "stored": "2.5"}), "{r}");\n'
+    '    assert_eq!(r["converted"][2], json!({"cell": "D1", "input": "4.25 %", "stored": "4.25%"}), "{r}");\n',
+    required=False,
+)
+replace(
+    edit_tests,
+    '    s.execute("range.setValues", json!({"range": "A3", "values": [["05.04.2026"]]})).unwrap();\n',
+    "    // Dexterity Sheets: typed with the date separator (a dotted date stays text under en-US).\n"
+    '    s.execute("range.setValues", json!({"range": "A3", "values": [["5/4/2026"]]})).unwrap();\n',
+    required=False,
+)
 io_tests = f"{E}/io/tests.rs" if os.path.exists(os.path.join(ROOT, E, "io", "tests.rs")) else f"{E}/io.rs"
 s = read(io_tests)
 s = re.sub(r'#\[cfg\(not\(target_arch = "wasm32"\)\)\]\n(#\[test\]\n[^\n]*\n(?:[^\n]*\n){0,12}?[^\n]*std::os::unix::fs::symlink)', r"// Unix symlinks; the test doesn't compile on Windows.\n#[cfg(unix)]\n\1", s, count=1)

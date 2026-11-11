@@ -224,11 +224,12 @@ fn set_values_reports_the_strings_typed_input_read() {
     let row = json!(["05.04.2026", "02/11/2026", "2.500", "4.25 %", "=1+1", "'keep"]);
     let r = s.execute("range.setValues", json!({"range": "A1", "values": [row.clone()]})).unwrap();
     assert_eq!(r["cells"], 6, "{r}");
-    assert_eq!(r["convertedCount"], 4, "{r}");
-    assert_eq!(r["converted"][0], json!({"cell": "A1", "input": "05.04.2026", "stored": "5/4/2026"}), "{r}");
-    assert_eq!(r["converted"][1], json!({"cell": "B1", "input": "02/11/2026", "stored": "2/11/2026"}), "{r}");
-    assert_eq!(r["converted"][2], json!({"cell": "C1", "input": "2.500", "stored": "2.5"}), "{r}");
-    assert_eq!(r["converted"][3], json!({"cell": "D1", "input": "4.25 %", "stored": "4.25%"}), "{r}");
+    // Dexterity Sheets: a dotted date is text where `.` isn't the date separator (en-US), as in
+    // Excel, so A1 is stored as typed and is not a conversion.
+    assert_eq!(r["convertedCount"], 3, "{r}");
+    assert_eq!(r["converted"][0], json!({"cell": "B1", "input": "02/11/2026", "stored": "2/11/2026"}), "{r}");
+    assert_eq!(r["converted"][1], json!({"cell": "C1", "input": "2.500", "stored": "2.5"}), "{r}");
+    assert_eq!(r["converted"][2], json!({"cell": "D1", "input": "4.25 %", "stored": "4.25%"}), "{r}");
     // The report is a diagnostic, not a second copy of the data: a long input is cut.
     let long = s.execute("range.setValues", json!({"range": "J1", "values": [["9".repeat(100)]]})).unwrap();
     assert_eq!(long["convertedCount"], 1, "{long}");
@@ -267,7 +268,8 @@ fn set_values_text_survives_an_xlsx_roundtrip() {
     s.new_workbook();
     let values = json!([["05.04.2026", "2.500", "4.25 %", "=1+1", 3, true]]);
     s.execute("range.setValues", json!({"range": "A1", "parse": false, "values": values})).unwrap();
-    s.execute("range.setValues", json!({"range": "A3", "values": [["05.04.2026"]]})).unwrap();
+    // Dexterity Sheets: typed with the date separator (a dotted date stays text under en-US).
+    s.execute("range.setValues", json!({"range": "A3", "values": [["5/4/2026"]]})).unwrap();
     let bytes = crate::io::save_bytes(&s.doc().unwrap().wb, "book.xlsx").unwrap();
     let (wb, _) = crate::io::open_bytes("book.xlsx", &bytes).unwrap();
     let sh = wb.sheet(0).unwrap();
