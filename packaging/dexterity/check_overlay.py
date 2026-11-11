@@ -32,6 +32,7 @@ HOOKS = [
     ("crates/ui-egui/src/{lib.rs,app.rs,app/*.rs}", "collab_ui::tick(self, ctx);", "per-frame sync"),
     ("crates/ui-egui/src/{lib.rs,app.rs,app/*.rs}", "collab_ui::run_command(self, id, p)", "collab commands (sign in, share, save version, updates)"),
     ("crates/ui-egui/src/{backstage.rs,backstage/*.rs}", "Page::Shared => crate::collab_ui::shared_page", "File > Shared page"),
+    ("crates/ui-egui/src/{backstage.rs,backstage/*.rs}", "gridcraft_collab::GRIDCRAFT_RELEASE", "File > Account names the GridCraft release this build contains"),
     ("crates/ui-egui/src/{panes.rs,panes/*.rs}", '"history" => crate::collab_ui::history_pane', "Edit History pane"),
     ("crates/ui-egui/src/{panes.rs,panes/*.rs}", '"versions" => crate::collab_ui::versions_pane', "Versions pane"),
     ("crates/ui-egui/src/{grid.rs,grid/*.rs}", "crate::collab_ui::paint_peers(", "other people's selections on the grid"),
@@ -109,7 +110,32 @@ def expand(root, path):
     return out
 
 
+def unruled() -> int:
+    """`--unruled`: the files official GridCraft owns that differ here, with how much and how
+    many markers above cover the file. A file with changes and no marker merges only until
+    upstream rewrites the same lines (see UPSTREAM.md): each is a candidate for a hook."""
+    import subprocess
+
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import sync_upstream as sync  # noqa: E402
+
+    with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "GRIDCRAFT_COMMIT"), encoding="utf-8") as f:
+        base = f.read().strip()
+    out = subprocess.run(["git", "diff", "--numstat", "--diff-filter=M", base, "HEAD"], capture_output=True, text=True, encoding="utf-8")
+    print(f"Changed here in files official GridCraft owns (against {base[:10]}): lines added, removed, markers, file")
+    for row in out.stdout.splitlines():
+        added, removed, path = row.split("\t")
+        if sync.matches(path, sync.OURS) or path == "Cargo.lock" or path.startswith(("assets/", "docs/images/")) or path in sync.GENERATED:
+            continue
+        markers = len(sync.hook_markers(path))
+        note = "branding text" if sync.rebranded(path) and not markers else ("" if markers else "NO MARKER")
+        print(f"{added:>5} {removed:>5} {markers:>3}  {path}  {note}")
+    return out.returncode
+
+
 def main() -> int:
+    if "--unruled" in sys.argv:
+        return unruled()
     root = sys.argv[1] if len(sys.argv) > 1 else os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
     missing = []
     for path, marker, what in HOOKS:

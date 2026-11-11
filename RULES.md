@@ -26,15 +26,19 @@ the release. Agents read this file before any work (the `AGENTS.md` / `CLAUDE.md
 ## 2. Staying current with GridCraft and Microsoft Excel
 
 1. **GridCraft.** Every new upstream commit is merged automatically (`upstream-sync.yml`, every 6
-   hours): safety checks, a candidate branch, the full test suite, both installers built and
-   tried, then released and delivered to every PC. A merge that needs judgement becomes a pull
-   request (and, when the `ANTHROPIC_API_KEY` secret is set, an AI-proposed resolution PR); it is
-   never released untested. A failed run opens one `sync-failure` issue that the next good run
-   closes.
+   hours), with no AI service, API key or secret: safety checks, a merge that proves no Dexterity
+   line was dropped, a candidate branch, the full test suite, both installers built and tried,
+   then released and delivered to every PC. A merge that needs judgement is parked on the branch
+   `sync/pending` with a pull request that says what to settle; a fix pushed there is finished,
+   tested and released by the same workflow (an agent may make that fix when the optional
+   `CLAUDE_CODE_OAUTH_TOKEN` secret is set). Nothing is ever released untested. A failed run opens
+   one `sync-failure` issue that the next good run closes. A Dexterity change inside a file
+   official GridCraft owns is a hook with a rule in `reapply_overlay.py` and a marker in
+   `check_overlay.py` (`packaging/dexterity/UPSTREAM.md`), so that the sync can place it by itself.
 2. **Microsoft Excel.** `excel-watch.yml` reads Microsoft's public Current Channel release notes
    every day. Each new Excel version becomes an `excel-release` issue listing its Excel items, each
-   checked against `docs/dexterity-parity-audit.md`. When the `ANTHROPIC_API_KEY` secret is set, an
-   agent is asked to implement each missing item as a pull request. Nothing reaches users until
+   checked against `docs/dexterity-parity-audit.md`. When the optional `CLAUDE_CODE_OAUTH_TOKEN`
+   secret is set, an agent is asked to implement each missing item as a pull request. Nothing reaches users until
    that PR passes every check below and is merged. Clean-room: Excel is observed black-box and
    from public documentation only; its code, assets, icons and wording are never copied.
 3. **Nothing is silently skipped.** Each item in an `excel-release` issue ends as *implemented*

@@ -351,7 +351,9 @@ Every 6 hours the **Upstream sync** workflow checks
 1. **Checks it's safe:** it refuses if upstream rewrote its history or `main` is broken.
 2. **Merges** into a candidate, never straight into `main`. Dexterity's files stay ours, branding
    is re-applied, and our small hooks into GridCraft's code are put back even when upstream moves
-   code around (`reapply_overlay.py`, verified by `check_overlay.py`).
+   code around (`reapply_overlay.py`, verified by `check_overlay.py`). A file both sides changed
+   is merged hunk by hunk, generated files are regenerated, and the sync then proves that no
+   Dexterity line was dropped. No AI service, API key or secret is involved.
 3. **Tests** that exact candidate: format, lint, every engine test, the collaboration tests, and
    three app windows editing one workbook live.
 4. **Builds and tries the installers:** `DexteritySheets-Setup.exe` and the `.msi` are each
@@ -359,11 +361,18 @@ Every 6 hours the **Upstream sync** workflow checks
    and `.msi` are installed as a running service, checked, and uninstalled.
 5. **Releases** it (draft → upload → verify → publish), then refreshes this README, the
    screenshots, the demo animation and the [website](https://vikramdex-ops.github.io/dexterity-sheets/). Every PC is offered the update.
-6. Anything that needs judgement becomes a pull request or an issue for a person. Nothing
-   untested is ever released.
+   What came from GridCraft is written into `CHANGES.md` by the sync, so What's New in the app,
+   this README and the website say it, and the version's minor number goes up with each new
+   GridCraft minor release.
+6. What no rule can merge is parked on the branch `sync/pending`, markers in the files to settle,
+   with a pull request and an issue naming them. A fix pushed to that branch (in the browser is
+   enough) is finished, tested and released by the same workflow. Nothing untested is ever
+   released.
 
 Details: [packaging/dexterity/UPSTREAM.md](packaging/dexterity/UPSTREAM.md).
-Versions: `packaging/dexterity/VERSION` is Dexterity Sheets'; `Cargo.toml` keeps GridCraft's.
+Versions: `packaging/dexterity/VERSION` is Dexterity Sheets'; `packaging/dexterity/GRIDCRAFT_RELEASE`
+is the official GridCraft release it contains (the sync writes it; `Cargo.toml` keeps upstream's
+own number, which lags behind on `main`).
 </details>
 
 <details>
@@ -374,8 +383,8 @@ enforces it:
 
 | Guard | When | What it stops |
 |---|---|---|
-| **Upstream sync** | every 6 hours | GridCraft changes reaching users untested: each is merged on a candidate, fully tested, built and installer-tested before release |
-| **Excel watch** ([workflow](.github/workflows/dexterity-excel-watch.yml)) | daily | a new Microsoft Excel release going unnoticed: each one becomes an `excel-release` issue listing its Excel items, and with an `ANTHROPIC_API_KEY` secret an agent proposes the implementation as a pull request |
+| **Upstream sync** ([workflow](.github/workflows/upstream-sync.yml), [how it works](packaging/dexterity/UPSTREAM.md)) | every 6 hours | GridCraft changes reaching users untested, or not at all: each is merged on a candidate with a proof that no Dexterity line was dropped, fully tested, built and installer-tested before release. No AI service or secret is needed; what no rule can merge waits on the branch `sync/pending` with a pull request |
+| **Excel watch** ([workflow](.github/workflows/dexterity-excel-watch.yml)) | daily | a new Microsoft Excel release going unnoticed: each one becomes an `excel-release` issue listing its Excel items (with the optional `CLAUDE_CODE_OAUTH_TOKEN` secret an agent proposes the implementation as a pull request) |
 | **Docs check** ([`docs_check.py`](packaging/dexterity/docs_check.py)) | every push and PR | a user-visible change without a [`CHANGES.md`](packaging/dexterity/CHANGES.md) line; the README or landing page naming a file a release doesn't ship; broken images and links; "coming soon" or placeholder text in the app |
 | **Performance gate** ([`perf_gate.py`](packaging/dexterity/tests/perf_gate.py), [budgets](packaging/dexterity/perf-budget.json)) | every push and release | start-up, memory, idle CPU, typing, opening and scrolling a 2-million-cell file, memory given back after closing |
 | **Installer tests** | every release | an installer that doesn't install, start, work and uninstall cleanly (app and server) |

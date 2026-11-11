@@ -40,7 +40,10 @@ jobs:
           cp assets/app-icon/dexterity-sheets.svg _site/icon.svg
           cp assets/app-icon/dexterity-sheets-1024.png _site/icon-1024.png
           version=$(tr -d '[:space:]' < packaging/dexterity/VERSION)
-          gridcraft=$(sed -n '/^\[workspace\.package\]/,/^\[/{s/^version = "\(.*\)"/\1/p}' Cargo.toml | head -1)
+          # The GridCraft release this tree contains (written by the upstream sync). The workspace
+          # version in Cargo.toml lags behind it on main, so it is only the fallback.
+          gridcraft=$(tr -d '[:space:]' < packaging/dexterity/GRIDCRAFT_RELEASE 2>/dev/null || true)
+          [ -n "$gridcraft" ] || gridcraft=$(sed -n '/^\[workspace\.package\]/,/^\[/{s/^version = "\(.*\)"/\1/p}' Cargo.toml | head -1)
           # The release's own date (the page is also redeployed on docs changes); today's when the
           # version has no published release yet.
           published=$(gh release view "v$version" --json publishedAt --jq .publishedAt 2>/dev/null || true)

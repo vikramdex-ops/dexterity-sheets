@@ -548,8 +548,15 @@ replace(
             ("Publisher", "Dexterity Design Services Pvt. Ltd.".to_string()),
             ("Platform", platform()),
             ("Licence", env!("CARGO_PKG_LICENSE").to_string()),
-            ("Based on", format!("GridCraft {} by the ArtCraft team (MIT/Apache-2.0)", env!("CARGO_PKG_VERSION"))),
+            ("Based on", format!("GridCraft {} by the ArtCraft team (MIT/Apache-2.0)", gridcraft_collab::GRIDCRAFT_RELEASE.trim())),
         ] {""",
+    required=False,
+)
+# Builds up to 1.4.1 named the workspace version here, which lags behind the release on main.
+replace(
+    B,
+    'format!("GridCraft {} by the ArtCraft team (MIT/Apache-2.0)", env!("CARGO_PKG_VERSION"))',
+    'format!("GridCraft {} by the ArtCraft team (MIT/Apache-2.0)", gridcraft_collab::GRIDCRAFT_RELEASE.trim())',
     required=False,
 )
 

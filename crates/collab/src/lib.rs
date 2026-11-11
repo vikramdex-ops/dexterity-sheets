@@ -73,6 +73,11 @@ pub type Result<T> = std::result::Result<T, Error>;
 /// GridCraft version in Cargo.toml so merging upstream never touches it. Updates compare this.
 pub const APP_VERSION: &str = include_str!("../../../packaging/dexterity/VERSION");
 
+/// The official GridCraft release this build contains (`packaging/dexterity/GRIDCRAFT_RELEASE`,
+/// written by the upstream sync). The workspace version in Cargo.toml is not it: upstream bumps
+/// that on its release branches, so on `main` it lags behind the newest release.
+pub const GRIDCRAFT_RELEASE: &str = include_str!("../../../packaging/dexterity/GRIDCRAFT_RELEASE");
+
 /// Milliseconds since the Unix epoch.
 pub fn now_ms() -> i64 {
     chrono::Utc::now().timestamp_millis()

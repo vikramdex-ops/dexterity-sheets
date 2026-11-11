@@ -813,7 +813,7 @@ fn account(app: &mut SheetApp, ui: &mut Ui) {
             ("Publisher", "Dexterity Design Services Pvt. Ltd.".to_string()),
             ("Platform", platform()),
             ("Licence", env!("CARGO_PKG_LICENSE").to_string()),
-            ("Based on", format!("GridCraft {} by the ArtCraft team (MIT/Apache-2.0)", env!("CARGO_PKG_VERSION"))),
+            ("Based on", format!("GridCraft {} by the ArtCraft team (MIT/Apache-2.0)", gridcraft_collab::GRIDCRAFT_RELEASE.trim())),
         ] {
             ui.label(RichText::new(lang.tr(label)).color(t.text_dim));
             ui.label(value);

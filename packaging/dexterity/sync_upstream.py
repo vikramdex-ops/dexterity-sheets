@@ -23,17 +23,18 @@ Safety checks before anything is merged (a failure → status `blocked`):
 
 Conflict policy (see packaging/dexterity/UPSTREAM.md):
 1. Files Dexterity Sheets owns: keep ours (one we removed stays removed).
-2. Files Dexterity Sheets deleted (upstream CI, ArtCraft brand files) or upstream deleted: stay
-   deleted.
+2. Files Dexterity Sheets deleted on purpose (upstream CI, ArtCraft brand files): stay deleted.
 3. Generated files (the key tip table): upstream's copy, then regenerated from the merged source.
-4. Files where our only change is user-visible branding text (translations, About text…): take
-   upstream's file and re-apply the branding rule.
+4. Upstream's own documents: upstream's wording where both sides changed the same lines.
 5. Any other file both sides changed: merged hunk by hunk. Where the two sides touch the same
    lines upstream's lines are taken, every other Dexterity change in the file is kept, and
-   reapply_overlay.py puts Dexterity's hooks back. Then every Dexterity line that sat in a
-   conflicting hunk must be present again. If one is not, the file gets its conflict markers back
-   and the sync stops: nothing of ours is ever dropped silently.
-6. Anything else (a file we deleted that is on no list, a binary both sides changed): stop.
+   reapply_overlay.py puts Dexterity's hooks and branding back. Then every Dexterity line that
+   sat in a conflicting hunk must be present again (or the marker of the hook it carried must
+   be). If one is not, the file gets its conflict markers back and the sync stops: nothing of
+   ours is ever dropped silently. No file is exempt: files once taken from upstream whole
+   because "only branding changed" lost real changes that way.
+6. A file Dexterity changed that upstream removed or moved, a file we deleted that is on no list,
+   a binary both sides changed: stop.
 
 Afterwards check_overlay.py verifies every hook, Cargo.lock is completed, new user-visible
 "GridCraft" text is listed for review, GRIDCRAFT_COMMIT / GRIDCRAFT_RELEASE record what was

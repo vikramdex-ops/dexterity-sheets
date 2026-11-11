@@ -69,6 +69,15 @@ def fill(text, name, body):
 
 
 def gridcraft_version():
+    # The GridCraft release this tree contains (written by the upstream sync); the workspace
+    # version in Cargo.toml lags behind it on main and is only the fallback.
+    try:
+        with open(os.path.join(ROOT, "packaging", "dexterity", "GRIDCRAFT_RELEASE"), encoding="utf-8") as f:
+            release = f.read().strip()
+        if release:
+            return release
+    except OSError:
+        pass
     with open(os.path.join(ROOT, "Cargo.toml"), encoding="utf-8") as f:
         m = re.search(r'\[workspace\.package\][^\[]*?version\s*=\s*"([^"]+)"', f.read(), re.S)
     return m.group(1) if m else "?"

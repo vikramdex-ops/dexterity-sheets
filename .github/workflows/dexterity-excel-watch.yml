@@ -2,9 +2,11 @@ name: Excel release watch
 
 # RULES.md §2.2: every new Microsoft Excel release (Microsoft 365 Current Channel, public release
 # notes) becomes an `excel-release` issue listing its Excel items, checked against the parity audit.
-# With the ANTHROPIC_API_KEY secret set, an agent is asked to implement the new items as a pull
+# Optional: with a CLAUDE_CODE_OAUTH_TOKEN secret (a Claude subscription token from
+# `claude setup-token`; no API key) an agent is asked to implement the new items as a pull
 # request; that PR must pass every check (CI, end-to-end, installers, performance) before anyone
-# merges it, and nothing reaches users until it is released. Clean-room: public documentation only.
+# merges it, and nothing reaches users until it is released. Without the secret the issues are
+# for a person. Clean-room: public documentation only.
 on:
   schedule:
     - cron: "17 3 * * *"
@@ -64,14 +66,14 @@ jobs:
     if: needs.watch.outputs.issues != ''
     runs-on: ubuntu-latest
     steps:
-      - name: Check for an API key
+      - name: Is an agent set up?
         id: key
         env:
-          K: ${{ secrets.ANTHROPIC_API_KEY }}
+          K: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
         run: echo "present=$([ -n "$K" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
-      - name: No key, no agent
+      - name: No agent
         if: steps.key.outputs.present != 'true'
-        run: echo "::notice::ANTHROPIC_API_KEY is not set, so the new Excel items stay as issues for a person:${{ needs.watch.outputs.issues }}"
+        run: echo "::notice::No CLAUDE_CODE_OAUTH_TOKEN secret, so the new Excel items stay as issues for a person:${{ needs.watch.outputs.issues }}"
       - uses: actions/checkout@v4
         if: steps.key.outputs.present == 'true'
         with:
@@ -80,7 +82,7 @@ jobs:
       - uses: anthropics/claude-code-action@v1
         if: steps.key.outputs.present == 'true'
         with:
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           prompt: |
             Read RULES.md and CLAUDE.md first and follow them. New Microsoft Excel releases were filed as
             these issues:${{ needs.watch.outputs.issues }}

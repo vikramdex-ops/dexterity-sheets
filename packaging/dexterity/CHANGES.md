@@ -3,20 +3,22 @@
 Every change a user could notice gets one line under **Unreleased**, in plain words, in the same
 pull request as the change (RULES.md §3; `docs_check.py` fails the build otherwise). Releasing
 moves them under the new version; the release notes, the README's "What's new" and the landing
-page are made from this file. Changes from official GridCraft are listed by the release notes
-automatically and don't go here.
+page are made from this file. What each upstream sync brings from official GridCraft is added
+here by the sync itself (`sync_upstream.py`: the GridCraft release and upstream's own titles of
+its newest changes); the release notes on GitHub list every one of them with its link.
 
 ## Unreleased
 
-- **Now built on GridCraft 0.18.0** (was 0.14.2): 150 changes from official GridCraft are in this version. The newest are below; the release notes on GitHub list them all.
-- From GridCraft: Numfmt: one built-in format table, fewer allocations rendering numbers and General
-- From GridCraft: xlsx: escape shape font typeface attribute
-- From GridCraft: MCP: the stdio server keeps at most 16 MB of a message
-- From GridCraft: Functions: lookups keep an empty target cell blank
-- From GridCraft: Manage Rules: scroll the rule list instead of laying out every rule
-- From GridCraft: io: refuse a FIFO before opening it; keep the replaced file's group on save
-- From GridCraft: functions: REGEXREPLACE keeps only the requested occurrence's captures
-- From GridCraft: engine: Consolidate finds keys through hash maps and refuses an oversized table
+- **Now built on GridCraft 0.18.0** (was 0.14.2): everything official GridCraft released in 0.15, 0.16, 0.17 and 0.18 is in this version, 150 merged changes in all. The main ones are below, in GridCraft's own words; the release notes on GitHub list every change.
+- From GridCraft: **Formulas › Function Library** as labelled buttons with category menus, Recently Used, and categories in Insert Function. **Trace Error** draws arrows back to the cell an error starts in.
+- From GridCraft: **Solver** gets Options, Load/Save Model, Reset All and the Sensitivity report; the **Analysis ToolPak** gets two-factor Anova, z-Test, Fourier Analysis, Random Number Generation and Sampling; Goal Seek, Solver and Data Analysis have reference boxes you can point into the sheet with.
+- From GridCraft: **Insert › Equation** with a LaTeX editor (kept in .xlsx files, printed in PDF); **form controls** (buttons, sliders, spin buttons) with Assign Action and Format Control; data tables beneath charts; every floating object is selected the same way, with eight resize handles.
+- From GridCraft: **Python cells** are kept as data: stored, edited and saved as Excel's PY formula (no code runs). A shared spreadsheet carries them to everyone as well.
+- From GridCraft: opens **SYLK (.slk)** files and a web page's table saved as .xls; reads cell formatting from .xls files; a workbook keeps its sheet-tab and scroll-bar settings, its R1C1 reference style and "remove personal information on save" through open and save; checkboxes no longer make Excel repair the file.
+- From GridCraft: Find and Replace can search only the selected range; **Ctrl+.** moves to the next corner of the selection; the Excel 2003 menu keys work (Alt+I, R; Alt+D, S; …) and every Paste Special option has its Excel access key; a picture can be pasted from the clipboard; drag and drop asks before replacing data; Options can highlight the active cell's row; "Set precision as displayed" is applied in calculation.
+- From GridCraft: sheets with a million hidden rows or whole-column conditional formats scroll smoothly again; MEDIAN, PERCENTILE, QUARTILE, LARGE and SMALL, SUM/COUNT/AVERAGE over big ranges, inserting and deleting rows and columns, and charts with many points are faster; many sheet-protection and file-safety fixes.
+- **Formulas › Explain Error** explains the new `#PYTHON!` and `#TIMEOUT!` errors, and what `#BUSY!` and `#BLOCKED!` mean for a Python cell.
+- **File › Account** names the GridCraft release this version contains (it showed an older number).
 
 ## 1.4.1 · 1 November 2026
 
