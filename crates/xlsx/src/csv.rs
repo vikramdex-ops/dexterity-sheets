@@ -249,6 +249,9 @@ pub(crate) fn parse_records(text: &str, delim: char, quote: char, mut on_record:
     }
 }
 
+// Dexterity Sheets: csv/dex.rs (the regional settings decide what the file leaves open).
+mod dex;
+
 /// How many rows and bytes of a text file are read to decide each column's date order.
 const DATE_SAMPLE_ROWS: usize = 200;
 const DATE_SAMPLE_BYTES: usize = 1 << 20;
@@ -303,14 +306,13 @@ impl NumericDate {
     fn read(&self, field: &str, rule: DateRule) -> Parsed {
         let serial = match rule {
             DateRule::DayFirst => self.day_first,
-            DateRule::MonthFirst | DateRule::Ambiguous => self.month_first,
+            DateRule::MonthFirst => self.month_first,
+            // Dexterity Sheets: the regional settings decide a date that reads both ways.
+            DateRule::Ambiguous => dex::ambiguous_serial(self.day_first, self.month_first),
             DateRule::Conflict | DateRule::NoDates => None,
         };
         match serial {
-            Some(serial) => Parsed {
-                value: Value::number(serial + self.time.unwrap_or(0.0)),
-                format: Some(if self.time.is_some() { "m/d/yyyy h:mm" } else { "m/d/yyyy" }),
-            },
+            Some(serial) => Parsed { value: Value::number(serial + self.time.unwrap_or(0.0)), format: Some(dex::date_format(self.time.is_some())) },
             None => Parsed { value: Value::text(field), format: None },
         }
     }
@@ -450,8 +452,9 @@ fn date_warnings(columns: &[(DateRule, DateEvidence)], report: &mut ReadReport) 
     for (col, (rule, evidence)) in columns.iter().enumerate() {
         match rule {
             DateRule::Ambiguous => report.warn(format!(
-                "column {}: every date is ambiguous, so it was read month first ({})",
+                "column {}: every date is ambiguous, so it was read {} ({})",
                 col_to_letters(col as u32),
+                dex::ambiguous_order(),
                 evidence.ambiguous_example.as_deref().unwrap_or("a date")
             )),
             DateRule::Conflict => report.warn(format!(

@@ -371,11 +371,14 @@ mod tests {
         assert_eq!(builtin_id("General"), Some(0));
         assert_eq!(builtin_id("GENERAL"), None);
         assert_eq!(builtin_id("[H]:MM:SS"), None);
-        assert_eq!(builtin_id("[h]:mm:ss"), Some(46));
+        // Dexterity Sheets: 46 is one of the ids Excel shows by the reader's regional settings, so
+        // its code is written as a custom format.
+        assert_eq!(builtin_id("[h]:mm:ss"), None);
         assert_eq!(builtin_id("#,##0.00_);(#,##0.00)"), None);
         for id in 0..=60 {
             let Some(code) = builtin_format(id) else { continue };
-            let expected = if matches!(id, 5..=8 | 42 | 44) { None } else { Some(id) };
+            // Dexterity Sheets: every locale-dependent id (5-8, 14-22, 27-47), not only 5-8, 42 and 44.
+            let expected = if gridcraft_core::locale::is_locale_dependent_builtin(id) { None } else { Some(id) };
             assert_eq!(builtin_id(code), expected, "id {id}");
         }
     }

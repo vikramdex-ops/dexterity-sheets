@@ -425,6 +425,72 @@ insert(
     "    // Formulas written from here on spell this workbook's bare table names `Table[]`.\n    let _tables = crate::fmla::TableNames::of(wb);\n",
 )
 
+# ---- Text files: the regional settings decide a date that reads both ways (crates/xlsx/src/csv/dex.rs)
+CSV = "crates/xlsx/src/csv.rs"
+insert(
+    CSV,
+    "mod dex;",
+    "/// How many rows and bytes of a text file are read to decide each column's date order.\n",
+    "// Dexterity Sheets: csv/dex.rs (the regional settings decide what the file leaves open).\nmod dex;\n\n",
+    after=False,
+)
+replace(
+    CSV,
+    "            DateRule::MonthFirst | DateRule::Ambiguous => self.month_first,\n",
+    "            DateRule::MonthFirst => self.month_first,\n"
+    "            // Dexterity Sheets: the regional settings decide a date that reads both ways.\n"
+    "            DateRule::Ambiguous => dex::ambiguous_serial(self.day_first, self.month_first),\n",
+    required=False,
+)
+replace(
+    CSV,
+    '                format: Some(if self.time.is_some() { "m/d/yyyy h:mm" } else { "m/d/yyyy" }),\n',
+    "                format: Some(dex::date_format(self.time.is_some())),\n",
+    required=False,
+)
+replace(
+    CSV,
+    '                "column {}: every date is ambiguous, so it was read month first ({})",\n                col_to_letters(col as u32),\n',
+    '                "column {}: every date is ambiguous, so it was read {} ({})",\n                col_to_letters(col as u32),\n                dex::ambiguous_order(),\n',
+    required=False,
+)
+
+# ---- Built-in number format ids: upstream's test of its table follows Dexterity's rule ---------
+# (only locale-independent ids are written as ids; tables.rs itself is listed in UPSTREAM.md).
+TABLES = "crates/xlsx/src/tables.rs"
+replace(
+    TABLES,
+    '        assert_eq!(builtin_id("[h]:mm:ss"), Some(46));\n',
+    "        // Dexterity Sheets: 46 is one of the ids Excel shows by the reader's regional settings, so\n"
+    "        // its code is written as a custom format.\n"
+    '        assert_eq!(builtin_id("[h]:mm:ss"), None);\n',
+    required=False,
+)
+replace(
+    TABLES,
+    "            let expected = if matches!(id, 5..=8 | 42 | 44) { None } else { Some(id) };\n",
+    "            // Dexterity Sheets: every locale-dependent id (5-8, 14-22, 27-47), not only 5-8, 42 and 44.\n"
+    "            let expected = if gridcraft_core::locale::is_locale_dependent_builtin(id) { None } else { Some(id) };\n",
+    required=False,
+)
+
+# ---- Number-format golden test: Dexterity's rows (crates/numfmt/tests/dexterity) ----------------
+GOLDEN = "crates/numfmt/tests/render_equality.rs"
+insert(
+    GOLDEN,
+    "mod dexterity;",
+    "fn fnv1a(s: &str) -> u64 {\n",
+    "// Dexterity Sheets: the rows that differ here on purpose (tests/dexterity/mod.rs).\nmod dexterity;\n\n",
+    after=False,
+)
+insert(
+    GOLDEN,
+    "dexterity::golden(name, golden)",
+    "fn check(name: &str, rows: &[(String, String)], golden: &str, path: &str) {\n",
+    "    // Dexterity Sheets: upstream's golden with our conditional-format rows in place of its own.\n"
+    "    let golden = &dexterity::golden(name, golden);\n",
+)
+
 # ---- Number formats: regional settings (crates/numfmt/src/dex.rs) ---------------------------------
 # Upstream's renderer stays as upstream writes it; these calls are the only Dexterity lines in it.
 NUMFMT = "crates/numfmt/src"

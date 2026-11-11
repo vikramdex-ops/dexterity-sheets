@@ -79,6 +79,9 @@ OURS = [
     "crates/engine/src/cmd/dex.rs",
     "crates/engine/src/cmd/dex/*",
     "crates/xlsx/src/array_formula/dex.rs",
+    "crates/xlsx/src/csv/dex.rs",
+    "crates/numfmt/src/dex.rs",
+    "crates/numfmt/tests/dexterity/*",
     "packaging/dexterity/*",
     "packaging/windows/setup/*",
     # Our installer has its own identity (name, UpgradeCode, per-user scope, registry keys);

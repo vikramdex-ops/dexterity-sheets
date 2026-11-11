@@ -72,6 +72,12 @@ HOOKS = [
     ("crates/xlsx/src/fmla.rs", "Expr::Name(n) => is_table(n)", "the formula writer's fast path still rewrites bare table names"),
     ("crates/xlsx/src/fmla.rs", "Expr::Name(s.table)", "Table[] reads back as the bare table name it was written from"),
     ("crates/xlsx/src/write.rs", "crate::fmla::TableNames::of(wb)", "the workbook writer knows the table names, so bare ones are written as Table[]"),
+    # Text files (crates/xlsx/src/csv/dex.rs): the regional settings decide what a column's dates leave open.
+    ("crates/xlsx/src/csv.rs", "mod dex;", "the regional-settings module of CSV import is compiled in"),
+    ("crates/xlsx/src/csv.rs", "DateRule::Ambiguous => dex::ambiguous_serial(self.day_first, self.month_first)", "a date that reads both ways follows the regional settings"),
+    ("crates/xlsx/src/csv.rs", "dex::date_format(self.time.is_some())", "dates from a text file get the locale's short date format"),
+    ("crates/xlsx/src/csv.rs", "dex::ambiguous_order()", "the open report says in which order an ambiguous column was read"),
+    ("crates/numfmt/tests/render_equality.rs", "dexterity::golden(name, golden)", "the golden test knows the rows that differ here on purpose"),
     # Regional settings in number display (crates/numfmt/src/dex.rs): the only Dexterity lines in upstream's renderer.
     ("crates/numfmt/src/lib.rs", "mod dex;", "the regional-settings module of number formats is compiled in"),
     ("crates/numfmt/src/lib.rs", "dex::as_typed(|| fmt.format_number(n, sys))", "TEXT() takes its format text as typed (`/` stays `/`)"),

@@ -182,11 +182,16 @@ fn dump_general() -> Vec<(String, String)> {
     rows
 }
 
+// Dexterity Sheets: the rows that differ here on purpose (tests/dexterity/mod.rs).
+mod dexterity;
+
 fn fnv1a(s: &str) -> u64 {
     s.bytes().fold(0xcbf2_9ce4_8422_2325, |h, b| (h ^ u64::from(b)).wrapping_mul(0x100_0000_01b3))
 }
 
 fn check(name: &str, rows: &[(String, String)], golden: &str, path: &str) {
+    // Dexterity Sheets: upstream's golden with our conditional-format rows in place of its own.
+    let golden = &dexterity::golden(name, golden);
     if let Some(dir) = std::env::var_os("NUMFMT_DUMP_DIR") {
         let all: String = rows.iter().map(|(_, b)| b.as_str()).collect();
         std::fs::write(std::path::Path::new(&dir).join(format!("{name}.txt")), all).expect("write dump");

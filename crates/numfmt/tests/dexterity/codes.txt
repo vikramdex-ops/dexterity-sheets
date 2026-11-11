@@ -1,0 +1,7 @@
+# Rows of ../golden/codes.txt whose digest is different in Dexterity Sheets on purpose (see mod.rs).
+# Same format as upstream's file: digest, line count, format code. Recorded from Dexterity CI run
+# 43017379234 on 11 November 2026 (GridCraft 0.18.0). All three are conditional formats: the
+# minus sign and the section for values outside the condition follow Excel.
+15137acbdaf41d90 79 "[<=9999999]###-####;(###) ###-####"
+f209a625dd9b1a23 79 "[>100]\"big\"0;[<-100]\"small\"0;0.0"
+c41a5876d874c4d1 79 "[=0]\"zero\";0.0"
