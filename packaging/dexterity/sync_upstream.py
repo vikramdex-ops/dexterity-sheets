@@ -105,7 +105,11 @@ DELETED_BY_US = [
     ".github/dependabot.yml",
     "docs/brand/*",
 ]
-# Files whose only Dexterity change is branding text.
+# Files outside the UI and app sources whose user-visible "GridCraft" text is rebranded after
+# every merge (reapply_overlay.py rebrands crates/ui-egui/src and apps/gridcraft/src itself).
+# Being on this list never excuses another Dexterity change in the file: every file both sides
+# changed goes through the same hunk-by-hunk merge and the same check for dropped lines. (The
+# files here were once taken from upstream whole; that dropped the `Table[]` hook in write.rs.)
 BRANDING_ONLY = [
     "crates/ui-egui/src/i18n/*.rs",
     "crates/ui-egui/src/credits.rs",
@@ -116,6 +120,9 @@ BRANDING_ONLY = [
     "apps/gridcraft/src/print.rs",
     "crates/xlsx/src/write.rs",
 ]
+# Upstream's own documents (checked after OURS, so the README and Dexterity's documents are not
+# among them): upstream's wording wins where both sides changed the same lines.
+UPSTREAM_DOCS = ["*.md"]
 # Generated files: upstream's copy is taken and the generator runs again on the merged source.
 # file -> the generator's key in GENERATORS.
 GENERATED = {
@@ -302,14 +309,33 @@ def resolve_by_hunk(path):
     return {"marked": marked, "added": {l: had.get(l, 0) for l in added}, "removed": {l: had.get(l, 0) for l in removed}}
 
 
+def hook_markers(path):
+    """The markers check_overlay.py requires in `path`: the essence of each Dexterity hook there."""
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import check_overlay  # noqa: E402
+
+    out = []
+    for hooked, marker, _what in check_overlay.HOOKS:
+        m = re.search(r"\{([^}]*)\}", hooked)
+        options = [hooked[: m.start()] + o + hooked[m.end() :] for o in m.group(1).split(",")] if m else [hooked]
+        if marker and matches(path, options):
+            out.append(norm(marker))
+    return out
+
+
 def lost_lines(path, check):
     """Dexterity lines from the conflicting hunks that are not in the file now, and lines
-    Dexterity had removed that are in it again."""
+    Dexterity had removed that are in it again. A line that carried a hook is not lost when the
+    hook's marker is in the file: reapply_overlay.py put it back in the shape upstream's new code
+    needs, which need not be the old line."""
     try:
-        final = count_lines(read(path))
+        text = read(path)
     except (OSError, UnicodeDecodeError):
         return ["(the file cannot be read)"]
-    gone = [f"missing: {l}" for l, n in check["added"].items() if final.get(l, 0) < n]
+    final = count_lines(text)
+    flat = norm(text)
+    placed = [m for m in hook_markers(path) if m in flat]
+    gone = [f"missing: {l}" for l, n in check["added"].items() if final.get(l, 0) < n and not any(m in l for m in placed)]
     back = [f"back again: {l}" for l, n in check["removed"].items() if final.get(l, 0) > n]
     return gone + back
 
@@ -616,11 +642,19 @@ def fresh(park):
                 else:
                     git("rm", "-q", "--cached", "--", path, check=False)
                     remove(path)
-            elif matches(path, DELETED_BY_US) or not theirs:
-                # We dropped it on purpose, upstream deleted it, or both did: it stays deleted.
-                # A hook that lived in a file upstream deleted is caught by check_overlay.py.
+            elif matches(path, DELETED_BY_US) or not (ours or theirs):
+                # We dropped it on purpose, or both sides deleted it: it stays deleted.
                 git("rm", "-q", "--cached", "--", path, check=False)
                 remove(path)
+            elif not theirs:
+                # Upstream deleted (or moved) a file Dexterity had changed: git only reports this
+                # when our copy differs from the common ancestor. Deleting it would drop those
+                # changes without a word (the locale's built-in formats went this way when
+                # upstream moved numfmt's table to xlsx), so a person gives them a new home and
+                # removes the file. `--continue` waits until it is gone.
+                git("add", "--", path)
+                unresolved.append(f"{code} {path} (changed here; removed or moved upstream. Move Dexterity's changes to where the code now lives, then delete this file)")
+                state.setdefault("removed_upstream", []).append(path)
             elif not ours:
                 # Upstream changed a file we deleted and that is not on any list: a person decides.
                 unresolved.append(f"{code} {path} (deleted here, changed upstream)")
@@ -628,10 +662,16 @@ def fresh(park):
                 git("checkout", "--theirs", "--", path)
                 git("add", "--", path)
                 state["regenerate"].append(GENERATED[path])
-            elif matches(path, BRANDING_ONLY):
-                git("checkout", "--theirs", "--", path)
-                rebrand_file(path)
-                state["reapplied"].append(path)
+            elif matches(path, UPSTREAM_DOCS):
+                # Upstream's own documents: its wording where both sides changed the same lines.
+                # Dexterity's notes belong in docs/dexterity-*.md, which upstream never touches.
+                taken = merge_file(path, "--theirs")
+                if taken is None:
+                    unresolved.append(f"{code} {path} (both changed; not a text file)")
+                else:
+                    write(path, taken)
+                    git("add", "--", path)
+                    state["reapplied"].append(path)
             elif path == "Cargo.lock":
                 # Upstream's lock, then the entries our own crates need are added back in finish().
                 git("checkout", "--theirs", "--", path)
@@ -671,9 +711,15 @@ def resume(park):
     state["resumed"] = True
     state.pop("unresolved", None)
     state.pop("details", None)
-    left = [p for _code, p in conflicts()] + marked_files()
+    left = [p for _code, p in conflicts()] + marked_files() + [p for p in state.get("removed_upstream", []) if os.path.exists(p)]
     if left:
-        return output(status="waiting", upstream=state["upstream"], main=state["main"], unresolved=sorted(set(left)), reason="these files still hold conflict markers")
+        return output(
+            status="waiting",
+            upstream=state["upstream"],
+            main=state["main"],
+            unresolved=sorted(set(left)),
+            reason="these files still hold conflict markers, or were removed upstream and still exist here",
+        )
     if open_merge:
         git("add", "-A")
         state["regenerate"] = sorted(set(state.get("regenerate", [])) | set(generators_needed()))

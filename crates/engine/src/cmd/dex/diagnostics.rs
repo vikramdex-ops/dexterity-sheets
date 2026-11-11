@@ -235,8 +235,23 @@ const ERRORS: &[ErrorInfo] = &[
         causes: &[
             "External content, a data connection or a service is turned off by a setting or by your organisation.",
             "The workbook is open in protected or restricted mode.",
+            "The cell holds Python code, and Python cannot run here: the workbook's content is not enabled, or this build has no Python.",
         ],
         fixes: &["Allow the content or connection if you trust the workbook.", "Ask your administrator whether the service is allowed."],
+    },
+    ErrorInfo {
+        code: "#PYTHON!",
+        title: "Python error",
+        explanation: "The cell holds Python code, and the code raised an error or Python stopped before it gave a result.",
+        causes: &["The Python code in the cell raised an error.", "Python stopped while the cell was running."],
+        fixes: &["Read the message the cell gives and correct the code.", "Run the cell again."],
+    },
+    ErrorInfo {
+        code: "#TIMEOUT!",
+        title: "Took too long",
+        explanation: "The Python code in the cell ran longer than the time limit, so it was stopped.",
+        causes: &["The code does more work than fits in the time limit."],
+        fixes: &["Make the code do less (a smaller range, fewer steps) and run the cell again."],
     },
     ErrorInfo {
         code: "#CONNECT!",
@@ -249,7 +264,7 @@ const ERRORS: &[ErrorInfo] = &[
         code: "#BUSY!",
         title: "Still calculating",
         explanation: "The result is still being fetched or worked out. The cell normally updates on its own once it is ready.",
-        causes: &["Data from an outside source has not arrived yet.", "A long calculation is still running."],
+        causes: &["Data from an outside source has not arrived yet.", "A long calculation is still running.", "A Python cell is waiting to run."],
         fixes: &["Wait a moment for the result.", "If it stays, recalculate, or check the data source."],
     },
     ErrorInfo {
@@ -703,7 +718,8 @@ fn formula_evidence(
             let loop_cells: Vec<String> = calc.circular.iter().filter_map(|(si, c)| wb.sheet(*si).map(|s| place(s, *c))).take(10).collect();
             out.push(format!("This cell is in a circular reference. Cells in circular references: {}.", loop_cells.join(", ")));
         }
-        CellError::GettingData => {}
+        // Nothing in the formula itself explains these: the general explanation says it all.
+        CellError::GettingData | CellError::Python | CellError::Busy | CellError::Timeout | CellError::Blocked => {}
     }
     if calc.circular.contains(&(sheet, host)) && err != CellError::Circ {
         out.push("This cell is also part of a circular reference.".into());

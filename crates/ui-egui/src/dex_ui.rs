@@ -187,20 +187,43 @@ pub fn run_command(app: &mut SheetApp, id: &str, p: &Json) -> Option<Result<Json
         }
         _ => {}
     }
-    let precedents = |app: &SheetApp| {
-        app.grid.trace.as_ref().is_some_and(|t| t.items.as_array().and_then(|a| a.first()).is_some_and(|i| i.get("range").is_some()))
-    };
-    let keep = match id {
-        "formulas.removeArrows" => false,
-        "formulas.removePrecedentArrows" => !precedents(app),
-        "formulas.removeDependentArrows" => precedents(app),
+    let remove = match id {
+        "formulas.removeArrows" => true,
+        "formulas.removePrecedentArrows" => trace_is(app, true),
+        "formulas.removeDependentArrows" => trace_is(app, false),
         _ => return None,
     };
-    if !keep {
+    if remove {
         app.grid.trace = None;
     }
     // The engine command still runs, so it is journaled and recorded like any other.
     Some(app.session.run(id, json!({})))
+}
+
+/// Whether the arrows on the grid are precedent arrows (`precedents`) or dependent arrows: the
+/// arrows of Trace Precedents all end in the traced cell, those of Trace Dependents all start
+/// from it. A single arrow is both shapes; the end the active cell sits on then says which it is
+/// (the traced cell is where the arrows were asked for), and when it sits on neither the arrow
+/// counts as the kind asked about. Trace Error's arrows are neither.
+fn trace_is(app: &SheetApp, precedents: bool) -> bool {
+    let Some(t) = app.grid.trace.as_ref() else { return false };
+    if t.arrows.iter().any(|a| a.error) {
+        return false;
+    }
+    let shared = |a: &crate::grid::TraceArrow| if precedents { a.to } else { a.from };
+    let Some(first) = t.arrows.first().map(shared) else { return false };
+    if !t.arrows.iter().all(|a| shared(a) == first) {
+        return false;
+    }
+    if let [only] = t.arrows.as_slice() {
+        let other = if precedents { only.from } else { only.to };
+        let active =
+            app.session.active().map(|d| (d.wb.active_sheet(), gridcraft_engine::core::RangeRef::new(d.selection.active, d.selection.active)));
+        if other != first && active == Some(other) {
+            return false;
+        }
+    }
+    true
 }
 
 /// Dialogs the engine asks for under another name than the UI's: Conditional Formatting run with

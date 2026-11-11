@@ -70,6 +70,19 @@ HOOKS = [
     ("crates/xlsx/src/fmla.rs", "pub(crate) struct TableNames", "bare table names written as Table[] (Excel reads a bare name as #NAME?)"),
     ("crates/xlsx/src/fmla.rs", "Expr::Name(n) => is_table(n)", "the formula writer's fast path still rewrites bare table names"),
     ("crates/xlsx/src/fmla.rs", "Expr::Name(s.table)", "Table[] reads back as the bare table name it was written from"),
+    ("crates/xlsx/src/write.rs", "crate::fmla::TableNames::of(wb)", "the workbook writer knows the table names, so bare ones are written as Table[]"),
+    # Regional settings in number display (crates/numfmt/src/dex.rs): the only Dexterity lines in upstream's renderer.
+    ("crates/numfmt/src/lib.rs", "mod dex;", "the regional-settings module of number formats is compiled in"),
+    ("crates/numfmt/src/lib.rs", "dex::as_typed(|| fmt.format_number(n, sys))", "TEXT() takes its format text as typed (`/` stays `/`)"),
+    ("crates/numfmt/src/lib.rs", "dex::general)", "General shows the locale's decimal point"),
+    ("crates/numfmt/src/parse.rs", "Tok::Date(_) | Tok::Fill(_) | Tok::Slash", "`/` in a date code stays the date separator"),
+    ("crates/numfmt/src/render.rs", "crate::dex::general(", "a General section shows the locale's decimal point"),
+    ("crates/numfmt/src/render.rs", "text.push(crate::dex::ctx().decimal)", "fractions of a second use the locale's decimal point"),
+    ("crates/numfmt/src/render.rs", "Tok::Slash => out.text.push(crate::dex::ctx().date_sep)", "dates show the locale's date separator"),
+    ("crates/numfmt/src/render.rs", "dex.grouping.separator_at(p)", "digits group the locale's way (3;2 in en-IN)"),
+    ("crates/numfmt/src/render.rs", "parts.buf.push(dex.thousands)", "the locale's thousands separator"),
+    ("crates/numfmt/src/render.rs", "crate::dex::ctx().grouping.separator_at(n - i)", "grouping when a section has no integer placeholder"),
+    ("crates/numfmt/src/render.rs", "crate::dex::ctx().decimal.encode_utf8(", "numbers show the locale's decimal point"),
     ("apps/gridcraft/src/main.rs", "gridcraft_ui_egui::dex_ui::recovery::clean_exit(&mut self.0);", "a normal exit removes the crash-recovery copies"),
     ("apps/gridcraft/src/main.rs", "gridcraft_ui_egui::dex_ui::enable_desktop();", "crash recovery, links and notifications run in the desktop app only (never in tests)"),
     ("crates/ui-egui/src/{dialogs.rs,dialogs/*.rs}", "crate::dex_ui::releases::about_details(ui);", "About shows the build, update channel and repository"),
@@ -83,6 +96,7 @@ HOOKS = [
 # Strings that must not come back into the shipped app's code from upstream.
 FORBIDDEN = [
     ("packaging/windows/package.ps1", "check-install-policy.ps1') -MsiPath", "GridCraft's install-identity check (fails on our installer)"),
+    ("crates/ui-egui/src/credits.rs", "ui.hyperlink_to(c.name(", "contributor names as web links (an internal LAN tool opens no websites; reapply_overlay.py makes them plain text)"),
 ]
 
 

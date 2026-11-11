@@ -42,7 +42,7 @@ fn round_trip(code: &str) -> (u32, String, String) {
     let mut wb = Workbook::new();
     let style = wb.styles.derive(StyleId::DEFAULT, |s| s.num_fmt = NumFmt::new(code));
     let mut sheet = Sheet::new("Sheet1");
-    sheet.cells.set(CellRef::new(0, 0), Cell { value: Value::Number(-0.14), formula: None, style });
+    sheet.cells.set(CellRef::new(0, 0), Cell { value: Value::Number(-0.14), formula: None, style, py: None });
     wb.sheets = vec![Arc::new(sheet)];
     let bytes = write_xlsx(&wb).unwrap();
     let xml = styles_xml(&bytes);
@@ -91,7 +91,7 @@ fn bare_locale_ids_read_as_the_current_locale_shows_them() {
         let mut wb = Workbook::new();
         let style = wb.styles.derive(StyleId::DEFAULT, |s| s.num_fmt = NumFmt::new("0.000"));
         let mut sheet = Sheet::new("Sheet1");
-        sheet.cells.set(CellRef::new(0, 0), Cell { value: Value::Number(1.0), formula: None, style });
+        sheet.cells.set(CellRef::new(0, 0), Cell { style, ..Cell::value(Value::Number(1.0)) });
         wb.sheets = vec![Arc::new(sheet)];
         let bytes = write_xlsx(&wb).unwrap();
         let bytes = replace_part(&bytes, "xl/styles.xml", &styles(id));

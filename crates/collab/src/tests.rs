@@ -33,6 +33,7 @@ fn assert_same(a: &Workbook, b: &Workbook) {
                             v: c.value.clone(),
                             f: c.formula.as_ref().map(|f| crate::patch::FormulaData { text: f.text.clone(), array: f.array, dynamic: f.dynamic }),
                             s: (c.style != gridcraft_engine::model::StyleId::DEFAULT).then(|| w.styles.get(c.style).clone()),
+                            py: c.py.as_deref().cloned(),
                         },
                     )
                 })

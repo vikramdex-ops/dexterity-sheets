@@ -15,7 +15,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use gridcraft_engine::core::{CellRef, RangeRef, Value};
-use gridcraft_engine::model::{Cell, CellStore, Formula, Sheet, Style, StyleId, Workbook};
+use gridcraft_engine::model::{Cell, CellStore, Formula, PyCode, Sheet, Style, StyleId, Workbook};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value as Json};
 
@@ -85,6 +85,10 @@ pub struct CellData {
     /// `None` = the default style.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub s: Option<Style>,
+    /// The Python code of a Python cell (which has no formula). Absent for every other cell, so
+    /// patches without Python cells read and write exactly as before this field existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub py: Option<PyCode>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -118,13 +122,16 @@ impl CellData {
             v: cell.value.clone(),
             f: cell.formula.as_ref().map(|f| FormulaData { text: f.text.clone(), array: f.array, dynamic: f.dynamic }),
             s: (cell.style != StyleId::DEFAULT).then(|| wb.styles.get(cell.style).clone()),
+            py: cell.py.as_deref().cloned(),
         }
     }
-    /// What the person typed, for the audit log: the formula with `=`, or the value.
+    /// What the person typed, for the audit log: the formula with `=`, the Python code, or the
+    /// value.
     pub fn input(&self) -> String {
-        match &self.f {
-            Some(f) => format!("={}", f.text),
-            None => value_text(&self.v),
+        match (&self.f, &self.py) {
+            (Some(f), _) => format!("={}", f.text),
+            (None, Some(py)) => format!("Python: {}", py.code),
+            (None, None) => value_text(&self.v),
         }
     }
     /// Whether this is a person's edit rather than a recalculated result: a constant or a
@@ -401,7 +408,7 @@ pub fn apply(wb: &mut Workbook, patch: &WbPatch) -> Result<Applied> {
                         fm.dynamic = f.dynamic;
                         Arc::new(fm)
                     });
-                    sheet.cells.set(at, Cell { value: d.v.clone(), formula, style });
+                    sheet.cells.set(at, Cell { value: d.v.clone(), formula, style, py: d.py.clone().map(Arc::new) });
                 }
             }
             out.cells.push((idx, at));

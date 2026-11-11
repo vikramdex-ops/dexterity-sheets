@@ -1857,7 +1857,7 @@ impl State {
                                 cells: vec![patch::CellChange {
                                     r: at.row,
                                     c: col,
-                                    cell: Some(CellData { v: Value::Text(stamp.into()), f: None, s: None }),
+                                    cell: Some(CellData { v: Value::Text(stamp.into()), f: None, s: None, py: None }),
                                 }],
                                 ..Default::default()
                             }],
@@ -2059,6 +2059,7 @@ fn describe(wb: &Workbook, p: &WbPatch, seq: u64, time: i64, user: &str, display
                 v: c.value.clone(),
                 f: c.formula.as_ref().map(|f| patch::FormulaData { text: f.text.clone(), array: f.array, dynamic: f.dynamic }),
                 s: (c.style != gridcraft_engine::model::StyleId::DEFAULT).then(|| wb.styles.get(c.style).clone()),
+                py: c.py.as_deref().cloned(),
             });
             match (&old, &ch.cell) {
                 (Some(o), Some(n)) if o.same_content(n) => continue,

@@ -211,6 +211,13 @@ pub(crate) fn tick(app: &mut SheetApp, _ctx: &egui::Context) {
 /// Nothing of its own to draw: the update dialog lives in `collab_ui::update_badge`.
 pub(crate) fn show(_app: &mut SheetApp, _ctx: &egui::Context) {}
 
+/// Official GridCraft starts its own updater's install helper here as the process exits.
+/// Dexterity Sheets has nothing waiting in that updater: its installer (from the office server or
+/// from GitHub) is saved by `collab_ui::install_update` and started at exit by
+/// `collab_ui::run_installer`, through `dex_ui::recovery::clean_exit`.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn start_pending_update(_app: &mut SheetApp) {}
+
 #[cfg(not(target_arch = "wasm32"))]
 fn http(version: &str) -> Result<craft_update::Http, String> {
     craft_update::Http::new(&format!("DexteritySheets/{version}"))

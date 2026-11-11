@@ -11,6 +11,7 @@
 //! gridcraft-cli functions [--json] [--search X] [--category C]
 //! gridcraft-cli mcp [--connect PORT] [--in FILE | --sample NAME]
 //! gridcraft-cli send <port> <method> [json]
+//! gridcraft-cli sandbox-check [--read PATH]... [--exec PATH]... [-- PROGRAM ARGS...]
 //! gridcraft-cli version | --version
 //! ```
 //!
@@ -33,6 +34,7 @@ macro_rules! outln {
 }
 
 mod check;
+mod sandbox_check;
 
 use gridcraft_engine::Session;
 use serde_json::{Value, json};
@@ -52,6 +54,8 @@ const USAGE: &str = "usage:
   gridcraft-cli functions [--json] [--search X] [--category C]
   gridcraft-cli mcp [--connect PORT] [--in FILE | --sample NAME]
   gridcraft-cli send <port> <method> [json]
+  gridcraft-cli sandbox-check [--read PATH]... [--exec PATH]... [-- PROGRAM ARGS...]
+                     whether this system confines programs (no program: a confined self-test)
   gridcraft-cli version
 environment:
   DEXSHEETS_LOCALE=en-IN|en-US   regional settings for typed dates/numbers and display (default en-US)";
@@ -67,6 +71,11 @@ fn stdout_failed(e: std::io::Error) -> ! {
 }
 
 fn main() -> ExitCode {
+    // A confined launcher run (and its probes) comes first, before anything else starts.
+    let raw: Vec<std::ffi::OsString> = std::env::args_os().skip(1).collect();
+    if let Some(code) = gridcraft_sandbox::handle_args(&raw) {
+        return ExitCode::from(u8::try_from(code).unwrap_or(1));
+    }
     if let Err(e) = apply_locale() {
         eprintln!("gridcraft-cli: {e}");
         return ExitCode::FAILURE;
@@ -88,6 +97,7 @@ fn main() -> ExitCode {
         Some("cat") => cat(rest),
         Some("run") => run(rest),
         Some("check") => return check::main(rest),
+        Some("sandbox-check") => return sandbox_check::main(rest),
         Some("commands") => commands(rest),
         Some("functions") => functions(rest),
         Some("mcp") => mcp(rest),

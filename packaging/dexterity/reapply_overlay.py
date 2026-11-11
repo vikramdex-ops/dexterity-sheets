@@ -247,7 +247,7 @@ replace(
 insert(
     f"{UI}/dialogs/cond_format_rules.rs",
     "crate::dex_ui::new_rule_button(app, ui);",
-    '    let rules = list["rules"].as_array().cloned().unwrap_or_default();\n',
+    "pub(super) fn manage_rules(app: &mut SheetApp, ui: &mut egui::Ui) {\n",
     "    crate::dex_ui::new_rule_button(app, ui);\n",
 )
 replace(
@@ -399,17 +399,84 @@ insert(
     "            // Dexterity Sheets: a bare table name is written `Table[]` (see [`TableNames`]).\n"
     "            Expr::Name(n) => is_table(n),\n",
 )
+# The arm sits wherever upstream strips the `_xlpm.` prefixes of a formula read from a file: in
+# `from_file` itself at first, in `strip_param_prefixes` since upstream split that out.
+FMLA = "crates/xlsx/src/fmla.rs"
+for indent in ("        ", "            "):
+    if f"{indent}Expr::Call(n, args) => Expr::Call(strip_param_prefix(n), args),\n" in read(FMLA) or "Expr::Name(s.table)" in read(FMLA):
+        insert(
+            FMLA,
+            "Expr::Name(s.table)",
+            f"{indent}Expr::Call(n, args) => Expr::Call(strip_param_prefix(n), args),\n",
+            f"{indent}// Dexterity Sheets: `Table[]` is how a bare table name is spelled in a file (see\n"
+            f"{indent}// [`TableNames`]); it reads back as the bare name, the same range, so a formula keeps\n"
+            f"{indent}// the text it was typed with. Tables and defined names share one namespace.\n"
+            f"{indent}Expr::Struct(s) if !s.table.is_empty() && s.specifiers.is_empty() && s.col_start.is_none() && s.col_end.is_none() => {{\n"
+            f"{indent}    Expr::Name(s.table)\n"
+            f"{indent}}}\n",
+        )
+        break
+else:
+    problems.append(f"{FMLA}: where `_xlpm.` prefixes are stripped (`Expr::Call(n, args) => Expr::Call(strip_param_prefix(n), args),`) not found for [Expr::Name(s.table)]")
 insert(
-    "crates/xlsx/src/fmla.rs",
-    "Expr::Name(s.table)",
-    "            Expr::Call(n, args) => Expr::Call(strip_param_prefix(n), args),\n",
-    "            // Dexterity Sheets: `Table[]` is how a bare table name is spelled in a file (see\n"
-    "            // [`TableNames`]); it reads back as the bare name, the same range, so a formula keeps\n"
-    "            // the text it was typed with. Tables and defined names share one namespace.\n"
-    "            Expr::Struct(s) if !s.table.is_empty() && s.specifiers.is_empty() && s.col_start.is_none() && s.col_end.is_none() => {\n"
-    "                Expr::Name(s.table)\n"
-    "            }\n",
+    "crates/xlsx/src/write.rs",
+    "crate::fmla::TableNames::of(wb)",
+    "    check_sheet_names(wb)?;\n",
+    "    // Formulas written from here on spell this workbook's bare table names `Table[]`.\n    let _tables = crate::fmla::TableNames::of(wb);\n",
 )
+
+# ---- Number formats: regional settings (crates/numfmt/src/dex.rs) ---------------------------------
+# Upstream's renderer stays as upstream writes it; these calls are the only Dexterity lines in it.
+NUMFMT = "crates/numfmt/src"
+insert(f"{NUMFMT}/lib.rs", "mod dex;", "mod decimal;\n", "mod dex;\n")
+replace(
+    f"{NUMFMT}/lib.rs",
+    "            text: format_general_fit(n, GENERAL_WIDTH).unwrap_or_else(|| OVERFLOW.into()),\n",
+    "            text: format_general_fit(n, GENERAL_WIDTH).map_or_else(|| OVERFLOW.into(), dex::general),\n",
+    required=False,
+)
+replace(
+    f"{NUMFMT}/lib.rs",
+    "    let (f, overflow) = fmt.format_number(n, sys);\n",
+    "    let (f, overflow) = dex::as_typed(|| fmt.format_number(n, sys));\n",
+    required=False,
+)
+replace(
+    f"{NUMFMT}/parse.rs",
+    "            Tok::Date(_) | Tok::Fill(_) => out.push(t.clone()),\n",
+    "            // `/` is the date separator: shown as the locale's (an escaped `\\/` is a literal).\n"
+    "            Tok::Date(_) | Tok::Fill(_) | Tok::Slash => out.push(t.clone()),\n",
+    required=False,
+)
+RENDER = f"{NUMFMT}/render.rs"
+replace(
+    RENDER,
+    '            Tok::General => out.push(&format_general_fit(v, width).unwrap_or_else(|| "#".repeat(width.clamp(1, 11)))),\n',
+    '            Tok::General => out.push(&crate::dex::general(format_general_fit(v, width).unwrap_or_else(|| "#".repeat(width.clamp(1, 11))))),\n',
+    required=False,
+)
+replace(RENDER, "                        text.push('.');\n", "                        text.push(crate::dex::ctx().decimal);\n", required=False)
+insert(
+    RENDER,
+    "Tok::Slash => out.text.push(crate::dex::ctx().date_sep)",
+    "                    DatePart::AP(a, p) => text.push(if hour >= 12 { p } else { a }),\n                }\n            }\n",
+    "            // Dexterity Sheets: the date separator (`\\/` and `\"/\"` are literal and stay `/`).\n"
+    "            Tok::Slash => out.text.push(crate::dex::ctx().date_sep),\n",
+)
+replace(
+    RENDER,
+    "    let sep = |p: usize| thousands && p > 0 && p.is_multiple_of(3);\n",
+    "    let dex = crate::dex::ctx();\n    let sep = |p: usize| thousands && dex.grouping.separator_at(p);\n",
+    required=False,
+)
+replace(RENDER, "parts.buf.push(',');", "parts.buf.push(dex.thousands);", required=False)
+replace(
+    RENDER,
+    "        if i > 0 && (n - i).is_multiple_of(3) {\n            s.push(',');\n",
+    "        if i > 0 && crate::dex::ctx().grouping.separator_at(n - i) {\n            s.push(crate::dex::ctx().thousands);\n",
+    required=False,
+)
+replace(RENDER, '            parts.set_piece(p, ".");\n', "            parts.set_piece(p, crate::dex::ctx().decimal.encode_utf8(&mut [0; 4]));\n", required=False)
 
 # ---- Windows packaging: upstream's install-policy check is for GridCraft's identity -----------
 s = read("packaging/windows/package.ps1")
@@ -500,6 +567,9 @@ replace(
     required=False,
 )
 replace(about, 'ui.label(format!("Version {}", env!("CARGO_PKG_VERSION")));', 'ui.label(format!("Version {}", gridcraft_collab::APP_VERSION.trim()));', required=False)
+
+# ---- Contributors: names as plain text (an internal LAN tool opens no websites) ---------------
+replace(f"{UI}/credits.rs", 'ui.hyperlink_to(c.name(v.names), format!("https://github.com/{}", c.login))', "ui.label(c.name(v.names))", required=False)
 
 # ---- Check for Updates goes to the office server ----------------------------------------------
 for p in glob.glob(os.path.join(ROOT, UI, "ribbon", "*.rs")) + [os.path.join(ROOT, UI, "ribbon.rs")]:

@@ -8,6 +8,16 @@ automatically and don't go here.
 
 ## Unreleased
 
+- **Now built on GridCraft 0.18.0** (was 0.14.2): 150 changes from official GridCraft are in this version. The newest are below; the release notes on GitHub list them all.
+- From GridCraft: Numfmt: one built-in format table, fewer allocations rendering numbers and General
+- From GridCraft: xlsx: escape shape font typeface attribute
+- From GridCraft: MCP: the stdio server keeps at most 16 MB of a message
+- From GridCraft: Functions: lookups keep an empty target cell blank
+- From GridCraft: Manage Rules: scroll the rule list instead of laying out every rule
+- From GridCraft: io: refuse a FIFO before opening it; keep the replaced file's group on save
+- From GridCraft: functions: REGEXREPLACE keeps only the requested occurrence's captures
+- From GridCraft: engine: Consolidate finds keys through hash maps and refuses an oversized table
+
 ## 1.4.1 · 1 November 2026
 
 - Brings in the latest fixes and features of official GridCraft (listed in the release notes on GitHub). Nothing else changed in Dexterity Sheets.
