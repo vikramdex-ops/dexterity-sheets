@@ -1,7 +1,7 @@
 {
  "about": "RULES.md 1.4: the performance gate (packaging/dexterity/tests/perf_gate.py) fails a build over any of these. Measured on 28 Oct 2026 on an office laptop (DirectX 12 GPU): startup 1.5 s, idle 212 MB in use (486 MB reserved, mostly by the graphics driver), idle CPU 0, typing one refresh (16.7 ms), 2 million cells open in 3.6 s using 371 MB, scrolling them 27 ms per frame, 0-10 MB kept after closing. The GitHub runner (release 1.2.0, 27 Oct 2026): exe 37.3 MB, startup 0.5 s, idle 121 MB, idle CPU 0, 2 million cells in 1.1 s using 303 MB, scrolling 25 ms, 21 MB kept. Budgets sit about 1.5-2x above the slower of the two. Raise a budget only with a reason written here.",
  "budgets": {
-  "exe_mb": {"max": 45, "why": "37.3 MB; a jump means a dependency or asset bloated it"},
+  "exe_mb": {"max": 56, "why": "37.3 MB at 1.2.0, 44.3 MB at 1.4.0; 49.7 MB on 11 Nov 2026 once GridCraft 0.15-0.18 was merged (150 upstream changes: Insert > Equation with the RaTeX LaTeX layout crates, the new gridcraft-math and gridcraft-sandbox crates, Solver and Analysis ToolPak additions, form controls). Budget about 1.13x that; a jump beyond it means a dependency or asset bloated it"},
   "startup_ms": {"max": 4000, "why": "1.5 s on a laptop, 0.5 s on the runner"},
   "idle_ram_mb": {"max": 300, "why": "212 MB on a laptop, 121 MB on the runner"},
   "idle_cpu_ms_per_10s": {"max": 200, "why": "0 on both: the window draws only when something changes"},
