@@ -19,6 +19,15 @@ its newest changes); the release notes on GitHub list every one of them with its
 - From GridCraft: sheets with a million hidden rows or whole-column conditional formats scroll smoothly again; MEDIAN, PERCENTILE, QUARTILE, LARGE and SMALL, SUM/COUNT/AVERAGE over big ranges, inserting and deleting rows and columns, and charts with many points are faster; many sheet-protection and file-safety fixes.
 - **Formulas › Explain Error** explains the new `#PYTHON!` and `#TIMEOUT!` errors, and what `#BUSY!` and `#BLOCKED!` mean for a Python cell.
 - **File › Account** names the GridCraft release this version contains (it showed an older number).
+- More fixes and improvements from official GridCraft (still GridCraft 0.18.0): 22 changes, the newest below. The release notes on GitHub list them all.
+- From GridCraft: xlsx: share inline dxf number formats within a styles part
+- From GridCraft: Save as Web Page: a byte budget for the charts' SVG (an error past it)
+- From GridCraft: xls: charge expanded shared-formula text to the import's text allowance
+- From GridCraft: pivot: Rank and Running Total computed once per sibling set; accumulator, caption and chart-series bounds
+- From GridCraft: xlsx: resolve cell pictures through a per-structure layout and a relationship index
+- From GridCraft: engine: Scenario Summary size limit, bounded solver report names, undo history counts comment and link text
+- From GridCraft: Row auto-fit: sweep merges once per sheet instead of per row
+- From GridCraft: calc: one cumulative work budget per formula, and INDEX decides multi-cell picks from their shape
 
 ## 1.4.1 · 1 November 2026
 
