@@ -448,7 +448,8 @@ def note_changes(previous, head, old_release, new_release):
         lines = [f"- **Now built on GridCraft {new_release}**{was}: {count} changes from official GridCraft are in this version. The newest are below; the release notes on GitHub list them all."]
     else:
         on = f" (still GridCraft {new_release})" if new_release else ""
-        lines = [f"- {count} more fixes and improvements from official GridCraft{on}. The newest are below; the release notes on GitHub list them all."]
+        changes = "1 change" if count == 1 else f"{count} changes"
+        lines = [f"- More fixes and improvements from official GridCraft{on}: {changes}, the newest below. The release notes on GitHub list them all."]
     lines += [f"- From GridCraft: {s}" for s in shown]
     text = read(CHANGES)
     m = re.search(r"^## Unreleased[^\n]*\n(.*?)(?=^## |\Z)", text, re.M | re.S)
