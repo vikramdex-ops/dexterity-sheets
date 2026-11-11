@@ -9,6 +9,8 @@ its newest changes); the release notes on GitHub list every one of them with its
 
 ## Unreleased
 
+## 1.5.1 · 11 November 2026
+
 - More fixes and improvements from official GridCraft (still GridCraft 0.18.0): 22 changes, the newest below. The release notes on GitHub list them all.
 - From GridCraft: xlsx: share inline dxf number formats within a styles part
 - From GridCraft: Save as Web Page: a byte budget for the charts' SVG (an error past it)

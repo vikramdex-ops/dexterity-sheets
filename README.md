@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <sub><!-- dex:release -->Version <b>1.5.0</b> · 11 November 2026 · based on GridCraft 0.18.0<!-- /dex:release --> · Windows 10 and 11 · no administrator rights needed · updates itself</sub>
+  <sub><!-- dex:release -->Version <b>1.5.1</b> · 11 November 2026 · based on GridCraft 0.18.0<!-- /dex:release --> · Windows 10 and 11 · no administrator rights needed · updates itself</sub>
 </p>
 
 <p align="center">
@@ -104,14 +104,14 @@
 ## What's new
 
 <!-- dex:whatsnew -->
-- **Now built on GridCraft 0.18.0** (was 0.14.2): everything official GridCraft released in 0.15, 0.16, 0.17 and 0.18 is in this version, 150 merged changes in all. The main ones are below, in GridCraft's own words; the release notes on GitHub list every change.
-- From GridCraft: **Formulas › Function Library** as labelled buttons with category menus, Recently Used, and categories in Insert Function. **Trace Error** draws arrows back to the cell an error starts in.
-- From GridCraft: **Solver** gets Options, Load/Save Model, Reset All and the Sensitivity report; the **Analysis ToolPak** gets two-factor Anova, z-Test, Fourier Analysis, Random Number Generation and Sampling; Goal Seek, Solver and Data Analysis have reference boxes you can point into the sheet with.
-- From GridCraft: **Insert › Equation** with a LaTeX editor (kept in .xlsx files, printed in PDF); **form controls** (buttons, sliders, spin buttons) with Assign Action and Format Control; data tables beneath charts; every floating object is selected the same way, with eight resize handles.
-- From GridCraft: **Python cells** are kept as data: stored, edited and saved as Excel's PY formula (no code runs). A shared spreadsheet carries them to everyone as well.
-- From GridCraft: opens **SYLK (.slk)** files and a web page's table saved as .xls; reads cell formatting from .xls files; a workbook keeps its sheet-tab and scroll-bar settings, its R1C1 reference style and "remove personal information on save" through open and save; checkboxes no longer make Excel repair the file.
+- More fixes and improvements from official GridCraft (still GridCraft 0.18.0): 22 changes, the newest below. The release notes on GitHub list them all.
+- From GridCraft: xlsx: share inline dxf number formats within a styles part
+- From GridCraft: Save as Web Page: a byte budget for the charts' SVG (an error past it)
+- From GridCraft: xls: charge expanded shared-formula text to the import's text allowance
+- From GridCraft: pivot: Rank and Running Total computed once per sibling set; accumulator, caption and chart-series bounds
+- From GridCraft: xlsx: resolve cell pictures through a per-structure layout and a relationship index
 
-[Everything in 1.5.0](https://github.com/vikramdex-ops/dexterity-sheets/releases/tag/v1.5.0) and 4 more.
+[Everything in 1.5.1](https://github.com/vikramdex-ops/dexterity-sheets/releases/tag/v1.5.1) and 3 more.
 <!-- /dex:whatsnew -->
 
 Dexterity Sheets is built on the open-source [GridCraft](https://github.com/storytold/gridcraft)
