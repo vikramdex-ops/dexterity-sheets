@@ -12,6 +12,7 @@ plan/
 /tests/out/
 /dist/
 /sync-result.json
+__pycache__/
 /media/
 /notes/
 /excel-watch/

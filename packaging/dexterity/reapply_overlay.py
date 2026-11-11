@@ -49,6 +49,20 @@ def replace(path, old, new, required=True):
     write(path, s.replace(old, new))
 
 
+# ---- Workspace: our crates and where they sit in the layering ----------------------------------
+insert("Cargo.toml", 'gridcraft-collab = { path = "crates/collab" }', 'gridcraft-pdf = { path = "crates/pdf" }\n', 'gridcraft-collab = { path = "crates/collab" }\n')
+LAYERS = "xtask/src/layers.rs"
+insert(
+    LAYERS,
+    '("collab", Class::Layer(6))',
+    '    ("mcp", Class::Layer(6)),\n',
+    "    // LAN co-authoring (no UI toolkit); the UI builds on it.\n"
+    '    ("collab", Class::Layer(6)),\n'
+    '    ("server", Class::Layer(7)),\n'
+    '    ("server-manager", Class::Layer(7)),\n',
+)
+insert(LAYERS, '&["collab", "ui-egui"]', '&["model", "xlsx"]', ', &["collab", "ui-egui"]')
+
 # ---- UI hooks --------------------------------------------------------------------------------
 UI = "crates/ui-egui/src"
 insert(f"{UI}/lib.rs", "pub mod collab_ui;", "pub mod code_editor;\n", "pub mod collab_ui;\n")
@@ -404,13 +418,45 @@ s2 = re.sub(r"# Check the compiled scope, path and registration contract before 
 if s2 != s:
     write("packaging/windows/package.ps1", s2)
 
-# ---- Agents read RULES.md first ---------------------------------------------------------------
+# ---- XLSX formulas: IFS, SWITCH, INDIRECT and CELL used as values keep array evaluation ---------
+ARRAY = "crates/xlsx/src/array_formula.rs"
+insert(ARRAY, "mod dex;", "use crate::FunctionInfo;\n", "\n// Dexterity Sheets: array_formula/dex.rs (formulas Excel would show with a spurious `@`).\nmod dex;\n")
 insert(
-    "CLAUDE.md",
-    "RULES.md",
-    "# GridCraft — instructions for agents\n\n",
-    '> **Dexterity Sheets:** read [`RULES.md`](RULES.md) first. Its rules (share from anywhere, no placeholders, performance budgets, docs and `CHANGES.md` in the same change, Excel and GridCraft kept current) bind every change here.\n\n',
+    ARRAY,
+    "dex::reference_function_used_as_value(",
+    "    expr.walk(&mut |e| explicit |= matches!(e, Expr::Unary(UnOp::At, _)));\n",
+    "    // Dexterity Sheets: IFS, SWITCH, INDIRECT or CELL used as a value is saved with array\n"
+    "    // evaluation, as Excel saves its own, so Excel does not show it as `=@IFS(…)`.\n"
+    "    if !explicit && dex::reference_function_used_as_value(&expr) {\n"
+    "        return Export::Dynamic;\n"
+    "    }\n",
 )
+replace(
+    "crates/xlsx/src/tests/array_export.rs",
+    '            ("SQRT(INDIRECT(\\"A1\\"))", false),\n',
+    "            // Dexterity Sheets: saved with array evaluation, or Excel shows `SQRT(@INDIRECT(\"A1\"))`\n"
+    "            // (array_formula/dex.rs).\n"
+    '            ("SQRT(INDIRECT(\\"A1\\"))", true),\n',
+    required=False,
+)
+
+# ---- Key tips: Alt, Q opens the command search --------------------------------------------------
+replace(
+    f"{UI}/keytips/keytips.json",
+    '   "seq": "Q",\n   "kind": "command",\n   "target": "ui.search",\n   "pending": true,\n   "excel": "Search / Tell Me",\n   "note": "Alt+Q search box does not exist yet (issue #49)"\n',
+    '   "seq": "Q",\n   "kind": "dialog",\n   "target": "commandSearch",\n   "excel": "Search / Tell Me",\n   "note": "Dexterity Sheets: Alt, Q opens the command search (the title bar\'s search icon)"\n',
+    required=False,
+)
+
+# ---- Agents read RULES.md first ---------------------------------------------------------------
+# Upstream keeps its agent instructions in AGENTS.md (CLAUDE.md points at it); both get the line.
+POINTER = (
+    "> **Dexterity Sheets:** read [`RULES.md`](RULES.md) first. Its rules (share from anywhere, no placeholders, performance budgets, docs and `CHANGES.md` in the same change, Excel and GridCraft kept current) bind every change here.\n"
+    "> Where the rules below (written for official GridCraft's own repositories) and `RULES.md` differ, for example on how `main` changes, on CI and on releases, `RULES.md` wins in this repository.\n\n"
+)
+for doc in ("CLAUDE.md", "AGENTS.md"):
+    if os.path.exists(os.path.join(ROOT, doc)) and "RULES.md" not in read(doc):
+        write(doc, POINTER + read(doc))
 
 # ---- File > Shared page ----------------------------------------------------------------------
 B = f"{UI}/backstage.rs"
