@@ -9,6 +9,8 @@ its newest changes); the release notes on GitHub list every one of them with its
 
 ## Unreleased
 
+## 1.5.0 · 11 November 2026
+
 - **Now built on GridCraft 0.18.0** (was 0.14.2): everything official GridCraft released in 0.15, 0.16, 0.17 and 0.18 is in this version, 150 merged changes in all. The main ones are below, in GridCraft's own words; the release notes on GitHub list every change.
 - From GridCraft: **Formulas › Function Library** as labelled buttons with category menus, Recently Used, and categories in Insert Function. **Trace Error** draws arrows back to the cell an error starts in.
 - From GridCraft: **Solver** gets Options, Load/Save Model, Reset All and the Sensitivity report; the **Analysis ToolPak** gets two-factor Anova, z-Test, Fourier Analysis, Random Number Generation and Sampling; Goal Seek, Solver and Data Analysis have reference boxes you can point into the sheet with.
