@@ -9,6 +9,13 @@ its newest changes); the release notes on GitHub list every one of them with its
 
 ## Unreleased
 
+- More fixes and improvements from official GridCraft (still GridCraft 0.19.1): 5 changes, the newest below. The release notes on GitHub list them all.
+- From GridCraft: xlsx: .xls data validation from craft-xls
+- From GridCraft: xlsx: OPC packages through craft-opc; craft-libs at aa84415b
+- From GridCraft: xlsx: encrypted workbooks through craft-offcrypto and craft-cfb
+- From GridCraft: xlsx, engine: CSV and SYLK through craft-csv
+- From GridCraft: xlsx: read .xls through craft-xls
+
 ## 1.6.0 · 12 November 2026
 
 - **Now built on GridCraft 0.19.1** (was 0.18.0): 16 changes from official GridCraft are in this version. The newest are below; the release notes on GitHub list them all.
