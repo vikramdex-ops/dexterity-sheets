@@ -88,7 +88,9 @@ Nothing in it needs an AI service, an API key or any secret.
    published as "latest". Office servers never see a half-uploaded release.
 7. **Docs**: the README's version and "what's new" blocks are refreshed from the release notes;
    the screenshots and the demo animation are re-captured from the released build and replaced
-   only where they really changed; the landing page (GitHub Pages) is redeployed.
+   only where they really changed; the landing page (GitHub Pages) is redeployed. GitHub Pages
+   deploys from `main` only, so a sync resumed by a push to `sync/pending` starts the landing
+   page as its own run on `main` and waits for it.
 8. **Report**: any failure opens (or comments on, once a day) one `sync-failure` issue with the
    run link; the next successful sync closes it. If the release is already public and only the
    README refresh or the landing page after it failed (usually a GitHub outage), the sync counts
