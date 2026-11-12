@@ -73,6 +73,9 @@ jobs:
         run: python packaging/dexterity/tests/perf_gate.py target/release --report tests/out/perf.json
       - uses: actions/upload-artifact@v4
         if: always()
+        # Diagnostics only: a GitHub artifact-storage outage must not fail a build whose tests passed
+        # (it stopped the GridCraft 0.19 sync on 11 Nov 2026, Upstream sync run 43088863778).
+        continue-on-error: true
         with:
           name: e2e-results
           path: tests/out

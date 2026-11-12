@@ -90,7 +90,11 @@ Nothing in it needs an AI service, an API key or any secret.
    the screenshots and the demo animation are re-captured from the released build and replaced
    only where they really changed; the landing page (GitHub Pages) is redeployed.
 8. **Report**: any failure opens (or comments on, once a day) one `sync-failure` issue with the
-   run link; the next successful sync closes it.
+   run link; the next successful sync closes it. If the release is already public and only the
+   README refresh or the landing page after it failed (usually a GitHub outage), the sync counts
+   as done: the issue is closed with a note to click **Re-run failed jobs** on that run, and
+   nothing has to be pushed to `sync/pending`. Uploading the e2e test results is diagnostic and
+   never fails a build whose tests passed.
 
 Office servers with `update-source.json` download the new `.msi` within 30 minutes and every open
 Dexterity Sheets shows "Update to X.Y.Z" in its status bar.

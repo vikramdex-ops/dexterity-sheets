@@ -214,6 +214,8 @@ jobs:
       RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
       STATUS: ${{ needs.merge.outputs.status }}
       CANDIDATE: ${{ needs.merge.outputs.candidate }}
+      VERSION: ${{ needs.merge.outputs.version }}
+      PUBLISHED: ${{ needs.release.outputs.published }}
     steps:
       - name: Keep a candidate that failed its checks where a fix can be pushed
         if: ${{ needs.merge.outputs.status == 'merged' && (needs.test.result == 'failure' || needs.build.result == 'failure') }}
@@ -229,6 +231,14 @@ jobs:
         run: |
           gh label create sync-failure --color d73a4a --description "The automatic upstream sync needs a person" --force || true
           open=$(gh issue list --label sync-failure --state open --json number --jq '.[0].number // empty')
+          if [ "$PUBLISHED" = "true" ] && [ "${{ needs.release.result }}" != "success" ]; then
+            # The release is public; only the README refresh or the landing page after it failed.
+            # Nothing on sync/pending can fix that, so the sync is done: say what is left instead.
+            note="Dexterity Sheets $VERSION is published, but the README refresh or the landing page after it failed (often a GitHub outage). To finish: open $RUN and click Re-run failed jobs, or run Actions > Dexterity landing page > Run workflow. Nothing needs pushing to sync/pending."
+            if [ -n "$open" ]; then gh issue close "$open" --comment "Released: $RUN ($STATUS). $note"; fi
+            echo "::error::$note"
+            exit 1
+          fi
           failed=""
           for j in "merge:${{ needs.merge.result }}" "test:${{ needs.test.result }}" "build:${{ needs.build.result }}" "promote:${{ needs.promote.result }}" "release:${{ needs.release.result }}"; do
             case "$j" in *:failure|*:cancelled) failed="$failed ${j%%:*}";; esac

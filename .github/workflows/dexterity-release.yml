@@ -36,6 +36,11 @@ on:
         description: The caller already ran the full CI on this ref
         type: boolean
         default: false
+    outputs:
+      published:
+        # 'true' once the release is public, even if the README refresh or the landing page after
+        # it fails: the upstream sync's report must not call a published release a failed one.
+        value: ${{ jobs.publish.outputs.published }}
 
 permissions:
   contents: write
