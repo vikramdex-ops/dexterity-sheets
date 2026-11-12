@@ -9,6 +9,16 @@ its newest changes); the release notes on GitHub list every one of them with its
 
 ## Unreleased
 
+- **Now built on GridCraft 0.19.1** (was 0.18.0): 16 changes from official GridCraft are in this version. The newest are below; the release notes on GitHub list them all.
+- From GridCraft: engine: work limits for Advanced Filter, Remove Duplicates, filters, AutoFit, macro footprints; range sizes saturate
+- From GridCraft: engine: index merges and bound the page in HTML export and clipboard HTML
+- From GridCraft: check, xtask stats: visited directories keyed by (dev, inode); stats reads only regular files
+- From GridCraft: Security: one work budget across every call of a lifted function
+- From GridCraft: print: bound the print area to the grid; render charts once and budget picture and chart output
+- From GridCraft: fix(formula): bound the wrappers stacked on one path of a parsed formula
+- From GridCraft: fix(mcp): send the control token only to a loopback address
+- From GridCraft: fix(engine): calculated pivot fields may not build arrays from scalars
+
 ## 1.5.1 · 11 November 2026
 
 - More fixes and improvements from official GridCraft (still GridCraft 0.18.0): 22 changes, the newest below. The release notes on GitHub list them all.
