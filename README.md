@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <sub><!-- dex:release -->Version <b>1.5.1</b> · 11 November 2026 · based on GridCraft 0.18.0<!-- /dex:release --> · Windows 10 and 11 · no administrator rights needed · updates itself</sub>
+  <sub><!-- dex:release -->Version <b>1.6.0</b> · 12 November 2026 · based on GridCraft 0.19.1<!-- /dex:release --> · Windows 10 and 11 · no administrator rights needed · updates itself</sub>
 </p>
 
 <p align="center">
@@ -104,14 +104,14 @@
 ## What's new
 
 <!-- dex:whatsnew -->
-- More fixes and improvements from official GridCraft (still GridCraft 0.18.0): 22 changes, the newest below. The release notes on GitHub list them all.
-- From GridCraft: xlsx: share inline dxf number formats within a styles part
-- From GridCraft: Save as Web Page: a byte budget for the charts' SVG (an error past it)
-- From GridCraft: xls: charge expanded shared-formula text to the import's text allowance
-- From GridCraft: pivot: Rank and Running Total computed once per sibling set; accumulator, caption and chart-series bounds
-- From GridCraft: xlsx: resolve cell pictures through a per-structure layout and a relationship index
+- **Now built on GridCraft 0.19.1** (was 0.18.0): 16 changes from official GridCraft are in this version. The newest are below; the release notes on GitHub list them all.
+- From GridCraft: engine: work limits for Advanced Filter, Remove Duplicates, filters, AutoFit, macro footprints; range sizes saturate
+- From GridCraft: engine: index merges and bound the page in HTML export and clipboard HTML
+- From GridCraft: check, xtask stats: visited directories keyed by (dev, inode); stats reads only regular files
+- From GridCraft: Security: one work budget across every call of a lifted function
+- From GridCraft: print: bound the print area to the grid; render charts once and budget picture and chart output
 
-[Everything in 1.5.1](https://github.com/vikramdex-ops/dexterity-sheets/releases/tag/v1.5.1) and 3 more.
+[Everything in 1.6.0](https://github.com/vikramdex-ops/dexterity-sheets/releases/tag/v1.6.0) and 3 more.
 <!-- /dex:whatsnew -->
 
 Dexterity Sheets is built on the open-source [GridCraft](https://github.com/storytold/gridcraft)

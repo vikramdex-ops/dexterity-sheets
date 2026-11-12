@@ -9,6 +9,8 @@ its newest changes); the release notes on GitHub list every one of them with its
 
 ## Unreleased
 
+## 1.6.0 · 12 November 2026
+
 - **Now built on GridCraft 0.19.1** (was 0.18.0): 16 changes from official GridCraft are in this version. The newest are below; the release notes on GitHub list them all.
 - From GridCraft: engine: work limits for Advanced Filter, Remove Duplicates, filters, AutoFit, macro footprints; range sizes saturate
 - From GridCraft: engine: index merges and bound the page in HTML export and clipboard HTML
