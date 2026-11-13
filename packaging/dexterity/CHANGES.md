@@ -9,6 +9,14 @@ its newest changes); the release notes on GitHub list every one of them with its
 
 ## Unreleased
 
+- More fixes and improvements from official GridCraft (still GridCraft 0.19.1): 6 changes, the newest below. The release notes on GitHub list them all.
+- From GridCraft: Charts: resolved data and rendering are cached between frames
+- From GridCraft: PDF: writer cleanup, q nesting limit, image dedupe, style only on change
+- From GridCraft: LINEST, LOGEST, TREND, GROWTH: solve by Householder QR
+- From GridCraft: Grid: resizing several selected columns applies the width on release
+- From GridCraft: Shift+arrows, Enter and Tab no longer get stuck on a merged cell
+- From GridCraft: Insert: WordArt (insert.wordArt)
+
 ## 1.6.1 · 13 November 2026
 
 - More fixes and improvements from official GridCraft (still GridCraft 0.19.1): 5 changes, the newest below. The release notes on GitHub list them all.
