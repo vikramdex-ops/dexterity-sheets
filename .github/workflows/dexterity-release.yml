@@ -254,11 +254,39 @@ jobs:
           done
           echo "::error::could not push the docs refresh"; exit 1
 
+  # The github-pages environment deploys from main only. A sync resumed by a push to sync/pending
+  # runs on that branch, and a deploy from it is refused (Upstream sync run 43165704205, 1.6.0):
+  # there the landing page is built by its own run on main, which this job starts and waits for.
   pages:
     needs: [publish, docs]
-    if: ${{ always() && needs.publish.outputs.published == 'true' }}
+    if: ${{ always() && needs.publish.outputs.published == 'true' && github.ref == 'refs/heads/main' }}
     permissions:
       contents: read
       pages: write
       id-token: write
     uses: ./.github/workflows/dexterity-pages.yml
+
+  pages-on-main:
+    needs: [publish, docs]
+    if: ${{ always() && needs.publish.outputs.published == 'true' && github.ref != 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - name: Run the landing page on main and wait for it
+        run: |
+          since=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          gh workflow run dexterity-pages.yml --ref main
+          id=""
+          for i in $(seq 1 30); do
+            sleep 10
+            id=$(gh run list --workflow dexterity-pages.yml --event workflow_dispatch --branch main \
+              --json databaseId,createdAt --jq "[.[] | select(.createdAt >= \"$since\")] | last | .databaseId // empty")
+            [ -n "$id" ] && break
+          done
+          [ -n "$id" ] || { echo "::error::the landing-page run on main did not start within 5 minutes"; exit 1; }
+          echo "Landing page run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/$id"
+          gh run watch "$id" --exit-status --interval 15
