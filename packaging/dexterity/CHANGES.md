@@ -9,6 +9,8 @@ its newest changes); the release notes on GitHub list every one of them with its
 
 ## Unreleased
 
+## 1.6.2 · 13 November 2026
+
 - More fixes and improvements from official GridCraft (still GridCraft 0.19.1): 6 changes, the newest below. The release notes on GitHub list them all.
 - From GridCraft: Charts: resolved data and rendering are cached between frames
 - From GridCraft: PDF: writer cleanup, q nesting limit, image dedupe, style only on change

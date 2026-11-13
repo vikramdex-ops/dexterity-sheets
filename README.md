@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <sub><!-- dex:release -->Version <b>1.6.1</b> · 13 November 2026 · based on GridCraft 0.19.1<!-- /dex:release --> · Windows 10 and 11 · no administrator rights needed · updates itself</sub>
+  <sub><!-- dex:release -->Version <b>1.6.2</b> · 13 November 2026 · based on GridCraft 0.19.1<!-- /dex:release --> · Windows 10 and 11 · no administrator rights needed · updates itself</sub>
 </p>
 
 <p align="center">
@@ -104,14 +104,14 @@
 ## What's new
 
 <!-- dex:whatsnew -->
-- More fixes and improvements from official GridCraft (still GridCraft 0.19.1): 5 changes, the newest below. The release notes on GitHub list them all.
-- From GridCraft: xlsx: .xls data validation from craft-xls
-- From GridCraft: xlsx: OPC packages through craft-opc; craft-libs at aa84415b
-- From GridCraft: xlsx: encrypted workbooks through craft-offcrypto and craft-cfb
-- From GridCraft: xlsx, engine: CSV and SYLK through craft-csv
-- From GridCraft: xlsx: read .xls through craft-xls
+- More fixes and improvements from official GridCraft (still GridCraft 0.19.1): 6 changes, the newest below. The release notes on GitHub list them all.
+- From GridCraft: Charts: resolved data and rendering are cached between frames
+- From GridCraft: PDF: writer cleanup, q nesting limit, image dedupe, style only on change
+- From GridCraft: LINEST, LOGEST, TREND, GROWTH: solve by Householder QR
+- From GridCraft: Grid: resizing several selected columns applies the width on release
+- From GridCraft: Shift+arrows, Enter and Tab no longer get stuck on a merged cell
 
-[Everything in 1.6.1](https://github.com/vikramdex-ops/dexterity-sheets/releases/tag/v1.6.1).
+[Everything in 1.6.2](https://github.com/vikramdex-ops/dexterity-sheets/releases/tag/v1.6.2) and 1 more.
 <!-- /dex:whatsnew -->
 
 Dexterity Sheets is built on the open-source [GridCraft](https://github.com/storytold/gridcraft)
