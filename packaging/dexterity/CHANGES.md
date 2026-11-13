@@ -9,6 +9,8 @@ its newest changes); the release notes on GitHub list every one of them with its
 
 ## Unreleased
 
+## 1.6.1 · 13 November 2026
+
 - More fixes and improvements from official GridCraft (still GridCraft 0.19.1): 5 changes, the newest below. The release notes on GitHub list them all.
 - From GridCraft: xlsx: .xls data validation from craft-xls
 - From GridCraft: xlsx: OPC packages through craft-opc; craft-libs at aa84415b
