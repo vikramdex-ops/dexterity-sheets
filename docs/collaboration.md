@@ -41,6 +41,12 @@ app.
   sees it close. A view-only account never edits, whatever a workbook allows. "Allow downloading"
   is enforced by the app (Save As and Export are refused for a viewer); nothing stops someone
   copying cells by hand or taking a screenshot.
+- **Dexterity Connect.** Share › Share to Dexterity Connect (Windows, shared spreadsheets) opens the
+  office messenger's share dialog (`dexconnect://share?…`) with the spreadsheet's name and its
+  `dexterity://` link filled in; the person picks who it is for and sends it there, where the link
+  shows as an "Open in Dexterity Sheets" chip. Only that scheme is handed to Windows
+  (`collab.shareToConnect`, `{open?: false}` returns the link without opening anything); if the
+  messenger is not installed, the message says so.
 - **Links.** Share › Copy link gives `dexterity://open/<server>/<id>`: paste it in a chat or an
   e-mail; clicking it opens the workbook in Dexterity Sheets (installed with the app), which
   checks the reader's own access, so the link itself grants nothing. A second copy of the app hands

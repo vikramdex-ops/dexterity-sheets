@@ -1366,6 +1366,17 @@ pub fn share_menu(app: &mut SheetApp, ui: &mut Ui) {
             Err(e) => app.message = Some(("Dexterity Sheets".into(), e)),
         }
     }
+    if shared
+        && ui
+            .button("Share to Dexterity Connect")
+            .on_hover_text("Opens Dexterity Connect, the office messenger, with a link to this spreadsheet: choose who it is for and send")
+            .clicked()
+    {
+        match app.run("collab.shareToConnect", json!({})) {
+            Ok(_) => app.toast = Some(("Dexterity Connect is open: choose who to share it with.".into(), crate::now_ms())),
+            Err(e) => app.message = Some(("Dexterity Sheets".into(), e)),
+        }
+    }
     if ui.button("Notifications…").clicked() {
         app.run_or_alert("collab.notifications", json!({}));
     }

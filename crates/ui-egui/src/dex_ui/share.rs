@@ -371,6 +371,52 @@ fn native(title: &str, lines: &[String], launch: &str) {
     log::info!("notification: {title} {lines:?} {launch}");
 }
 
+/// `dexconnect://share?…` for a shared workbook: Dexterity Connect (the office messenger) opens
+/// its share dialog with the workbook's name and an "Open in Dexterity Sheets" link filled in;
+/// the person picks who it is for and confirms there.
+pub fn connect_share_url(name: &str, link: &str) -> String {
+    fn enc(s: &str) -> String {
+        let mut out = String::with_capacity(s.len() * 3);
+        for b in s.bytes() {
+            if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b'~') {
+                out.push(char::from(b));
+            } else {
+                out.push_str(&format!("%{b:02X}"));
+            }
+        }
+        out
+    }
+    let text = format!("**{}** (Dexterity Sheets)", name.trim());
+    format!("dexconnect://share?from={}&text={}&title={}&link={}", enc("Dexterity Sheets"), enc(&text), enc("Open in Dexterity Sheets"), enc(link))
+}
+
+/// Hand a `dexconnect:` link to Windows. Only Dexterity Connect's own scheme is passed on.
+fn open_in_connect(url: &str) -> Result<(), String> {
+    if !url.starts_with("dexconnect://share?") {
+        return Err("not a Dexterity Connect link".into());
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        // Is the messenger installed? Its installer registers the dexconnect: scheme.
+        let installed = ["HKCU", "HKLM"].iter().any(|root| {
+            std::process::Command::new("reg")
+                .args(["query", &format!(r"{root}\Software\Classes\dexconnect"), "/ve"])
+                .creation_flags(0x0800_0000)
+                .output()
+                .is_ok_and(|o| o.status.success())
+        });
+        if !installed {
+            return Err("Dexterity Connect, the office messenger, is not installed on this PC.".into());
+        }
+        std::process::Command::new("explorer").arg(url).creation_flags(0x0800_0000).spawn().map(|_| ()).map_err(|e| e.to_string())
+    }
+    #[cfg(not(windows))]
+    {
+        Err("Sharing to Dexterity Connect works in the Windows app.".into())
+    }
+}
+
 fn shared_doc_book(app: &SheetApp) -> Option<proto::BookInfo> {
     let d = app.session.active()?;
     app.collab.shared(d.uid).map(|sd| sd.book.clone())
@@ -422,6 +468,19 @@ pub fn run_command(app: &mut SheetApp, id: &str, p: &Json) -> Option<Result<Json
                 Ok(json!({"link": link, "webLink": web}))
             }
             None => Err("Share the workbook first: the link points at the shared copy on the office server.".into()),
+        },
+        // {open?: bool (default true)} → {url}: Dexterity Connect's share dialog for this workbook
+        "collab.shareToConnect" => match shared_doc_book(app) {
+            Some(b) => {
+                let server = app.collab.server_address();
+                let url = connect_share_url(&b.name, &proto::link(&server, &b.id));
+                if p.get("open").and_then(Json::as_bool) == Some(false) {
+                    Ok(json!({"url": url}))
+                } else {
+                    open_in_connect(&url).map(|()| json!({"url": url}))
+                }
+            }
+            None => Err("Share the workbook first: the message links to the shared copy on the office server.".into()),
         },
         "collab.openLink" => {
             let l = p.get("link").and_then(Json::as_str).unwrap_or("");
@@ -741,6 +800,16 @@ pub fn kinds() -> BTreeMap<&'static str, &'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn connect_share_links_carry_the_workbook() {
+        let l = proto::link("PC-SERVER:47810", "line-list-100-3f2a");
+        let u = connect_share_url("Line List 100 & MTO", &l);
+        assert!(u.starts_with("dexconnect://share?from=Dexterity%20Sheets&text=%2A%2ALine%20List%20100%20%26%20MTO%2A%2A"));
+        assert!(u.ends_with("&link=dexterity%3A%2F%2Fopen%2FPC-SERVER%3A47810%2Fline-list-100-3f2a"));
+        assert!(!u.contains(' '));
+        assert!(open_in_connect("https://example.com").is_err(), "only the messenger's scheme is handed over");
+    }
 
     #[test]
     fn links_round_trip_and_reject_junk() {
