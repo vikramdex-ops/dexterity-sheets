@@ -9,6 +9,8 @@ its newest changes); the release notes on GitHub list every one of them with its
 
 ## Unreleased
 
+## 1.6.3 · 14 November 2026
+
 - More fixes and improvements from official GridCraft (still GridCraft 0.19.1): 8 changes, the newest below. The release notes on GitHub list them all.
 - From GridCraft: perf: win back formula-entry and XLSX-save time lost since 23829d8c
 - From GridCraft: XLSX: warn when a pivot cache can't be read or is too large
