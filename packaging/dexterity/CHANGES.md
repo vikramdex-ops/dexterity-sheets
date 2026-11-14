@@ -9,6 +9,14 @@ its newest changes); the release notes on GitHub list every one of them with its
 
 ## Unreleased
 
+- More fixes and improvements from official GridCraft (still GridCraft 0.19.1): 8 changes, the newest below. The release notes on GitHub list them all.
+- From GridCraft: perf: win back formula-entry and XLSX-save time lost since 23829d8c
+- From GridCraft: XLSX: warn when a pivot cache can't be read or is too large
+- From GridCraft: Keep mid-field quotes when splitting with Text to Columns
+- From GridCraft: calc: linear dependency extraction for range-operator chains
+- From GridCraft: fix(functions): reject negative fractions in GCD and LCM
+- From GridCraft: functions: ACCRINTM accrues zero when issue equals settlement
+
 ## 1.6.2 · 13 November 2026
 
 - More fixes and improvements from official GridCraft (still GridCraft 0.19.1): 6 changes, the newest below. The release notes on GitHub list them all.
