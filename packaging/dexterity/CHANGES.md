@@ -9,6 +9,8 @@ its newest changes); the release notes on GitHub list every one of them with its
 
 ## Unreleased
 
+## 1.6.5 · 17 November 2026
+
 - More fixes and improvements from official GridCraft (still GridCraft 0.19.1): 22 changes, the newest below. The release notes on GitHub list them all.
 - From GridCraft: pdf: follow up shared writer cutover with merged-library pin
 - From GridCraft: pdf: move object and xref envelope writing to craft-pdf
