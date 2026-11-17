@@ -9,6 +9,8 @@ its newest changes); the release notes on GitHub list every one of them with its
 
 ## Unreleased
 
+## 1.6.4 · 17 November 2026
+
 - **Share › Share to Dexterity Connect**: opens Dexterity Connect, the office messenger, with the shared spreadsheet's name and its link filled in; choose who it is for and send. In the message the link opens the spreadsheet in Dexterity Sheets. If the messenger is not installed, a message says so.
 - More fixes and improvements from official GridCraft (still GridCraft 0.19.1): 3 changes, the newest below. The release notes on GitHub list them all.
 - From GridCraft: Sandbox: test the socket owner ioctls with a real pointer

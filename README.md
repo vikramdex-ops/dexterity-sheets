@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <sub><!-- dex:release -->Version <b>1.6.3</b> · 14 November 2026 · based on GridCraft 0.19.1<!-- /dex:release --> · Windows 10 and 11 · no administrator rights needed · updates itself</sub>
+  <sub><!-- dex:release -->Version <b>1.6.4</b> · 17 November 2026 · based on GridCraft 0.19.1<!-- /dex:release --> · Windows 10 and 11 · no administrator rights needed · updates itself</sub>
 </p>
 
 <p align="center">
@@ -104,14 +104,11 @@
 ## What's new
 
 <!-- dex:whatsnew -->
-- More fixes and improvements from official GridCraft (still GridCraft 0.19.1): 8 changes, the newest below. The release notes on GitHub list them all.
-- From GridCraft: perf: win back formula-entry and XLSX-save time lost since 23829d8c
-- From GridCraft: XLSX: warn when a pivot cache can't be read or is too large
-- From GridCraft: Keep mid-field quotes when splitting with Text to Columns
-- From GridCraft: calc: linear dependency extraction for range-operator chains
-- From GridCraft: fix(functions): reject negative fractions in GCD and LCM
+- **Share › Share to Dexterity Connect**: opens Dexterity Connect, the office messenger, with the shared spreadsheet's name and its link filled in; choose who it is for and send. In the message the link opens the spreadsheet in Dexterity Sheets. If the messenger is not installed, a message says so.
+- More fixes and improvements from official GridCraft (still GridCraft 0.19.1): 3 changes, the newest below. The release notes on GitHub list them all.
+- From GridCraft: Sandbox: test the socket owner ioctls with a real pointer
 
-[Everything in 1.6.3](https://github.com/vikramdex-ops/dexterity-sheets/releases/tag/v1.6.3) and 1 more.
+[Everything in 1.6.4](https://github.com/vikramdex-ops/dexterity-sheets/releases/tag/v1.6.4).
 <!-- /dex:whatsnew -->
 
 Dexterity Sheets is built on the open-source [GridCraft](https://github.com/storytold/gridcraft)
