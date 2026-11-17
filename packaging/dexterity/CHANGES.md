@@ -9,6 +9,16 @@ its newest changes); the release notes on GitHub list every one of them with its
 
 ## Unreleased
 
+- More fixes and improvements from official GridCraft (still GridCraft 0.19.1): 22 changes, the newest below. The release notes on GitHub list them all.
+- From GridCraft: pdf: follow up shared writer cutover with merged-library pin
+- From GridCraft: pdf: move object and xref envelope writing to craft-pdf
+- From GridCraft: Equation parse errors follow the interface language
+- From GridCraft: Status bar statistics, resize tips, sheet notes and macro toasts follow the interface language
+- From GridCraft: Equation fallback text in xlsx is drawn at a normal font size
+- From GridCraft: xlsx: share SpreadsheetML string reader/writer codec (cutover stage 1)
+- From GridCraft: XLSX: a hidden Total Row keeps its calculations
+- From GridCraft: XLSX: keep Page Setup's first page number
+
 ## 1.6.4 · 17 November 2026
 
 - **Share › Share to Dexterity Connect**: opens Dexterity Connect, the office messenger, with the shared spreadsheet's name and its link filled in; choose who it is for and send. In the message the link opens the spreadsheet in Dexterity Sheets. If the messenger is not installed, a message says so.
