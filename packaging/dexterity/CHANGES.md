@@ -9,6 +9,8 @@ its newest changes); the release notes on GitHub list every one of them with its
 
 ## Unreleased
 
+## 1.6.6 · 18 November 2026
+
 - More fixes and improvements from official GridCraft (still GridCraft 0.19.1): 3 changes, the newest below. The release notes on GitHub list them all.
 - From GridCraft: Fuzzer: undo checks follow the bounded undo history
 - From GridCraft: Flush a saved workbook to disk before replacing the old one
