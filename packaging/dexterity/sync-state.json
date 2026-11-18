@@ -1,0 +1,34 @@
+{
+  "upstream": "00e8f4fae06d6db324ff551080edf9e0453ccd6e",
+  "previous": "bea2191b354270d06048d1a6cbc14b5690ea0f40",
+  "main": "1001a8ce6614aa5146c0c9c13e50c618b741d962",
+  "subject": "Drag a selected chart's data outline to change its range (#4389, #4390) (#4391)",
+  "reapplied": [
+    "crates/engine/src/io/tests.rs",
+    "crates/numfmt/src/lib.rs",
+    "crates/numfmt/src/render.rs",
+    "crates/numfmt/src/tests.rs"
+  ],
+  "regenerate": [],
+  "unresolved": [
+    "UU crates/engine/src/io/tests.rs (Dexterity lines in a conflicting hunk: 1)",
+    "UU crates/numfmt/src/lib.rs (Dexterity lines in a conflicting hunk: 2)",
+    "UU crates/numfmt/src/render.rs (Dexterity lines in a conflicting hunk: 1)",
+    "UU crates/numfmt/src/tests.rs (Dexterity lines in a conflicting hunk: 1)"
+  ],
+  "details": {
+    "crates/engine/src/io/tests.rs": [
+      "missing: assert_eq!(output, format!(\"\\u{FEFF}124412140710{separator}1.23456789012345{separator}1.24E+11\\r\\n\"));"
+    ],
+    "crates/numfmt/src/lib.rs": [
+      "missing: let (f, overflow) = dex::as_typed(|| fmt.format_number(n, sys));",
+      "missing: text: format_general_fit(n, GENERAL_WIDTH).map_or_else(|| OVERFLOW.into(), dex::general),"
+    ],
+    "crates/numfmt/src/render.rs": [
+      "missing: Tok::General => out.push(&crate::dex::general(format_general_fit(v, width).unwrap_or_else(|| \"#\".repeat(width.clamp(1, 11))))),"
+    ],
+    "crates/numfmt/src/tests.rs": [
+      "missing: let (f, overflow) = crate::dex::as_typed(|| fmt.format_number(n, sys));"
+    ]
+  }
+}
