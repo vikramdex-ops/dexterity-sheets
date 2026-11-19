@@ -3,7 +3,7 @@ use super::{Icon, SheetApp, Stroke, StrokeKind, Tokens, Ui, big_button, json, sm
 
 pub(super) fn review(app: &mut SheetApp, ui: &mut Ui) {
     // Shared workbooks (Dexterity Sheets LAN co-authoring).
-    if big_button(ui, Icon::Share, "Shared\nWorkbooks", "Sign in and open shared workbooks (File > Shared)", false).clicked() {
+    if big_button(ui, Icon::Share, "Shared\nWorkbooks", "Connect and open shared workbooks (File > Shared)", false).clicked() {
         act(app, "collab.shared", json!({}));
     }
     if big_button(ui, Icon::Clock, "Edit\nHistory", "Who changed what, and when", false).clicked() {

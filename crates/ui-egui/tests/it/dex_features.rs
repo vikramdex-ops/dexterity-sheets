@@ -41,10 +41,10 @@ fn every_dexterity_command_is_reachable_through_the_window() {
     for (feature, id) in REACHABLE {
         let r = h.state_mut().run(id, json!({}));
         h.run_steps(2);
-        if let Err(e) = r {
-            if e.contains("unknown command") || e.contains("not a command") {
-                broken.push(format!("{feature} ({id}): {e}"));
-            }
+        if let Err(e) = r
+            && (e.contains("unknown command") || e.contains("not a command"))
+        {
+            broken.push(format!("{feature} ({id}): {e}"));
         }
     }
     assert!(broken.is_empty(), "Dexterity features no longer reachable:\n{}", broken.join("\n"));

@@ -3,7 +3,7 @@
 //! Typing `@` in a comment or reply lists the people on the office server; ↑/↓ and Enter or Tab
 //! (or a click) put `@Display Name` in the text, Esc closes the list. When the comment reaches
 //! the office server, each person mentioned gets a notification that opens the workbook at the
-//! comment (`gridcraft_collab::mention`). The list says why nobody would be told: not signed in,
+//! comment (`gridcraft_collab::mention`). The list says why nobody would be told: not connected,
 //! or the spreadsheet isn't shared.
 
 use egui::text::{CCursor, CCursorRange};
@@ -128,7 +128,7 @@ pub fn field(ui: &mut Ui, text: &mut String, enabled: bool, add: impl FnOnce(&mu
             egui::Frame::popup(ui.style()).show(ui, |ui| {
                 ui.set_min_width(r.rect.width().clamp(200.0, 320.0));
                 if !dir.signed_in {
-                    ui.label(RichText::new("Sign in to the office server (File › Shared) to mention people.").weak());
+                    ui.label(RichText::new("Connect to the office server (File › Shared) to mention people.").weak());
                     return;
                 }
                 for (i, p) in picks.iter().enumerate() {

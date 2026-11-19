@@ -9,6 +9,10 @@ its newest changes); the release notes on GitHub list every one of them with its
 
 ## Unreleased
 
+- **No more user names or passwords for the office server.** Dexterity Sheets connects by itself as your Windows account, to the server it used last or the only one on the network (File › Shared lists them when there are several, one click each, and has **Change server**). Your first PC is trusted at once; another PC shows "Waiting for an administrator to approve this PC" with a short device code. File › Shared shows who you are, this PC's device code and the name others see, which you can change.
+- **Server Manager › People and devices** replaces People and Add many people: everyone who has connected, with their PCs, device codes and last-seen times; approve or revoke a PC, change a role, remove a person. Nobody is created by hand and there are no passwords, sign-in sheets or templates. The first person on a new server becomes its administrator, and the server installer no longer asks for one. For scripts: `DexSheetsServer profile list|role|approve|revoke|remove`.
+- **Upgrading an office server:** its accounts (`users.json`) are carried over at the first start and the file is kept as `users.json.bak`; each account, with its role, colour and workbooks, passes to the first Windows account with the same user name. **Every PC must update to this version**: older apps can't sign in any more and are told "This server needs Dexterity Sheets … or newer — update from Help › Updates", and Help › Updates still brings them the new version from the server.
+
 ## 1.6.0 · 12 November 2026
 
 - **Now built on GridCraft 0.19.1** (was 0.18.0): 16 changes from official GridCraft are in this version. The newest are below; the release notes on GitHub list them all.

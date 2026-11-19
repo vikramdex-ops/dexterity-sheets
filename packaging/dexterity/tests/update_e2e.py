@@ -91,14 +91,25 @@ def main():
     shutil.copy(NEW, os.path.join(DATA, "updates", os.path.basename(NEW)))
     with open(os.path.join(DATA, "updates", os.path.splitext(os.path.basename(NEW))[0] + ".md"), "w", encoding="utf-8") as f:
         f.write("Test release notes: faster sync, fixes.")
-    subprocess.run([SERVER, "--data", DATA, "user", "add", "tester", "--display", "Tester", "--password", "update-test-1", "--role", "editor"], check=True, capture_output=True)
     srv = subprocess.Popen([SERVER, "--data", DATA, "--port", str(PORT), "--name", "Update test"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     time.sleep(1.5)
     token = "update-test-token-123456"
-    app = subprocess.Popen([exe, "--control", "7990"], env=dict(os.environ, GRIDCRAFT_CONTROL_TOKEN=token))
+    # A profile of its own: the device key, settings and recovery copies stay in the work folder.
+    profile = os.path.join(WORK, "profile")
+    env = dict(os.environ, GRIDCRAFT_CONTROL_TOKEN=token, LOCALAPPDATA=os.path.join(profile, "Local"), APPDATA=os.path.join(profile, "Roaming"))
+    os.makedirs(env["LOCALAPPDATA"], exist_ok=True)
+    os.makedirs(env["APPDATA"], exist_ok=True)
+    app = subprocess.Popen([exe, "--control", "7990"], env=env)
     try:
         call = wait(lambda: control(7990, token), 60)
-        call("engine.execute", {"command": "collab.signIn", "params": {"server": f"127.0.0.1:{PORT}", "user": "tester", "password": "update-test-1"}})
+        server = f"127.0.0.1:{PORT}"
+        try:
+            # An app with Windows sign-in (protocol 2) connects as the Windows account.
+            call("engine.execute", {"command": "collab.connect", "params": {"server": server}})
+        except RuntimeError:
+            # An app from before it (user names and passwords): the server lets it in for
+            # updates only, whatever it types, and tells it to update.
+            call("engine.execute", {"command": "collab.signIn", "params": {"server": server, "user": "tester", "password": "any-password"}})
         online = wait(lambda: call("engine.execute", {"command": "collab.status"})["status"] == "Online", 30)
         check("app signs in to the server", online)
         offered = wait(lambda: call("engine.execute", {"command": "collab.checkUpdate"}).get("available"), 30, 1)

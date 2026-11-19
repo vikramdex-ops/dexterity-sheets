@@ -3,16 +3,16 @@
 Dexterity Sheets lets several people edit the same workbook at the same time over the office
 LAN. Any workbook can be shared from wherever it is saved (a folder on your PC, a project folder,
 the network drive), and that file keeps everyone's edits. One PC runs **Dexterity Sheets
-Server**, which passes edits between PCs and keeps the history; everyone signs in to it from the
-app.
+Server**, which passes edits between PCs and keeps the history. Each person's app connects to it
+on its own, as their Windows account: nobody creates an account or types a password.
 
 ## What you get
 
 - **Live editing.** Everyone sees everyone else's edits as they happen (typically well under a
   tenth of a second on a LAN). Other people's selected cells are outlined in their colour with
   their name; "(typing)" shows while they are editing a cell.
-- **Named accounts only.** There is no anonymous or guest access. Every edit is stored with the
-  account that made it.
+- **Named people only.** You are who Windows says you are (`DOMAIN\user`), on a PC the server
+  knows. There is no anonymous or guest access. Every edit is stored with the person who made it.
 - **Who changed what.** The status bar shows who last changed the active cell and when; click it
   (or Review › Edit History, also reached as Excel's Review › Show Changes) for the full history of that cell, or of the whole workbook,
   filterable by person: old value → new value, time, user.
@@ -110,35 +110,45 @@ No commands are needed; anyone comfortable installing a program can do it.
      Domain and Private profiles only, never Public;
    - the **Dexterity Sheets Server Manager** (Start menu), which opens when setup finishes;
    - the data folder `C:\ProgramData\Dexterity Sheets\Server`, readable only by SYSTEM and
-     Administrators because it holds the accounts.
+     Administrators because it holds the people and their PCs' device keys.
    An older script-based install (`Install-Server.ps1`) is replaced cleanly, data included.
-2. In the Server Manager, create the first administrator.
-3. Add the team on **People** (one at a time) or **Add many people**:
-   - type them into the list, or paste rows copied from Excel (User name, Full name, Role,
-     Password);
-   - or click **Download template**, fill in the *People* sheet (one person per row; the *How to
-     fill this in* sheet explains each column), and **Import from file** (`.xlsx`, `.xls`, `.ods`,
-     `.csv` or `.tsv`). Columns can be in any order; "Name", "Login", "Access" and similar
-     headings are recognised;
-   - every row is checked first: user name rules, duplicates in the list or on the server, the
-     role, password length. Nothing is created until every row is right. An empty user name is
-     made from the full name (`anita.rao`); an empty password becomes a readable one;
-   - after **Create**, save the **sign-in sheet** (an `.xlsx` with each person's user name,
-     password and the server name) to hand out, and delete it once everyone has signed in.
+2. There are no accounts to create. Open Dexterity Sheets on your own PC first: the first person
+   to connect to a new server becomes its administrator. Everyone after that is an editor until
+   an administrator changes their role.
+3. When someone uses a second PC (a laptop, a new desktop), that PC waits for approval. Their app
+   shows "Waiting for an administrator to approve this PC — device code ABCD-EFGH"; the Server
+   Manager's **People and devices** page lists it, highlighted. Approve it when the person tells
+   you the same code. Revoke a PC that is lost, sold or no longer theirs: it is disconnected within
+   half a minute and can't connect again.
 4. Keep backups: **Backup and restore › Back up** writes one `.zip` with everything. Restoring
    stops the server for a moment and keeps the data it replaces beside it.
 
 The Server Manager also starts, stops and restarts the server, shows its log, the addresses
-teammates can type, the firewall state (with a button to open it), resets passwords (shown once),
-changes roles, disables or removes people (never the last administrator), and manages app updates
-(below). Unattended installs: `DexSheetsServer-Setup.exe /quiet` or
-`msiexec /i DexSheetsServer-<version>-x64.msi /qn`. The same account commands are available
-for scripts: `DexSheetsServer.exe user add|passwd|role|disable|enable|list` (run `--help`).
+teammates can type, the firewall state (with a button to open it), lists everyone who has
+connected with their PCs (device code, PC name, last seen; approved, waiting or revoked), changes
+roles, approves and revokes PCs, removes people (never the last administrator), and manages app
+updates (below). Unattended installs: `DexSheetsServer-Setup.exe /quiet` or
+`msiexec /i DexSheetsServer-<version>-x64.msi /qn`; setup asks for no account. The same people
+commands are available for scripts: `DexSheetsServer.exe profile list`,
+`profile role DOMAIN\user admin|editor|viewer` (also before the person has connected),
+`profile approve CODE`, `profile revoke CODE` and `profile remove DOMAIN\user` (run `--help`).
+A running server applies them within half a minute.
+
+**Moving from user names and passwords.** A server that had accounts (`users.json`) carries them
+over at its first start with this version and keeps the old file as `users.json.bak`. Each old
+account passes, with its name, role, colour, workbooks, access lists and waiting notices, to the
+first Windows account with the same user name that connects (any domain, any case: `vikram`
+becomes `DDS\Vikram`). A disabled account stays out. Until then the Server Manager lists them
+under *Carried over from the old accounts list*. Apps older than this version can't sign in any
+more: they are told "This server needs Dexterity Sheets X.Y.Z or newer — update from Help ›
+Updates", and Help › Updates still brings them the new version from the server.
 
 ### What is on the server's disk
 
 ```
-users.json                    accounts (salted PBKDF2 keys; passwords are never stored)
+profiles.json                 people (Windows account, name shown, role, colour) and their PCs'
+                              public device keys, codes and approval; no passwords
+users.json.bak                an older server's accounts list, kept after it was carried over
 server.log                    sign-ins, workbooks opened/created/deleted, errors
 books/<id>/book.json          name, creator, dates
 books/<id>/snapshot-<n>.xlsx  the workbook as of edit n (ordinary .xlsx files Excel opens)
@@ -158,7 +168,7 @@ clients.json  feedback/  health.jsonl  adoption.json   the Server Manager's dash
 
 - From the moment it runs, the server fetches each new release of Dexterity Sheets from the
   official GitHub releases (`vikramdex-ops/dexterity-sheets`), checks it against the release's
-  checksums and puts the installer in `updates/`. Every signed-in app hears of it at once (and asks
+  checksums and puts the installer in `updates/`. Every connected app hears of it at once (and asks
   every four hours); the status bar shows **Update to X.Y.Z**. The Server Manager's **App updates**
   page changes the repository (a private one needs a token), turns fetching off, or takes an
   `.msi` added by hand for a server without internet.
@@ -166,7 +176,7 @@ clients.json  feedback/  health.jsonl  adoption.json   the Server Manager's dash
   status (OK, known issue, deprecated, blocked) with a note, and sets the policy: **Offer** (the
   default), **Install on their own** when nothing is unsaved, or **Never offer** (people use
   Automate › Check for Updates). `docs/dexterity-admin-data.md` has the file formats.
-- A PC that is not signed in to any server reads the GitHub releases page itself: a few seconds
+- A PC that is not connected to any server reads the GitHub releases page itself: a few seconds
   after it starts, once a day, and on Check for Updates. Only that repository is read and every
   download is checksummed; the switch is in the updates dialog.
 - **Roll back**: Automate › Roll Back Version lists the earlier versions the server holds and those
@@ -174,17 +184,32 @@ clients.json  feedback/  health.jsonl  adoption.json   the Server Manager's dash
 
 ## Using it (everyone)
 
-1. Open Dexterity Sheets → **File › Shared** (or Review › Shared Workbooks).
-2. The server appears under "Servers on this network" (or type its computer name). Enter your
-   user name and password and **Sign in**. The app remembers the server and user name.
-3. Open a workbook from the list, create a new one, or share the workbook you have open.
+1. Open Dexterity Sheets. A moment after the window is up it connects by itself, as your Windows
+   account, to the server it used last time, or to the only one on the network. Nothing to type.
+2. If there are several servers, **File › Shared** (or Review › Shared Workbooks) lists them:
+   click **Connect** beside yours (or type its computer name). The app remembers it.
+3. File › Shared says "Signed in as *name* (*DOMAIN\user*) on *server*" and shows this PC's
+   **device code**. Change the name others see there; **Change server** picks another one.
+4. On a PC you haven't used with the server before, it shows "Waiting for an administrator to
+   approve this PC — device code ABCD-EFGH". Tell your administrator the code; the app connects
+   by itself once they approve it.
+5. Open a workbook from the list, create a new one, or share the workbook you have open.
 
 ## Security notes
 
-- Passwords never cross the network: sign-in is a challenge-response over a salted PBKDF2 key.
+- There are no passwords to steal or reuse. Each PC makes its own Ed25519 key the first time
+  (`%LOCALAPPDATA%\Dexterity Sheets\device-key`, protected with Windows data protection for the
+  signed-in Windows user; if that is not available, a plain file in the same per-user folder, and
+  the app's log says so). At sign-in the server sends a fresh challenge and the app signs it with
+  that key; the private key never leaves the PC.
+- A person's first PC is trusted the first time it connects; every further PC waits for an
+  administrator, who compares its device code with the one the person reads out. The name comes
+  from Windows (`USERDOMAIN\USERNAME`), so approve PCs, and make administrators, only for people
+  you recognise.
 - Workbook contents travel unencrypted on the LAN (like an SMB share without encryption). Do not
   expose port 47810 to the internet. Encrypting the link (TLS) is a possible follow-up.
-- The server delays its answer to every failed sign-in and logs it in `server.log`.
+- The server delays its answer to every refused sign-in and logs it in `server.log`, as it does
+  each PC waiting for approval.
 
 ## How it works (for maintainers)
 

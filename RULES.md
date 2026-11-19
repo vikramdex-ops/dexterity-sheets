@@ -20,8 +20,8 @@ the release. Agents read this file before any work (the `AGENTS.md` / `CLAUDE.md
    and disk use stay inside the budgets in `packaging/dexterity/perf-budget.json`; a change that
    breaks a budget does not ship. (`perf_gate.py`, every CI run and every release.)
 5. **IT never needs a command line.** The office server installs from `DexSheetsServer-Setup.exe`
-   / `.msi` and is run from the Server Manager (people one by one, in bulk, or from a template;
-   service, firewall, updates, backups). (`server_installer_smoke.py`.)
+   / `.msi` and is run from the Server Manager (people and their devices, with no accounts or
+   passwords to create; service, firewall, updates, backups). (`server_installer_smoke.py`.)
 
 ## 2. Staying current with GridCraft and Microsoft Excel
 

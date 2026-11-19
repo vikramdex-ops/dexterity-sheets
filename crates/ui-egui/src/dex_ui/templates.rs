@@ -178,7 +178,7 @@ pub fn run_command(app: &mut SheetApp, id: &str, p: &Json) -> Option<Result<Json
             match s("id") {
                 Some(tid) => {
                     if !app.collab.signed_in() {
-                        return Some(Err("Sign in to the office server first (File › Shared): office templates come from it.".into()));
+                        return Some(Err("Connect to the office server first (File › Shared): office templates come from it.".into()));
                     }
                     app.collab.templates.create_when_got = Some(tid.clone());
                     app.collab.send(ClientMsg::GetTemplate { id: tid.clone() });
@@ -214,7 +214,7 @@ pub fn run_command(app: &mut SheetApp, id: &str, p: &Json) -> Option<Result<Json
             };
             if p.get("office").and_then(Json::as_bool) == Some(true) {
                 if !app.collab.signed_in() {
-                    return Some(Err("Sign in to the office server first (File › Shared).".into()));
+                    return Some(Err("Connect to the office server first (File › Shared).".into()));
                 }
                 let existing = app.collab.templates.list.iter().find(|t| t.name.eq_ignore_ascii_case(&name)).map(|t| t.id.clone());
                 app.collab.send(ClientMsg::PublishTemplate {
@@ -266,7 +266,7 @@ pub fn new_page(app: &mut SheetApp, ui: &mut Ui, close: &mut bool) {
             RichText::new(if app.collab.signed_in() {
                 "No office templates yet: an administrator publishes them. Save one of your own with Save as template."
             } else {
-                "Sign in to the office server (File › Shared) to see the office's templates."
+                "Connect to the office server (File › Shared) to see the office's templates."
             })
             .weak(),
         );
@@ -342,7 +342,7 @@ pub fn window(app: &mut SheetApp, ctx: &egui::Context) {
             egui::ScrollArea::vertical().id_salt("dex_tpl_list").max_height(300.0).show(&mut cols[0], |ui| {
                 ui.strong("Office templates");
                 if t.list.is_empty() {
-                    ui.label(RichText::new(if signed_in { "None published yet." } else { "Sign in to the office server to see them." }).weak());
+                    ui.label(RichText::new(if signed_in { "None published yet." } else { "Connect to the office server to see them." }).weak());
                 }
                 let mut last_cat = String::new();
                 for tpl in &t.list {

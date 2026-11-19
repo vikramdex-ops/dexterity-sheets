@@ -38,12 +38,16 @@ class App:
         # remembered server under %LOCALAPPDATA% and %APPDATA%, and the test must never leave
         # anything in the developer's own (their app would offer to recover it).
         self.profile = tempfile.mkdtemp(prefix=f"dexsheets-e2e-{who}-")
+        # Each window is a different person: the app signs in as the Windows account it is
+        # started with (USERNAME, no domain here), with a device key of its own in LOCALAPPDATA.
         env = dict(
             os.environ,
             GRIDCRAFT_CONTROL_TOKEN=token,
             LOCALAPPDATA=os.path.join(self.profile, "Local"),
             APPDATA=os.path.join(self.profile, "Roaming"),
+            USERNAME=who,
         )
+        env.pop("USERDOMAIN", None)
         os.makedirs(env["LOCALAPPDATA"])
         os.makedirs(env["APPDATA"])
         self.proc = subprocess.Popen([APP, "--control", str(port)], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -292,7 +296,7 @@ def mentions(a, b, c, server):
     wait(lambda: c.status()["status"] != "Online")
     b.run("review.replyComment", cell="E2", text="Checked, 12.5 m is right. Over to you @Rahul")
     time.sleep(1.0)
-    c.run("collab.signIn", server=server, user="rahul", password="pass-rah-3")
+    c.run("collab.connect", server=server)
     got = wait(lambda: told(c) or None, timeout=30, step=0.25)
     n = got[0] if got else {}
     check("rahul, signed out, is told at his next sign-in", n.get("by") == "Anita" and "Over to you" in n.get("text", ""), json.dumps(n))
@@ -306,8 +310,9 @@ def main():
         sys.exit(2)
     os.makedirs(OUT, exist_ok=True)
     data = tempfile.mkdtemp(prefix="dexsheets-e2e-")
-    for u, d, p, r in [("vikram", "Vikram", "pass-vik-1", "admin"), ("anita", "Anita", "pass-ani-2", "editor"), ("rahul", "Rahul", "pass-rah-3", "editor")]:
-        subprocess.run([SERVER, "--data", data, "user", "add", u, "--display", d, "--password", p, "--role", r], check=True, capture_output=True)
+    # No accounts to create: Vikram is made the administrator by Windows account before anyone
+    # connects; Anita and Rahul are trusted on first use as editors.
+    subprocess.run([SERVER, "--data", data, "profile", "role", "vikram", "admin"], check=True, capture_output=True)
     srv = start_server(data)
     time.sleep(1.0)
     apps = []
@@ -318,15 +323,15 @@ def main():
         apps = [a, b, c]
         server = f"127.0.0.1:{PORT}"
 
-        # Wrong password is refused.
-        a.run("collab.signIn", server=server, user="vikram", password="wrong-password")
-        st = wait(lambda: (lambda s: s if s["error"] else None)(a.status()))
-        check("wrong password refused", st and "Wrong user name or password" in (st["error"] or ""), st and st["error"])
-
-        for app, pw in [(a, "pass-vik-1"), (b, "pass-ani-2"), (c, "pass-rah-3")]:
-            app.run("collab.signIn", server=server, user=app.who, password=pw)
+        for app in apps:
+            app.run("collab.connect", server=server)
         ok = all(wait(lambda app=app: app.status()["status"] == "Online") for app in apps)
-        check("three people signed in", ok)
+        check("three people signed in with their Windows accounts, no password", ok)
+        st = a.status()
+        check("signed in as the Windows account, with a device code", st.get("me") == "vikram" and st.get("account") == "vikram" and len(st.get("device") or "") == 9, json.dumps({k: st.get(k) for k in ("me", "account", "device")}))
+        for app, shown in [(a, "Vikram"), (b, "Anita"), (c, "Rahul")]:
+            app.run("collab.setDisplay", display=shown)
+        time.sleep(0.5)
         blank_share_regression(a, b, data)
 
         a.run("collab.create", name="Line List 100")

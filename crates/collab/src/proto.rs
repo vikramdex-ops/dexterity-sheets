@@ -9,7 +9,8 @@ use serde::{Deserialize, Serialize};
 use crate::patch::WbPatch;
 use crate::{Error, Result};
 
-pub const PROTOCOL: u32 = 1;
+/// 2: Windows identity and device keys (no passwords). 1: user accounts with passwords.
+pub const PROTOCOL: u32 = 2;
 pub const DEFAULT_PORT: u16 = 47810;
 pub const DISCOVERY_PORT: u16 = 47811;
 /// Frames past this size are refused (a corrupt length must not allocate gigabytes).
@@ -42,19 +43,48 @@ impl Role {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "t")]
 pub enum ClientMsg {
+    /// The first message. `user`: the Windows account (`DOMAIN\user`); `display`: the name to
+    /// show others; `key`: the device's Ed25519 public key (hex). Clients of protocol 1 send no
+    /// `display` or `key` (they default to empty) and are told to update.
     Hello {
         protocol: u32,
         user: String,
         app: String,
         machine: String,
         instance: String,
+        #[serde(default)]
+        display: String,
+        #[serde(default)]
+        key: String,
     },
+    /// The answer to `Challenge`: an Ed25519 signature (hex) over
+    /// [`auth::login_message`](crate::auth::login_message)`(nonce, user, key)`.
     Login {
-        proof: String,
+        signature: String,
     },
-    ChangePassword {
-        old_proof: String,
-        new_password: String,
+    /// Changes the name others see for the signed-in person.
+    SetDisplay {
+        display: String,
+    },
+    /// Administrators: everyone the server has seen, with their devices.
+    ListProfiles,
+    /// Administrators: approve or revoke a device by its code (`ABCD-EFGH`). `user` narrows it
+    /// to one person's device when given.
+    SetDevice {
+        code: String,
+        status: DeviceStatus,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        user: Option<String>,
+    },
+    /// Administrators: a person's role.
+    SetRole {
+        user: String,
+        role: Role,
+    },
+    /// Administrators: forget a person and their devices (their next connection starts them
+    /// again as someone new).
+    RemoveProfile {
+        user: String,
     },
     ListBooks,
     /// A new shared workbook, from an .xlsx (base64) or empty. `source`: the file on someone's
@@ -558,6 +588,46 @@ pub struct VersionInfo {
     pub size: u64,
 }
 
+/// Whether a device may sign in for its person.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DeviceStatus {
+    Approved,
+    /// Waiting for an administrator (another PC for someone the server already knows).
+    Pending,
+    Revoked,
+}
+
+/// One PC a person signs in from.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeviceInfo {
+    /// The Ed25519 public key, hex.
+    pub key: String,
+    /// `ABCD-EFGH`, see [`auth::device_code`](crate::auth::device_code).
+    pub code: String,
+    pub machine: String,
+    pub first_seen: i64,
+    pub last_seen: i64,
+    pub status: DeviceStatus,
+}
+
+/// A person the server knows: their Windows account, the name others see, role and devices.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProfileInfo {
+    /// The account in lower case (`dds\vikram`): the key everything else refers to.
+    pub user: String,
+    /// The account as Windows spells it (`DDS\Vikram`).
+    #[serde(default)]
+    pub account: String,
+    pub display: String,
+    pub role: Role,
+    pub color: [u8; 3],
+    #[serde(default)]
+    pub devices: Vec<DeviceInfo>,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct UserInfo {
     pub user: String,
@@ -569,11 +639,20 @@ pub struct UserInfo {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "t")]
 pub enum ServerMsg {
+    /// `nonce`: hex, to be signed with the client's device key.
     Challenge {
-        salt: String,
-        iterations: u32,
         nonce: String,
         server: String,
+    },
+    /// This device is known but waits for an administrator's approval; the connection ends and
+    /// the client tries again later.
+    Pending {
+        code: String,
+        message: String,
+    },
+    /// Administrators: everyone the server has seen (after `ListProfiles` and each change).
+    Profiles {
+        profiles: Vec<ProfileInfo>,
     },
     Welcome {
         me: UserInfo,

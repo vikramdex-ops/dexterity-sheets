@@ -125,7 +125,7 @@ insert(
     '"collab.history"',
     "fn review(app: &mut SheetApp, ui: &mut Ui) {\n",
     '    // Shared workbooks (Dexterity Sheets LAN co-authoring).\n'
-    '    if big_button(ui, Icon::Share, "Shared\\nWorkbooks", "Sign in and open shared workbooks (File > Shared)", false).clicked() {\n'
+    '    if big_button(ui, Icon::Share, "Shared\\nWorkbooks", "Connect and open shared workbooks (File > Shared)", false).clicked() {\n'
     '        act(app, "collab.shared", json!({}));\n'
     "    }\n"
     '    if big_button(ui, Icon::Clock, "Edit\\nHistory", "Who changed what, and when", false).clicked() {\n'

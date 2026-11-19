@@ -30,9 +30,16 @@ procs = []
 
 
 class App:
-    def __init__(self, port, args=()):
+    def __init__(self, port, args=(), who="vikram"):
         token = f"shots-token-{port}-abcdef"
-        self.proc = subprocess.Popen([APP, "--control", str(port), *args], env=dict(os.environ, GRIDCRAFT_CONTROL_TOKEN=token))
+        # A profile of its own (device key, settings, recovery copies), never the developer's,
+        # signed in as the Windows account `who` (no domain).
+        profile = tempfile.mkdtemp(prefix=f"dexsheets-shots-{who}-")
+        env = dict(os.environ, GRIDCRAFT_CONTROL_TOKEN=token, LOCALAPPDATA=os.path.join(profile, "Local"), APPDATA=os.path.join(profile, "Roaming"), USERNAME=who)
+        env.pop("USERDOMAIN", None)
+        os.makedirs(env["LOCALAPPDATA"])
+        os.makedirs(env["APPDATA"])
+        self.proc = subprocess.Popen([APP, "--control", str(port), *args], env=env)
         procs.append(self.proc)
         end = time.time() + 60
         while True:
@@ -92,8 +99,9 @@ def main():
     os.makedirs(FRAMES)
     data = tempfile.mkdtemp(prefix="dexsheets-shots-")
     try:
-        for u, d, p, r in [("vikram", "Vikram", "shots-pass-1", "admin"), ("anita", "Anita Rao", "shots-pass-2", "editor"), ("rahul", "Rahul Mehta", "shots-pass-3", "editor")]:
-            subprocess.run([SERVER, "--data", data, "user", "add", u, "--display", d, "--password", p, "--role", r], check=True, capture_output=True)
+        # No accounts: Vikram is made the administrator by Windows account; the others are
+        # trusted on first use.
+        subprocess.run([SERVER, "--data", data, "profile", "role", "vikram", "admin"], check=True, capture_output=True)
         # A newer version waiting on the server, for the update prompt.
         os.makedirs(os.path.join(data, "updates"), exist_ok=True)
         with open(os.path.join(data, "updates", "dexterity-sheets-9.9.9-windows-x64.msi"), "wb") as f:
@@ -105,33 +113,34 @@ def main():
         time.sleep(1.5)
 
         # Samples.
-        a = App(7931, ["--sample", "sales"])
+        a = App(7931, ["--sample", "sales"], who="sales")
         a.shot("hero-sales.png", 2.5)
         a.run("ui.ribbonTab", tab="Insert")
         a.run("view.darkMode", on=True)
         a.shot("dark-insert.png", 2.0)
         a.run("view.darkMode", on=False)
         a.proc.kill()
-        b = App(7932, ["--sample", "budget"])
+        b = App(7932, ["--sample", "budget"], who="budget")
         b.shot("budget.png", 2.5)
         b.proc.kill()
-        g = App(7933, ["--sample", "grades"])
+        g = App(7933, ["--sample", "grades"], who="grades")
         g.run("ui.ribbonTab", tab="Formulas")
         g.shot("grades-formulas.png", 2.5)
         g.proc.kill()
 
-        # Sign-in page with the server found on the network.
-        s = App(7934)
+        # File › Shared: the server found on the network and joined as the Windows account.
+        s = App(7934, who="priya")
         s.run("ui.backstage", page="shared")
         s.shot("sign-in.png", 3.0)
         s.proc.kill()
 
         # Three people build a line list together.
-        v, an, ra = App(7935), App(7936), App(7937)
+        v, an, ra = App(7935, who="vikram"), App(7936, who="anita"), App(7937, who="rahul")
         server = f"127.0.0.1:{PORT}"
-        for app, user, pw in [(v, "vikram", "shots-pass-1"), (an, "anita", "shots-pass-2"), (ra, "rahul", "shots-pass-3")]:
-            app.run("collab.signIn", server=server, user=user, password=pw)
+        for app, shown in [(v, "Vikram"), (an, "Anita Rao"), (ra, "Rahul Mehta")]:
+            app.run("collab.connect", server=server)
             wait(lambda app=app: app.run("collab.status")["status"] == "Online")
+            app.run("collab.setDisplay", display=shown)
         # Vikram shares the line list from his project folder; the file keeps everyone's edits.
         job = os.path.join(data, "Projects", "Unit 100")
         os.makedirs(job, exist_ok=True)

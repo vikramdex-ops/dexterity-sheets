@@ -1,13 +1,15 @@
 //! Dexterity Sheets server.
 //!
 //! ```text
-//! DexSheetsServer                      run (creates the first administrator if there is none)
+//! DexSheetsServer                      run
 //! DexSheetsServer service              run as the Windows service the installer registers
-//! DexSheetsServer user add NAME [--display "Full Name"] [--role admin|editor|viewer]
-//! DexSheetsServer user passwd NAME     set a new password
-//! DexSheetsServer user role NAME ROLE
-//! DexSheetsServer user disable NAME | user enable NAME
-//! DexSheetsServer user list
+//! DexSheetsServer profile list         everyone seen, their role and devices (codes, approval)
+//! DexSheetsServer profile role DOMAIN\user admin|editor|viewer
+//! DexSheetsServer profile approve CODE | profile revoke CODE    a device, by its code ABCD-EFGH
+//! DexSheetsServer profile remove DOMAIN\user
+//! People sign in with their Windows account: the first PC each person uses is trusted, any
+//! other PC waits for an administrator to approve it. The first person on a new server becomes
+//! its administrator. No accounts or passwords to create.
 //! Updates: drop DexteritySheets-<version>-x64.msi into <data>\updates, or configure
 //! <data>\update-source.json {"repo": "owner/name", "token": "…"} to fetch GitHub releases.
 //! options: --data DIR (default %ProgramData%\Dexterity Sheets\Server), --port N, --name "Server name"
@@ -19,7 +21,7 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::sync::Mutex;
 
-use gridcraft_collab::proto::{DEFAULT_PORT, Role};
+use gridcraft_collab::proto::{DEFAULT_PORT, DeviceStatus, Role};
 use gridcraft_collab::server;
 
 mod github;
@@ -103,95 +105,58 @@ fn arg_value(args: &mut Vec<String>, flag: &str) -> Option<String> {
     Some(v)
 }
 
-fn ask(prompt: &str) -> String {
-    print!("{prompt}");
-    let _ = std::io::stdout().flush();
-    let mut s = String::new();
-    let _ = std::io::stdin().read_line(&mut s);
-    s.trim().to_string()
-}
-
-fn ask_password(user: &str) -> Result<String, String> {
-    for _ in 0..3 {
-        let p1 = rpassword::prompt_password(format!("Password for {user}: ")).map_err(|e| e.to_string())?;
-        let p2 = rpassword::prompt_password("Repeat password: ").map_err(|e| e.to_string())?;
-        if p1 != p2 {
-            println!("The passwords differ; try again.");
-            continue;
-        }
-        if p1.chars().count() < 6 {
-            println!("Use at least 6 characters.");
-            continue;
-        }
-        return Ok(p1);
-    }
-    Err("no password set".into())
-}
-
-fn user_command(dir: &std::path::Path, args: &[String]) -> Result<(), String> {
+fn profile_command(dir: &std::path::Path, args: &[String]) -> Result<(), String> {
     let sub = args.first().map(String::as_str).unwrap_or("list");
-    let mut rest: Vec<String> = args.iter().skip(1).cloned().collect();
-    let display = arg_value(&mut rest, "--display");
-    let role = arg_value(&mut rest, "--role");
-    let password = arg_value(&mut rest, "--password");
-    let mut users = server::load_users(dir).map_err(|e| e.to_string())?;
-    let name = rest.first().map(|s| s.trim().to_ascii_lowercase());
-    match sub {
+    let arg = |i: usize| args.get(i).map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+    let mut all = server::load_profiles(dir).map_err(|e| e.to_string())?;
+    let said = match sub {
         "list" => {
-            println!("{:<20} {:<28} {:<8} status", "user", "name", "role");
-            for u in &users {
+            println!("{:<28} {:<26} {:<8} devices", "account", "name", "role");
+            for p in all.profiles.values() {
+                let devices: Vec<String> =
+                    p.devices.iter().map(|d| format!("{} {} ({})", d.code, d.machine, format!("{:?}", d.status).to_lowercase())).collect();
                 println!(
-                    "{:<20} {:<28} {:<8} {}",
-                    u.user,
-                    u.display,
-                    format!("{:?}", u.role).to_lowercase(),
-                    if u.disabled { "disabled" } else { "active" }
+                    "{:<28} {:<26} {:<8} {}",
+                    if p.account.is_empty() { &p.user } else { &p.account },
+                    p.display,
+                    format!("{:?}", p.role).to_lowercase(),
+                    if devices.is_empty() { "none yet".to_string() } else { devices.join(", ") }
                 );
             }
-            Ok(())
-        }
-        "add" | "passwd" => {
-            let name = name.ok_or("give a user name")?;
-            let existing = users.iter().find(|u| u.user == name).cloned();
-            if sub == "add" && existing.is_some() {
-                return Err(format!("{name} exists; use `user passwd {name}`"));
+            for c in &all.carry_over {
+                println!(
+                    "{:<28} {:<26} {:<8} (from users.json: waits for a Windows account named {})",
+                    c.user,
+                    c.display,
+                    format!("{:?}", c.role).to_lowercase(),
+                    c.user
+                );
             }
-            if sub == "passwd" && existing.is_none() {
-                return Err(format!("no user {name}"));
-            }
-            let role = match role.as_deref() {
-                Some(r) => Role::parse(r).ok_or("role is admin, editor or viewer")?,
-                None => existing.as_ref().map_or(Role::Editor, |u| u.role),
-            };
-            let display = display.or_else(|| existing.as_ref().map(|u| u.display.clone())).unwrap_or_else(|| ask(&format!("Full name for {name}: ")));
-            let password = match password {
-                Some(p) => p,
-                None => ask_password(&name)?,
-            };
-            server::set_user(dir, &name, &display, &password, role).map_err(|e| e.to_string())?;
-            println!("{} {name} ({display}, {}).", if sub == "add" { "Added" } else { "Updated" }, format!("{role:?}").to_lowercase());
-            println!("A running server picks this up at the next login.");
-            Ok(())
+            return Ok(());
         }
         "role" => {
-            let name = name.ok_or("give a user name")?;
-            let r = rest.get(1).and_then(|r| Role::parse(r)).ok_or("role is admin, editor or viewer")?;
-            let u = users.iter_mut().find(|u| u.user == name).ok_or(format!("no user {name}"))?;
-            u.role = r;
-            server::save_users(dir, &users).map_err(|e| e.to_string())?;
-            println!("{name} is now {}.", format!("{r:?}").to_lowercase());
-            Ok(())
+            let user = arg(1).ok_or("give a Windows account, DOMAIN\\user")?;
+            let role = arg(2).and_then(|r| Role::parse(&r)).ok_or("role is admin, editor or viewer")?;
+            all.set_role(&user, role).map_err(|e| e.to_string())?;
+            format!("{user} is now {}.", format!("{role:?}").to_lowercase())
         }
-        "disable" | "enable" => {
-            let name = name.ok_or("give a user name")?;
-            let u = users.iter_mut().find(|u| u.user == name).ok_or(format!("no user {name}"))?;
-            u.disabled = sub == "disable";
-            server::save_users(dir, &users).map_err(|e| e.to_string())?;
-            println!("{name} {}.", if sub == "disable" { "disabled" } else { "enabled" });
-            Ok(())
+        "approve" | "revoke" => {
+            let code = arg(1).ok_or("give the device code, e.g. ABCD-EFGH")?;
+            let status = if sub == "approve" { DeviceStatus::Approved } else { DeviceStatus::Revoked };
+            let n = all.set_device(&code, status, None).map_err(|e| e.to_string())?;
+            format!("{} device(s) {}.", n, if sub == "approve" { "approved" } else { "revoked" })
         }
-        other => Err(format!("unknown user command {other}")),
-    }
+        "remove" => {
+            let user = arg(1).ok_or("give a Windows account, DOMAIN\\user")?;
+            all.remove(&user).map_err(|e| e.to_string())?;
+            format!("{user} and their devices removed.")
+        }
+        other => return Err(format!("unknown profile command {other}: use list, role, approve, revoke or remove")),
+    };
+    server::save_profiles(dir, &all).map_err(|e| e.to_string())?;
+    println!("{said}");
+    println!("A running server applies this within half a minute (a revoked PC is disconnected).");
+    Ok(())
 }
 
 /// The server's name from `<data>\server.json` (the Server Manager writes it), if set.
@@ -233,7 +198,12 @@ fn main() {
         std::process::exit(1);
     }
     if args.first().map(String::as_str) == Some("user") {
-        if let Err(e) = user_command(&dir, &args[1..]) {
+        // Scripts written for user names and passwords must fail loudly, not start a server.
+        eprintln!("There are no user accounts any more: people sign in with their Windows account. Use `profile list|role|approve|revoke|remove`.");
+        std::process::exit(2);
+    }
+    if args.first().map(String::as_str) == Some("profile") {
+        if let Err(e) = profile_command(&dir, &args[1..]) {
             eprintln!("{e}");
             std::process::exit(1);
         }
@@ -265,24 +235,10 @@ fn main() {
         return;
     }
     start_logging(&dir);
-    match server::load_users(&dir) {
-        Ok(u) if u.is_empty() => {
-            println!("No accounts yet. Create the first administrator.");
-            let name = ask("Administrator user name: ").to_ascii_lowercase();
-            let display = ask("Full name: ");
-            match ask_password(&name).and_then(|p| server::set_user(&dir, &name, &display, &p, Role::Admin).map_err(|e| e.to_string())) {
-                Ok(()) => println!("Administrator {name} created."),
-                Err(e) => {
-                    eprintln!("{e}");
-                    std::process::exit(1);
-                }
-            }
-        }
-        Ok(_) => {}
-        Err(e) => {
-            eprintln!("users.json is unreadable: {e}");
-            std::process::exit(1);
-        }
+    // Carries over an older server's users.json now, so the log says so at start.
+    if let Err(e) = server::load_profiles(&dir) {
+        eprintln!("profiles.json is unreadable: {e}");
+        std::process::exit(1);
     }
     match serve(dir, name, port) {
         Ok(_srv) => loop {

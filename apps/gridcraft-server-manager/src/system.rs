@@ -442,8 +442,9 @@ pub fn backup(dir: &Path, to: &Path, with_installers: bool) -> Result<u64, Strin
 pub fn restore(dir: &Path, from: &Path) -> Result<PathBuf, String> {
     let file = std::fs::File::open(from).map_err(|e| format!("{}: {e}", from.display()))?;
     let mut zip = zip::ZipArchive::new(file).map_err(|e| format!("not a backup: {e}"))?;
-    if zip.by_name("users.json").is_err() {
-        return Err("This zip is not a Dexterity Sheets Server backup (it has no users.json).".into());
+    // profiles.json (people and devices), or users.json in a backup made before Windows sign-in.
+    if zip.by_name("profiles.json").is_err() && zip.by_name("users.json").is_err() {
+        return Err("This zip is not a Dexterity Sheets Server backup (it has no profiles.json).".into());
     }
     let parent = dir.parent().ok_or("the data folder has no parent folder")?;
     let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S");
@@ -485,16 +486,16 @@ mod tests {
         let dir = root.join("Server");
         std::fs::create_dir_all(dir.join("books").join("b1")).expect("dirs");
         std::fs::create_dir_all(dir.join("updates")).expect("dirs");
-        std::fs::write(dir.join("users.json"), b"[]").expect("w");
+        std::fs::write(dir.join("profiles.json"), b"[]").expect("w");
         std::fs::write(dir.join("books").join("b1").join("book.json"), b"{}").expect("w");
         std::fs::write(dir.join("updates").join("dexterity-sheets-9.9.9-windows-x64.msi"), b"msi").expect("w");
         let zip = root.join("backup.zip");
         assert_eq!(backup(&dir, &zip, false).expect("backup"), 2, "installers left out");
-        std::fs::write(dir.join("users.json"), b"changed").expect("w");
+        std::fs::write(dir.join("profiles.json"), b"changed").expect("w");
         let old = restore(&dir, &zip).expect("restore");
-        assert_eq!(std::fs::read(dir.join("users.json")).expect("r"), b"[]");
+        assert_eq!(std::fs::read(dir.join("profiles.json")).expect("r"), b"[]");
         assert!(dir.join("books").join("b1").join("book.json").exists());
-        assert_eq!(std::fs::read(old.join("users.json")).expect("r"), b"changed", "the replaced folder is kept");
+        assert_eq!(std::fs::read(old.join("profiles.json")).expect("r"), b"changed", "the replaced folder is kept");
         let _ = std::fs::remove_dir_all(&root);
     }
 

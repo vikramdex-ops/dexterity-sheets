@@ -17,3 +17,7 @@ sha2 = { workspace = true }
 flate2 = "1.1"
 getrandom = "0.3"
 chrono = { workspace = true, features = ["clock"] }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+# Ed25519 device keys: each PC signs in with its own key instead of a password.
+ring = "0.17"

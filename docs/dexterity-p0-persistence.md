@@ -59,7 +59,7 @@ same-cell edits made at the same moment were resolved last-writer-wins **silentl
 | `server::take_patch` | Tracks who last changed each cell (`writes`, rebuilt from the log on load). A cell changed by another client after the patch's `base` is a conflict: the later edit still wins (the defined policy, unchanged), and the conflict travels in the broadcast edit. |
 | `collab_ui::message(Patched)` | Tells the person whose value was replaced, and the person whose edit replaced it, which cell and which value; the replaced value is in Edit History. |
 | `SharedDoc::open` | Refuses bytes that are not an .xlsx (a zip) rather than letting the reader treat them as CSV and show a near-empty sheet. |
-| Status bar, `collab.status` | `Shared · saved on the server` only when the server has ordered every edit made here; `saving N edit(s)`, `Offline · N edit(s) not on the server yet`, `out of step, reloading`, `Not signed in · N edit(s) not on the server`; `Sharing · uploading…` while a workbook is on its way. `collab.status` reports the same as `state` per workbook and `sharing`. |
+| Status bar, `collab.status` | `Shared · saved on the server` only when the server has ordered every edit made here; `saving N edit(s)`, `Offline · N edit(s) not on the server yet`, `out of step, reloading`, `Not connected · N edit(s) not on the server`; `Sharing · uploading…` while a workbook is on its way. `collab.status` reports the same as `state` per workbook and `sharing`. |
 
 No database or on-disk format changes. `server.log` lines and the files under `books/<id>/` are as
 before; the protocol version stays 1 (new fields are optional).
@@ -85,7 +85,7 @@ people are now told.
 | F: close, reopen in new sessions | same Rust test (fresh clients after restart get every edit) | pass |
 | G: server crash and restart, offline edits | same Rust test (a second server on the same folder, no clean shutdown); `lan_e2e.py` offline edit held and delivered, identical after two restarts | pass |
 | G: damaged transfer | `a_damaged_upload_is_refused` (upload and download checksums; text is never opened as a workbook) | pass |
-| H: viewer cannot edit; no access without signing in | `viewers_cannot_edit_and_strangers_cannot_read` | pass |
+| H: viewer cannot edit; no access without signing in (Windows account on an approved device) | `viewers_cannot_edit_and_strangers_cannot_read` | pass |
 | 3: share after editing an existing workbook; 9: sheet added; 13: large workbook (10 000 cells); 14: rapid edits (70 in a burst, same cell rewritten) | Rust tests above and `a_large_workbook_and_a_burst_of_edits_arrive_complete_and_in_order` | pass |
 
 Run them:
@@ -99,8 +99,8 @@ CI runs both (`.github/workflows/dexterity-ci.yml`: the workspace tests and the 
 
 ## Limits and what was not verified
 
-- **Sharing is with the whole office.** Every signed-in account sees every shared workbook; roles
-  (admin, editor, viewer) are per account, not per workbook. "Share with specific people" and
+- **Sharing is with the whole office.** Every signed-in person sees every shared workbook; roles
+  (admin, editor, viewer) are per person, not per workbook. "Share with specific people" and
   links are a separate feature (see `docs/dexterity-roadmap.md`).
 - **Same-cell conflicts are resolved, not merged:** the later edit wins and both people are told.
 - **A row inserted while someone else edits below it** (in the same split second, or offline):

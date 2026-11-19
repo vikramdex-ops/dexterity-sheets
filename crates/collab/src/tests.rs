@@ -171,26 +171,16 @@ fn recv(c: &crate::client::Client, want: impl Fn(&crate::client::Event) -> bool)
 #[test]
 fn two_people_edit_through_a_real_server() {
     let dir = std::env::temp_dir().join(format!("dexsheets-test-{}", crate::now_ms()));
-    crate::server::set_user(&dir, "vikram", "Vikram", "pipe-123", crate::proto::Role::Admin).expect("user");
-    crate::server::set_user(&dir, "anita", "Anita", "pipe-456", crate::proto::Role::Editor).expect("user");
-    crate::server::set_user(&dir, "guest", "Guest", "view-789", crate::proto::Role::Viewer).expect("user");
+    crate::server::set_profile(&dir, "vikram", "Vikram", crate::proto::Role::Admin).expect("user");
+    crate::server::set_profile(&dir, "anita", "Anita", crate::proto::Role::Editor).expect("user");
+    crate::server::set_profile(&dir, "guest", "Guest", crate::proto::Role::Viewer).expect("user");
     let (server, port) = crate::server::start_on(dir.clone(), "Test".into(), 0).expect("server");
-    let cfg = |u: &str, p: &str| crate::client::Config {
-        server: format!("127.0.0.1:{port}"),
-        user: u.into(),
-        password: p.into(),
-        app: "test".into(),
-        machine: "test".into(),
-    };
+    let cfg = |u: &str| config(port, u, Arc::new(crate::auth::DeviceKey::generate().expect("key")));
     let wake: crate::client::Waker = Arc::new(|| {});
 
-    // A wrong password is refused, and nothing is anonymous.
-    let bad = crate::client::Client::connect(cfg("vikram", "nope!!"), wake.clone());
-    assert!(matches!(recv(&bad, |_| true), crate::client::Event::Failed(_)));
-
-    let v = crate::client::Client::connect(cfg("vikram", "pipe-123"), wake.clone());
-    let a = crate::client::Client::connect(cfg("anita", "pipe-456"), wake.clone());
-    let g = crate::client::Client::connect(cfg("guest", "view-789"), wake.clone());
+    let v = crate::client::Client::connect(cfg("vikram"), wake.clone());
+    let a = crate::client::Client::connect(cfg("anita"), wake.clone());
+    let g = crate::client::Client::connect(cfg("guest"), wake.clone());
     for c in [&v, &a, &g] {
         recv(c, |e| matches!(e, crate::client::Event::Connected { .. }));
     }
@@ -308,34 +298,47 @@ struct Lab {
     dir: std::path::PathBuf,
     port: u16,
     _server: Arc<crate::server::Server>,
+    /// Each person's device key, so they connect again from the same PC.
+    keys: Arc<std::sync::Mutex<std::collections::HashMap<String, Arc<crate::auth::DeviceKey>>>>,
+}
+
+/// How a test PC connects as `user` with `key`.
+fn config(port: u16, user: &str, key: Arc<crate::auth::DeviceKey>) -> crate::client::Config {
+    crate::client::Config {
+        server: format!("127.0.0.1:{port}"),
+        user: user.into(),
+        display: String::new(),
+        key,
+        app: "test".into(),
+        machine: "test".into(),
+    }
 }
 
 impl Lab {
     fn new(tag: &str) -> Lab {
         let dir = std::env::temp_dir().join(format!("dexsheets-{tag}-{}-{}", std::process::id(), crate::now_ms()));
-        crate::server::set_user(&dir, "usera", "User A", "pass-a-111", crate::proto::Role::Editor).expect("user");
-        crate::server::set_user(&dir, "userb", "User B", "pass-b-222", crate::proto::Role::Editor).expect("user");
-        crate::server::set_user(&dir, "viewer", "Viewer", "pass-v-333", crate::proto::Role::Viewer).expect("user");
+        crate::server::set_profile(&dir, "usera", "User A", crate::proto::Role::Editor).expect("user");
+        crate::server::set_profile(&dir, "userb", "User B", crate::proto::Role::Editor).expect("user");
+        crate::server::set_profile(&dir, "viewer", "Viewer", crate::proto::Role::Viewer).expect("user");
         let (server, port) = crate::server::start_on(dir.clone(), "Test".into(), 0).expect("server");
-        Lab { dir, port, _server: server }
+        Lab { dir, port, _server: server, keys: Arc::default() }
     }
 
     /// A second server process on the same data folder, as after a crash: the first one never
     /// flushed or snapshotted, so only what it wrote before acknowledging each edit counts.
     fn restarted(&self) -> Lab {
         let (server, port) = crate::server::start_on(self.dir.clone(), "Test".into(), 0).expect("server again");
-        Lab { dir: self.dir.clone(), port, _server: server }
+        Lab { dir: self.dir.clone(), port, _server: server, keys: self.keys.clone() }
     }
 
-    fn connect(&self, user: &str, password: &str) -> Client {
-        let cfg = crate::client::Config {
-            server: format!("127.0.0.1:{}", self.port),
-            user: user.into(),
-            password: password.into(),
-            app: "test".into(),
-            machine: "test".into(),
-        };
-        let c = Client::connect(cfg, Arc::new(|| {}));
+    /// This person's device key (made the first time).
+    fn key(&self, user: &str) -> Arc<crate::auth::DeviceKey> {
+        let mut keys = self.keys.lock().expect("keys");
+        keys.entry(user.to_string()).or_insert_with(|| Arc::new(crate::auth::DeviceKey::generate().expect("key"))).clone()
+    }
+
+    fn connect(&self, user: &str) -> Client {
+        let c = Client::connect(config(self.port, user, self.key(user)), Arc::new(|| {}));
         recv(&c, |e| matches!(e, crate::client::Event::Connected { .. }));
         c
     }
@@ -469,8 +472,8 @@ fn share(c: &Client, name: &str, w: &Workbook) {
 #[test]
 fn a_shared_workbook_reaches_the_server_and_the_recipient_with_its_content() {
     let lab = Lab::new("share-content");
-    let a = lab.connect("usera", "pass-a-111");
-    let b = lab.connect("userb", "pass-b-222");
+    let a = lab.connect("usera");
+    let b = lab.connect("userb");
     let original = rich_workbook();
     share(&a, "Project Tracker", &original);
     let ra = Replica::opened(&a);
@@ -499,7 +502,7 @@ fn a_shared_workbook_reaches_the_server_and_the_recipient_with_its_content() {
 #[test]
 fn a_damaged_upload_is_refused() {
     let lab = Lab::new("damaged");
-    let a = lab.connect("usera", "pass-a-111");
+    let a = lab.connect("usera");
     let bytes = gridcraft_engine::io::save_bytes(&rich_workbook(), "share.xlsx").expect("save");
     a.send(ClientMsg::CreateBook {
         name: "Damaged".into(),
@@ -525,8 +528,8 @@ fn a_damaged_upload_is_refused() {
 #[test]
 fn owner_and_collaborator_edits_propagate_converge_and_survive_a_restart() {
     let lab = Lab::new("collab");
-    let a = lab.connect("usera", "pass-a-111");
-    let b = lab.connect("userb", "pass-b-222");
+    let a = lab.connect("usera");
+    let b = lab.connect("userb");
     share(&a, "Register", &rich_workbook());
     let mut ra = Replica::opened(&a);
     let id = ra.sd.book.id.clone();
@@ -589,8 +592,8 @@ fn owner_and_collaborator_edits_propagate_converge_and_survive_a_restart() {
     let missing = sync::content_differences(&expected, &lab2.on_disk(&id), 10);
     assert!(missing.is_empty(), "lost on restart: {missing:?}");
     // F: both reopen in new sessions and get the latest state, nothing acknowledged missing.
-    let a2 = lab2.connect("usera", "pass-a-111");
-    let b2 = lab2.connect("userb", "pass-b-222");
+    let a2 = lab2.connect("usera");
+    let b2 = lab2.connect("userb");
     a2.send(ClientMsg::OpenBook { book: id.clone() });
     b2.send(ClientMsg::OpenBook { book: id.clone() });
     let (ra2, rb2) = (Replica::opened(&a2), Replica::opened(&b2));
@@ -605,11 +608,11 @@ fn owner_and_collaborator_edits_propagate_converge_and_survive_a_restart() {
 #[test]
 fn viewers_cannot_edit_and_strangers_cannot_read() {
     let lab = Lab::new("perm");
-    let a = lab.connect("usera", "pass-a-111");
+    let a = lab.connect("usera");
     share(&a, "Confidential", &rich_workbook());
     let ra = Replica::opened(&a);
     let id = ra.sd.book.id.clone();
-    let v = lab.connect("viewer", "pass-v-333");
+    let v = lab.connect("viewer");
     v.send(ClientMsg::OpenBook { book: id.clone() });
     let mut rv = Replica::opened(&v);
     let edit = match rv.edit("cell.set", json!({"cell": "A1", "input": "viewer was here"})) {
@@ -640,8 +643,8 @@ fn viewers_cannot_edit_and_strangers_cannot_read() {
 #[test]
 fn a_large_workbook_and_a_burst_of_edits_arrive_complete_and_in_order() {
     let lab = Lab::new("large");
-    let a = lab.connect("usera", "pass-a-111");
-    let b = lab.connect("userb", "pass-b-222");
+    let a = lab.connect("usera");
+    let b = lab.connect("userb");
     let mut s = Session::new();
     s.new_workbook();
     let rows: Vec<serde_json::Value> =
@@ -714,10 +717,10 @@ fn error(c: &Client) -> (String, Option<String>) {
 #[test]
 fn specific_people_see_and_edit_only_what_they_are_given() {
     let lab = Lab::new("people");
-    crate::server::set_user(&lab.dir, "userc", "User C", "pass-c-444", crate::proto::Role::Editor).expect("user");
-    let a = lab.connect("usera", "pass-a-111");
-    let b = lab.connect("userb", "pass-b-222");
-    let c = lab.connect("userc", "pass-c-444");
+    crate::server::set_profile(&lab.dir, "userc", "User C", crate::proto::Role::Editor).expect("user");
+    let a = lab.connect("usera");
+    let b = lab.connect("userb");
+    let c = lab.connect("userc");
     share(&a, "Project_Tracker", &rich_workbook());
     let ra = Replica::opened(&a);
     let id = ra.sd.book.id.clone();
@@ -775,8 +778,8 @@ fn specific_people_see_and_edit_only_what_they_are_given() {
 #[test]
 fn an_expired_link_opens_for_nobody_but_the_owner_and_changes_are_summarised_at_sign_in() {
     let lab = Lab::new("expiry");
-    let a = lab.connect("usera", "pass-a-111");
-    let b = lab.connect("userb", "pass-b-222");
+    let a = lab.connect("usera");
+    let b = lab.connect("userb");
     share(&a, "Register", &rich_workbook());
     let mut ra = Replica::opened(&a);
     let id = ra.sd.book.id.clone();
@@ -795,7 +798,7 @@ fn an_expired_link_opens_for_nobody_but_the_owner_and_changes_are_summarised_at_
         a.send(ra.edit("cell.set", json!({"sheet": "Sheet1", "cell": format!("H{}", i + 1), "input": "x"})));
     }
     ra.catch_up(&a, 5);
-    let b = lab.connect("userb", "pass-b-222");
+    let b = lab.connect("userb");
     let n = notice(&b);
     assert_eq!((n.kind.as_str(), n.book.as_str(), n.by.as_str()), ("changed", id.as_str(), "User A"));
     assert!(n.text.starts_with("5 edit"), "{}", n.text);
@@ -827,7 +830,7 @@ fn the_web_link_page_opens_the_app_and_offers_the_installer() {
     assert!(get("/download").starts_with("HTTP/1.1 404"), "no installer yet");
     assert!(get("/open/<script>").starts_with("HTTP/1.1 404"));
     // The protocol port still works for the app afterwards.
-    let _a = lab.connect("usera", "pass-a-111");
+    let _a = lab.connect("usera");
 }
 
 #[test]
@@ -844,7 +847,7 @@ fn releases_follow_channels_and_status_and_offer_a_rollback() {
     )
     .expect("releases");
     lab._server.poll_updates();
-    let a = lab.connect("usera", "pass-a-111");
+    let a = lab.connect("usera");
     let ask = |version: &str, channel: Option<&str>| {
         a.send(ClientMsg::CheckUpdate { version: version.into(), channel: channel.map(str::to_string) });
         match recv(&a, |e| matches!(e, crate::client::Event::Message(ServerMsg::Update { .. }))) {
@@ -886,7 +889,7 @@ fn releases_follow_channels_and_status_and_offer_a_rollback() {
 #[test]
 fn problem_reports_health_and_usage_reach_the_server_files() {
     let lab = Lab::new("feedback");
-    let a = lab.connect("usera", "pass-a-111");
+    let a = lab.connect("usera");
     let report = crate::proto::Feedback {
         version: "1.2.2".into(),
         os: "windows".into(),
@@ -927,9 +930,9 @@ fn problem_reports_health_and_usage_reach_the_server_files() {
 #[test]
 fn only_administrators_publish_templates_and_users_hear_of_new_versions() {
     let lab = Lab::new("templates");
-    crate::server::set_user(&lab.dir, "boss", "Boss", "pass-boss-1", crate::proto::Role::Admin).expect("admin");
-    let admin = lab.connect("boss", "pass-boss-1");
-    let a = lab.connect("usera", "pass-a-111");
+    crate::server::set_profile(&lab.dir, "boss", "Boss", crate::proto::Role::Admin).expect("admin");
+    let admin = lab.connect("boss");
+    let a = lab.connect("usera");
     let bytes = gridcraft_engine::io::save_bytes(&rich_workbook(), "t.xlsx").expect("save");
     let publish = |c: &Client, id: Option<String>| {
         c.send(ClientMsg::PublishTemplate {
@@ -977,8 +980,8 @@ fn only_administrators_publish_templates_and_users_hear_of_new_versions() {
 #[test]
 fn a_change_rule_stamps_the_row_and_tells_people_and_a_schedule_rule_writes_a_report() {
     let lab = Lab::new("automation");
-    let a = lab.connect("usera", "pass-a-111");
-    let b = lab.connect("userb", "pass-b-222");
+    let a = lab.connect("usera");
+    let b = lab.connect("userb");
     let mut s = Session::new();
     s.new_workbook();
     // A tracker: task, due date (serial numbers in the past and future), status.
@@ -1060,7 +1063,7 @@ fn a_change_rule_stamps_the_row_and_tells_people_and_a_schedule_rule_writes_a_re
 }
 
 // ---------------------------------------------------------------------------------------------
-// Reload loops, refused requests, passwords and disabled accounts.
+// Reload loops, refused requests, device approval and revoked devices.
 
 /// A refused edit is dropped for good (sending it again after the reload would be refused again,
 /// reloading for ever), the reload refreshes what the person may do, and a reload that fails is
@@ -1098,78 +1101,259 @@ fn a_rejected_edit_is_dropped_and_a_reload_ends_whether_it_works_or_not() {
     assert!(!sd.read_only);
 }
 
-/// Changing the password needs the current one; afterwards the new one signs in.
-#[test]
-fn changing_the_password_needs_the_current_one() {
-    let lab = Lab::new("password");
-    let a = lab.connect("usera", "pass-a-111");
-    let wrong = a.proof("not-my-password").expect("logged in");
-    a.send(ClientMsg::ChangePassword { old_proof: wrong, new_password: "pass-a-999".into() });
-    let (e, _) = error(&a);
-    assert!(e.contains("current password"), "{e}");
-    // The password did not change: a fresh sign-in with the old one still works.
-    drop(lab.connect("usera", "pass-a-111"));
-    // An empty proof (what older apps sent) is refused too.
-    a.send(ClientMsg::ChangePassword { old_proof: String::new(), new_password: "pass-a-999".into() });
-    assert!(error(&a).0.contains("current password"));
-
-    let right = a.proof("pass-a-111").expect("logged in");
-    a.send(ClientMsg::ChangePassword { old_proof: right, new_password: "pass-a-999".into() });
-    assert!(matches!(
-        recv(&a, |e| matches!(e, crate::client::Event::Message(ServerMsg::Ok { .. } | ServerMsg::Error { .. }))),
-        crate::client::Event::Message(ServerMsg::Ok { .. })
-    ));
-    let cfg = |p: &str| crate::client::Config {
-        server: format!("127.0.0.1:{}", lab.port),
-        user: "usera".into(),
-        password: p.into(),
-        app: "test".into(),
-        machine: "test".into(),
-    };
-    let old = Client::connect(cfg("pass-a-111"), Arc::new(|| {}));
-    assert!(matches!(recv(&old, |_| true), crate::client::Event::Failed(_)), "the old password no longer signs in");
-    let new = Client::connect(cfg("pass-a-999"), Arc::new(|| {}));
-    assert!(matches!(recv(&new, |_| true), crate::client::Event::Connected { .. }));
+/// The first message of an Error or Pending answer, or what came instead.
+fn first_event(c: &Client) -> crate::client::Event {
+    recv(c, |e| !matches!(e, crate::client::Event::Disconnected(_)))
 }
 
-/// An account the administrator disables is cut off at once, with its open workbook recorded
-/// as seen, and cannot sign in again.
+/// A server with nobody on it: the first person in becomes its administrator (trusted on first
+/// use), everyone after is an editor, and a person may change the name others see.
 #[test]
-fn a_disabled_account_is_disconnected_at_once() {
-    let lab = Lab::new("disabled");
-    let a = lab.connect("usera", "pass-a-111");
-    let b = lab.connect("userb", "pass-b-222");
+fn the_first_person_on_a_new_server_is_its_administrator() {
+    let dir = std::env::temp_dir().join(format!("dexsheets-tofu-{}-{}", std::process::id(), crate::now_ms()));
+    let (_server, port) = crate::server::start_on(dir.clone(), "Test".into(), 0).expect("server");
+    let first = Client::connect(config(port, r"DDS\Vikram", Arc::new(crate::auth::DeviceKey::generate().expect("key"))), Arc::new(|| {}));
+    match first_event(&first) {
+        crate::client::Event::Connected { me, .. } => {
+            assert_eq!(me.user, r"dds\vikram", "filed under the account in lower case");
+            assert_eq!(me.display, "Vikram", "the Windows user name until the person changes it");
+            assert_eq!(me.role, crate::proto::Role::Admin);
+        }
+        other => panic!("{other:?}"),
+    }
+    let second = Client::connect(config(port, r"DDS\anita", Arc::new(crate::auth::DeviceKey::generate().expect("key"))), Arc::new(|| {}));
+    match first_event(&second) {
+        crate::client::Event::Connected { me, .. } => assert_eq!(me.role, crate::proto::Role::Editor),
+        other => panic!("{other:?}"),
+    }
+    second.send(ClientMsg::SetDisplay { display: "  Anita Rao ".into() });
+    assert!(matches!(
+        recv(&second, |e| matches!(e, crate::client::Event::Message(ServerMsg::Ok { .. } | ServerMsg::Error { .. }))),
+        crate::client::Event::Message(ServerMsg::Ok { .. })
+    ));
+    let all = crate::server::load_profiles(&dir).expect("profiles");
+    assert_eq!(all.profiles.get(r"dds\anita").map(|p| p.display.as_str()), Some("Anita Rao"));
+    assert_eq!(all.profiles.get(r"dds\vikram").map(|p| p.account.as_str()), Some(r"DDS\Vikram"), "the spelling Windows uses is kept");
+    assert!(!dir.join("users.json").exists(), "no accounts file any more");
+    drop((first, second));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A second PC for someone the server knows waits for an administrator; a person who is not an
+/// administrator can't approve it; approved, it signs in; revoked, it is cut off at once and
+/// refused afterwards.
+#[test]
+fn another_pc_waits_for_approval_and_a_revoked_one_is_refused() {
+    let lab = Lab::new("devices");
+    crate::server::set_profile(&lab.dir, "boss", "Boss", crate::proto::Role::Admin).expect("admin");
+    let boss = lab.connect("boss");
+    let a = lab.connect("usera");
+    // User A on a second PC.
+    let laptop = Arc::new(crate::auth::DeviceKey::generate().expect("key"));
+    let code = laptop.code();
+    let second = Client::connect(config(lab.port, "usera", laptop.clone()), Arc::new(|| {}));
+    match first_event(&second) {
+        crate::client::Event::Pending { code: c, message } => {
+            assert_eq!(c, code);
+            assert!(message.contains(&code) && message.contains("Waiting for an administrator"), "{message}");
+        }
+        other => panic!("{other:?}"),
+    }
+    drop(second);
+    // Not an administrator: refused.
+    let b = lab.connect("userb");
+    b.send(ClientMsg::SetDevice { code: code.clone(), status: crate::proto::DeviceStatus::Approved, user: None });
+    assert!(error(&b).0.contains("only an administrator"));
+    b.send(ClientMsg::ListProfiles);
+    assert!(error(&b).0.contains("only an administrator"));
+    // The administrator sees it waiting and approves it (the code typed loosely).
+    boss.send(ClientMsg::ListProfiles);
+    let profiles = |c: &Client| match recv(c, |e| matches!(e, crate::client::Event::Message(ServerMsg::Profiles { .. }))) {
+        crate::client::Event::Message(ServerMsg::Profiles { profiles }) => profiles,
+        _ => unreachable!(),
+    };
+    let list = profiles(&boss);
+    let ua = list.iter().find(|p| p.user == "usera").expect("usera");
+    assert_eq!(ua.devices.len(), 2);
+    assert!(ua.devices.iter().any(|d| d.code == code && d.status == crate::proto::DeviceStatus::Pending));
+    boss.send(ClientMsg::SetDevice { code: code.to_lowercase().replace('-', " "), status: crate::proto::DeviceStatus::Approved, user: None });
+    let list = profiles(&boss);
+    assert!(list.iter().flat_map(|p| &p.devices).any(|d| d.code == code && d.status == crate::proto::DeviceStatus::Approved));
+    let second = Client::connect(config(lab.port, "usera", laptop.clone()), Arc::new(|| {}));
+    assert!(matches!(first_event(&second), crate::client::Event::Connected { .. }), "approved: it signs in");
+    // Revoked: the open connection ends with the reason, and signing in again is refused.
+    boss.send(ClientMsg::SetDevice { code: code.clone(), status: crate::proto::DeviceStatus::Revoked, user: Some("USERA".into()) });
+    let _ = profiles(&boss);
+    let why = match recv(&second, |e| matches!(e, crate::client::Event::Message(ServerMsg::Error { .. }))) {
+        crate::client::Event::Message(ServerMsg::Error { message, .. }) => message,
+        _ => unreachable!(),
+    };
+    assert!(why.contains("revoked"), "{why}");
+    match recv(&second, |e| matches!(e, crate::client::Event::Failed(_))) {
+        crate::client::Event::Failed(why) => assert!(why.contains("revoked"), "{why}"),
+        _ => unreachable!(),
+    }
+    // The first PC is untouched.
+    a.send(ClientMsg::ListBooks);
+    assert!(matches!(
+        recv(&a, |e| matches!(e, crate::client::Event::Message(ServerMsg::Books { .. } | ServerMsg::Error { .. }))),
+        crate::client::Event::Message(ServerMsg::Books { .. })
+    ));
+    // An administrator can't demote or remove the last administrator.
+    boss.send(ClientMsg::SetRole { user: "boss".into(), role: crate::proto::Role::Editor });
+    assert!(error(&boss).0.contains("only administrator"));
+    // Someone else made an administrator by role.
+    boss.send(ClientMsg::SetRole { user: "userb".into(), role: crate::proto::Role::Admin });
+    assert!(profiles(&boss).iter().any(|p| p.user == "userb" && p.role == crate::proto::Role::Admin));
+}
+
+/// An app from before device keys (protocol 1) is told to update, in words a person can act on.
+#[test]
+fn an_older_app_is_told_to_update() {
+    let lab = Lab::new("protocol1");
+    let mut s = std::net::TcpStream::connect(("127.0.0.1", lab.port)).expect("tcp");
+    let hello = json!({"t": "Hello", "protocol": 1, "user": "usera", "app": "Dexterity Sheets 1.6.0", "machine": "PC", "instance": "x"});
+    crate::proto::write_frame(&mut s, &hello).expect("hello");
+    // Protocol 1's challenge (salt and iterations), whatever password it proves.
+    let challenge: serde_json::Value = crate::proto::read_frame(&mut s).expect("challenge");
+    assert!(challenge.get("salt").is_some() && challenge.get("iterations").is_some(), "{challenge}");
+    crate::proto::write_frame(&mut s, &json!({"t": "Login", "proof": "00"})).expect("login");
+    assert!(matches!(crate::proto::read_frame::<_, ServerMsg>(&mut s).expect("welcome"), ServerMsg::Welcome { .. }));
+    let told = |s: &mut std::net::TcpStream| match crate::proto::read_frame::<_, ServerMsg>(s).expect("answer") {
+        ServerMsg::Error { message, .. } => message,
+        other => panic!("{other:?}"),
+    };
+    let message = told(&mut s);
+    assert!(
+        message.contains("This server needs Dexterity Sheets") && message.contains("or newer") && message.contains("Help › Updates"),
+        "{message}"
+    );
+    assert!(message.contains(crate::APP_VERSION.trim()), "{message}");
+    // Nothing but updates: a workbook list is refused with the same words…
+    crate::proto::write_frame(&mut s, &ClientMsg::ListBooks).expect("list");
+    assert_eq!(told(&mut s), message);
+    // …and Help › Updates still reaches this server.
+    crate::proto::write_frame(&mut s, &ClientMsg::CheckUpdate { version: "0.0.1".into(), channel: None }).expect("check");
+    assert!(matches!(crate::proto::read_frame::<_, ServerMsg>(&mut s).expect("offer"), ServerMsg::Update { .. }));
+    // Nothing about the person was recorded.
+    let all = crate::server::load_profiles(&lab.dir).expect("profiles");
+    assert!(all.profiles.get("usera").is_some_and(|p| p.devices.is_empty()));
+}
+
+/// A signature made with another key than the one announced is refused.
+#[test]
+fn a_forged_signature_is_refused() {
+    let lab = Lab::new("forged");
+    let mut s = std::net::TcpStream::connect(("127.0.0.1", lab.port)).expect("tcp");
+    let shown = crate::auth::DeviceKey::generate().expect("key");
+    let signer = crate::auth::DeviceKey::generate().expect("key");
+    let public = shown.public_key();
+    let hello = ClientMsg::Hello {
+        protocol: crate::proto::PROTOCOL,
+        user: "usera".into(),
+        app: "test".into(),
+        machine: "PC".into(),
+        instance: "x".into(),
+        display: String::new(),
+        key: crate::auth::hex(&public),
+    };
+    crate::proto::write_frame(&mut s, &hello).expect("hello");
+    let nonce = match crate::proto::read_frame::<_, ServerMsg>(&mut s).expect("challenge") {
+        ServerMsg::Challenge { nonce, .. } => crate::auth::unhex(&nonce).expect("hex"),
+        other => panic!("{other:?}"),
+    };
+    let sig = signer.sign(&crate::auth::login_message(&nonce, "usera", &public));
+    crate::proto::write_frame(&mut s, &ClientMsg::Login { signature: crate::auth::hex(&sig) }).expect("login");
+    match crate::proto::read_frame::<_, ServerMsg>(&mut s).expect("answer") {
+        ServerMsg::Error { message, .. } => assert!(message.contains("could not be verified"), "{message}"),
+        other => panic!("{other:?}"),
+    }
+    assert!(crate::server::load_profiles(&lab.dir).expect("profiles").profiles.get("usera").is_some_and(|p| p.devices.is_empty()));
+}
+
+/// An older server's `users.json` is carried over once: each account passes, with its name,
+/// role, colour and workbooks, to the first Windows account with the same user name (any
+/// domain); a disabled one stays out; the file is kept as `users.json.bak`.
+#[test]
+fn accounts_from_users_json_pass_to_the_matching_windows_account() {
+    let dir = std::env::temp_dir().join(format!("dexsheets-migrate-{}-{}", std::process::id(), crate::now_ms()));
+    std::fs::create_dir_all(dir.join("books").join("old-book")).expect("dirs");
+    let users = json!([
+        {"user": "vikram", "display": "Vikram Kumar", "role": "admin", "color": [1, 2, 3], "salt": "00", "key": "00", "iterations": 120000},
+        {"user": "anita", "display": "Anita", "role": "editor", "color": [4, 5, 6], "salt": "00", "key": "00", "iterations": 120000, "disabled": true},
+    ]);
+    std::fs::write(dir.join("users.json"), serde_json::to_vec(&users).expect("json")).expect("users.json");
+    let meta = json!({"id": "old-book", "name": "Line list", "created": 1, "created_by": "vikram", "modified": 1, "modified_by": "vikram",
+        "access": {"mode": "people", "everyone": "editor", "people": {"vikram": "editor"}, "expires": null, "download": true}});
+    std::fs::write(dir.join("books").join("old-book").join("book.json"), serde_json::to_vec(&meta).expect("json")).expect("meta");
+    let (_server, port) = crate::server::start_on(dir.clone(), "Test".into(), 0).expect("server");
+    assert!(!dir.join("users.json").exists() && dir.join("users.json.bak").exists(), "kept aside, not deleted");
+    assert_eq!(crate::server::load_profiles(&dir).expect("profiles").carry_over.len(), 2);
+
+    // Another person first: the carried-over administrator still counts, so they are an editor.
+    let other = Client::connect(config(port, r"DDS\rahul", Arc::new(crate::auth::DeviceKey::generate().expect("key"))), Arc::new(|| {}));
+    match first_event(&other) {
+        crate::client::Event::Connected { me, .. } => assert_eq!(me.role, crate::proto::Role::Editor),
+        e => panic!("{e:?}"),
+    }
+    let v = Client::connect(config(port, r"DDS\Vikram", Arc::new(crate::auth::DeviceKey::generate().expect("key"))), Arc::new(|| {}));
+    match first_event(&v) {
+        crate::client::Event::Connected { me, .. } => {
+            assert_eq!(
+                (me.user.as_str(), me.display.as_str(), me.role, me.color),
+                (r"dds\vikram", "Vikram Kumar", crate::proto::Role::Admin, [1, 2, 3])
+            );
+        }
+        e => panic!("{e:?}"),
+    }
+    // The workbook he created under the old name is his, and only he may open it.
+    v.send(ClientMsg::ListBooks);
+    match recv(&v, |e| matches!(e, crate::client::Event::Message(ServerMsg::Books { .. }))) {
+        crate::client::Event::Message(ServerMsg::Books { books }) => {
+            let b = books.iter().find(|b| b.id == "old-book").expect("still listed for him");
+            assert_eq!(b.created_by, r"dds\vikram");
+            assert!(b.access.people.contains_key(r"dds\vikram"));
+        }
+        _ => unreachable!(),
+    }
+    // The disabled account stays out, whatever the domain.
+    let a = Client::connect(config(port, r"OTHER\Anita", Arc::new(crate::auth::DeviceKey::generate().expect("key"))), Arc::new(|| {}));
+    assert!(matches!(first_event(&a), crate::client::Event::Failed(_)));
+    let all = crate::server::load_profiles(&dir).expect("profiles");
+    assert!(all.carry_over.is_empty());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A device revoked in `profiles.json` by the Server Manager or the `profile` command is cut off
+/// at the server's next housekeeping, with its open workbook recorded as seen, and cannot sign
+/// in again.
+#[test]
+fn a_revoked_device_is_disconnected_at_once() {
+    let lab = Lab::new("revoked");
+    let a = lab.connect("usera");
+    let b = lab.connect("userb");
     share(&a, "Register", &rich_workbook());
     let ra = Replica::opened(&a);
     let id = ra.sd.book.id.clone();
     b.send(ClientMsg::OpenBook { book: id.clone() });
     let _ = Replica::opened(&b);
-    // The administrator's tool edits users.json; the server's housekeeping picks it up.
-    let mut users = crate::server::load_users(&lab.dir).expect("users");
-    for u in users.iter_mut().filter(|u| u.user == "userb") {
-        u.disabled = true;
-    }
-    crate::server::save_users(&lab.dir, &users).expect("save");
+    // The administrator's tool edits profiles.json; the server's housekeeping picks it up.
+    let mut all = crate::server::load_profiles(&lab.dir).expect("profiles");
+    all.set_device(&lab.key("userb").code(), crate::proto::DeviceStatus::Revoked, None).expect("revoke");
+    crate::server::save_profiles(&lab.dir, &all).expect("save");
     lab._server.unload_idle();
     let why = match recv(&b, |e| matches!(e, crate::client::Event::Message(ServerMsg::Error { .. }))) {
         crate::client::Event::Message(ServerMsg::Error { message, .. }) => message,
         _ => unreachable!(),
     };
-    assert!(why.contains("disabled"), "{why}");
+    assert!(why.contains("revoked"), "{why}");
     assert!(matches!(recv(&b, |e| matches!(e, crate::client::Event::Disconnected(_))), crate::client::Event::Disconnected(_)));
     // The reconnect is refused: the client gives up.
     assert!(matches!(recv(&b, |e| matches!(e, crate::client::Event::Failed(_))), crate::client::Event::Failed(_)));
     // Everyone else sees B gone from the workbook.
     assert!(books(&a).iter().any(|x| x.id == id && !x.open_by.iter().any(|w| w == "User B")));
-    // A fresh sign-in is refused too.
-    let cfg = crate::client::Config {
-        server: format!("127.0.0.1:{}", lab.port),
-        user: "userb".into(),
-        password: "pass-b-222".into(),
-        app: "test".into(),
-        machine: "test".into(),
-    };
-    let again = Client::connect(cfg, Arc::new(|| {}));
+    // A fresh sign-in from that PC is refused too.
+    let again = Client::connect(config(lab.port, "userb", lab.key("userb")), Arc::new(|| {}));
     assert!(matches!(recv(&again, |_| true), crate::client::Event::Failed(_)));
 }
 

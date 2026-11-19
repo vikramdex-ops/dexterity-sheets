@@ -3,11 +3,13 @@
 //! One server on the office network keeps each shared workbook, orders every edit and stores it
 //! durably with who made it. Clients send what their edits changed as [`patch::WbPatch`]es and
 //! apply everyone's patches in the server's order ([`sync`]), so all replicas converge. Every
-//! connection is a named account: there is no anonymous access.
+//! connection is a named person (their Windows account) on an approved device: there is no
+//! anonymous access, and nobody has a password.
 //!
 //! - [`patch`]: diff and apply workbook changes.
 //! - [`proto`]: messages and framing.
-//! - [`auth`]: password hashing and the login challenge.
+//! - [`auth`]: device keys, device codes and the login signature.
+//! - [`identity`]: the Windows account and where this PC's device key is kept.
 //! - [`client`]: the client connection (background threads, reconnects).
 //! - [`sync`]: keeping an open workbook in step with the server.
 //! - [`server`]: the server.
@@ -19,6 +21,7 @@
 pub mod auth;
 pub mod client;
 pub mod discovery;
+pub mod identity;
 pub mod mention;
 pub mod patch;
 pub mod proto;

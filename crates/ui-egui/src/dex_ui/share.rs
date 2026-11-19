@@ -134,7 +134,7 @@ pub fn open_link(app: &mut SheetApp, s: &str) -> bool {
             if !app.collab.signed_in() {
                 app.collab.set_form_server(&server);
                 app.open_backstage(crate::backstage::Page::Shared);
-                app.toast = Some(("Sign in to the office server to open the shared spreadsheet.".into(), crate::now_ms()));
+                app.toast = Some(("Connect to the office server to open the shared spreadsheet.".into(), crate::now_ms()));
             }
         }
         None => app.message = Some(("Dexterity Sheets".into(), "That link is not a Dexterity Sheets link to a shared spreadsheet.".into())),
@@ -468,7 +468,7 @@ fn date_ms(s: &str) -> Option<i64> {
 /// Sets who has access: now for a shared workbook, or right after sharing for one that isn't.
 fn apply_access(app: &mut SheetApp, a: Access) -> Result<Json, String> {
     if !app.collab.signed_in() {
-        return Err("Sign in to the office server first (File › Shared).".into());
+        return Err("Connect to the office server first (File › Shared).".into());
     }
     match shared_doc_book(app) {
         Some(b) => {
@@ -582,7 +582,7 @@ fn share_dialog(app: &mut SheetApp, ctx: &egui::Context) {
                 ui.label("People (the creator and administrators always have access):");
                 egui::ScrollArea::vertical().max_height(180.0).show(ui, |ui| {
                     if users.is_empty() {
-                        ui.label(RichText::new("Sign in to the office server to see your colleagues.").weak());
+                        ui.label(RichText::new("Connect to the office server to see your colleagues.").weak());
                     }
                     for (u, display) in &users {
                         ui.horizontal(|ui| {
@@ -607,7 +607,7 @@ fn share_dialog(app: &mut SheetApp, ctx: &egui::Context) {
                 let label = if book.is_some() { "Save sharing" } else { "Share" };
                 if ui
                     .add_enabled(signed_in, egui::Button::new(label))
-                    .on_disabled_hover_text("Sign in to the office server first (File › Shared)")
+                    .on_disabled_hover_text("Connect to the office server first (File › Shared)")
                     .clicked()
                 {
                     apply = true;

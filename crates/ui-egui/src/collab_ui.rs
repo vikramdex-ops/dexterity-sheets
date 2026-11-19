@@ -1,4 +1,5 @@
-//! Dexterity Sheets LAN co-authoring in the window: signing in to the office server, sharing any
+//! Dexterity Sheets LAN co-authoring in the window: connecting to the office server (with the
+//! Windows account and this PC's device key, found and connected on its own), sharing any
 //! workbook wherever it is saved (its file keeps everyone's edits), the shared workbook list
 //! (File › Shared), other people's selections on the grid, who last changed the active cell
 //! (status bar), and the Edit History and Versions panes.
@@ -11,8 +12,10 @@ use std::sync::Arc;
 use std::sync::mpsc::Receiver;
 
 use egui::{Color32, FontId, Painter, RichText, Stroke, StrokeKind, Ui, pos2, vec2};
+use gridcraft_collab::auth::DeviceKey;
 use gridcraft_collab::client::{Client, Config, Event};
 use gridcraft_collab::discovery::{self, Found};
+use gridcraft_collab::identity;
 use gridcraft_collab::proto::{self, BookInfo, Change, ClientMsg, Peer, Role, ServerMsg, UpdateInfo, UserInfo, VersionInfo};
 use gridcraft_collab::sync::SharedDoc;
 use gridcraft_engine::core::{CellRef, RangeRef};
@@ -29,8 +32,24 @@ pub enum Status {
     #[default]
     SignedOut,
     Connecting,
+    /// This PC waits for an administrator's approval (its device code); the client asks again.
+    Pending(String),
     Online,
     Reconnecting(String),
+}
+
+/// Who this PC signs in as: the Windows account and the device key.
+#[derive(Clone, Debug)]
+pub struct Identity {
+    /// `DOMAIN\user` as Windows spells it.
+    pub account: String,
+    /// The name others see (the person may change it).
+    pub display: String,
+    pub key: Arc<DeviceKey>,
+    /// `ABCD-EFGH`: what an administrator compares before approving this PC.
+    pub code: String,
+    /// The key is a plain file (Windows data protection was not available).
+    pub plain: bool,
 }
 
 /// What a history list was asked for: (book, sheet, cell, user).
@@ -38,10 +57,14 @@ type HistoryQuery = (String, Option<String>, Option<String>, Option<String>);
 /// A background save in flight: the workbook being written and its result.
 type PendingWrite = (Arc<Workbook>, Receiver<Result<Stamp, String>>);
 
+/// What the app remembers between runs: the office server it connected to and the name the
+/// person chose to show (empty: their Windows user name).
 #[derive(Default, Serialize, Deserialize)]
 struct Remembered {
+    #[serde(default)]
     server: String,
-    user: String,
+    #[serde(default)]
+    display: String,
 }
 
 #[derive(Default)]
@@ -77,15 +100,22 @@ pub struct Collab {
     pub docs: Vec<SharedDoc>,
     pub error: Option<String>,
     form_server: String,
-    form_user: String,
-    form_password: String,
     form_loaded: bool,
     found: Vec<Found>,
     finding: Option<Receiver<Vec<Found>>>,
     new_name: String,
-    new_password: String,
-    /// The current password, typed again to change it.
-    old_password: String,
+    /// The Windows account and device key, once loaded (off the UI thread: it may start
+    /// PowerShell for Windows data protection).
+    pub identity: Option<Identity>,
+    identity_rx: Option<Receiver<Result<Identity, String>>>,
+    /// The server to connect to as soon as the identity is ready.
+    want_server: Option<String>,
+    /// Connect by itself to the only server found (at start, and after Change server).
+    auto_pick: bool,
+    /// The start-up connection was begun.
+    auto_started: bool,
+    /// The name-others-see field.
+    display_edit: String,
     /// A request that could not be sent (not connected), shown as a toast by `tick`.
     dropped: Option<String>,
     /// Workbooks asked for and not yet arrived.
@@ -105,9 +135,6 @@ pub struct Collab {
     update_dialog: bool,
     /// Downloading or installing: what the dialog says.
     pub(crate) update_state: Option<String>,
-    /// The new password sent with ChangePassword: once the server says it took, the connection
-    /// reconnects with it (not with the old one).
-    new_password_sent: Option<String>,
     last_update_check: f64,
     /// Shared workbooks that are files on this PC, kept saved with everyone's edits.
     pub links: Vec<LinkedFile>,
@@ -163,7 +190,7 @@ impl Collab {
         self.docs.iter().find(|d| d.doc_uid == uid)
     }
     /// Sends a request to the server. While not connected, a request that is a person's action
-    /// (keep a version, change who has access, restore, delete, change the password…) would
+    /// (keep a version, change who has access, restore, delete…) would
     /// vanish: the connection drops its queue when it comes back. Such a request is refused
     /// here, the person is told (a toast), and `false` comes back. Edits, presence and the
     /// requests the reconnect repeats on its own are handed over whatever the state.
@@ -202,9 +229,14 @@ impl Collab {
         };
         if s.contains(':') { s } else { format!("{s}:{}", proto::DEFAULT_PORT) }
     }
+    /// Connects to `server` (a link named it) as soon as this PC's identity is ready.
     pub(crate) fn set_form_server(&mut self, server: &str) {
         self.form_server = server.trim_end_matches(&format!(":{}", proto::DEFAULT_PORT)).to_string();
         self.form_loaded = true;
+        if self.client.is_none() {
+            self.want_server = Some(self.form_server.clone());
+            load_identity(self);
+        }
     }
     /// Opens a shared workbook by id (the server checks the person's access).
     pub(crate) fn open_book(&mut self, id: &str) {
@@ -222,8 +254,11 @@ impl Collab {
 fn offline_note(status: &Status) -> String {
     match status {
         Status::Reconnecting(why) => format!("Not connected to the office server ({why}): nothing was sent. Try again once you are back online."),
-        Status::Connecting => "Still signing in to the office server: nothing was sent. Try again in a moment.".into(),
-        _ => "Not signed in to the office server: nothing was sent.".into(),
+        Status::Connecting => "Still connecting to the office server: nothing was sent. Try again in a moment.".into(),
+        Status::Pending(code) => {
+            format!("This PC waits for an administrator's approval (device code {code}): nothing was sent.")
+        }
+        _ => "Not connected to the office server: nothing was sent.".into(),
     }
 }
 
@@ -233,27 +268,118 @@ pub fn active_shared(app: &SheetApp) -> Option<&SharedDoc> {
     app.collab.shared(uid)
 }
 
-fn sign_in(c: &mut Collab, ctx: &egui::Context) {
-    let server = c.form_server.trim().to_string();
-    let user = c.form_user.trim().to_ascii_lowercase();
-    if server.is_empty() || user.is_empty() || c.form_password.is_empty() {
-        c.error = Some("Enter the server, your user name and your password.".into());
+/// Loads this PC's identity in the background (once).
+fn load_identity(c: &mut Collab) {
+    if c.identity.is_some() || c.identity_rx.is_some() {
         return;
     }
-    save_remembered(&Remembered { server: server.clone(), user: user.clone() });
+    let (tx, rx) = std::sync::mpsc::channel();
+    c.identity_rx = Some(rx);
+    let display = load_remembered().display;
+    let spawned = std::thread::Builder::new().name("dexsheets-identity".into()).spawn(move || {
+        let r = (|| {
+            let who = identity::windows_account().ok_or("Windows did not say who is signed in to this PC (USERNAME is not set).")?;
+            let path = identity::default_key_path().ok_or("There is no folder for this PC's device key (LOCALAPPDATA is not set).")?;
+            let (key, how) = identity::load_or_create(&path).map_err(|e| format!("This PC's device key could not be read or made: {e}"))?;
+            Ok(Identity {
+                display: if display.trim().is_empty() { who.display } else { display },
+                account: who.account,
+                code: key.code(),
+                key: Arc::new(key),
+                plain: how == identity::Protection::Plain,
+            })
+        })();
+        let _ = tx.send(r);
+    });
+    if let Err(e) = spawned {
+        c.identity_rx = None;
+        c.error = Some(format!("could not start: {e}"));
+    }
+}
+
+/// Connects to `server` as this PC's Windows account. The identity must be loaded.
+fn connect(c: &mut Collab, ctx: &egui::Context, server: &str) {
+    let server = server.trim().to_string();
+    let Some(me) = c.identity.clone() else {
+        c.want_server = Some(server);
+        load_identity(c);
+        return;
+    };
+    if server.is_empty() {
+        c.error = Some("Pick the office server, or type its computer name or IP address.".into());
+        return;
+    }
+    save_remembered(&Remembered { server: server.clone(), display: load_remembered().display });
+    c.form_server = server.clone();
     let ctx = ctx.clone();
     let waker: gridcraft_collab::client::Waker = Arc::new(move || ctx.request_repaint());
     let machine = std::env::var("COMPUTERNAME").unwrap_or_default();
     let cfg = Config {
         server,
-        user,
-        password: std::mem::take(&mut c.form_password),
+        user: me.account,
+        display: me.display,
+        key: me.key,
         app: format!("Dexterity Sheets {}", gridcraft_collab::APP_VERSION.trim()),
         machine,
     };
     c.client = Some(Client::connect(cfg, waker));
     c.status = Status::Connecting;
     c.error = None;
+}
+
+/// At start (the desktop app only, never in tests): load the identity, then connect to the
+/// remembered server or the only one found on the network. With several and none remembered,
+/// File › Shared offers them with one click each.
+fn start_up(app: &mut SheetApp, ctx: &egui::Context) {
+    let c = &mut app.collab;
+    if !c.auto_started && crate::dex_ui::desktop() {
+        c.auto_started = true;
+        let r = load_remembered();
+        load_identity(c);
+        if r.server.trim().is_empty() {
+            c.auto_pick = true;
+            start_finding(c);
+        } else if c.client.is_none() && c.want_server.is_none() {
+            c.want_server = Some(r.server);
+        }
+    }
+    if let Some(rx) = &c.identity_rx
+        && let Ok(r) = rx.try_recv()
+    {
+        c.identity_rx = None;
+        match r {
+            Ok(me) => {
+                if me.plain {
+                    log::warn!("this PC's device key is kept as a plain file: Windows data protection was not available");
+                }
+                c.display_edit = me.display.clone();
+                c.identity = Some(me);
+            }
+            Err(e) => {
+                c.want_server = None;
+                c.error = Some(e);
+            }
+        }
+    }
+    if let Some(rx) = &c.finding
+        && let Ok(found) = rx.try_recv()
+    {
+        c.finding = None;
+        if c.auto_pick && c.client.is_none() && c.want_server.is_none() && found.len() == 1 {
+            c.want_server = found.first().map(|f| f.address.clone());
+        }
+        c.auto_pick = false;
+        c.found = found;
+    }
+    if c.identity.is_some()
+        && c.client.is_none()
+        && let Some(server) = c.want_server.take()
+    {
+        connect(c, ctx, &server);
+    }
+    if c.identity_rx.is_some() || c.finding.is_some() {
+        ctx.request_repaint_after(std::time::Duration::from_millis(200));
+    }
 }
 
 fn sign_out(app: &mut SheetApp) {
@@ -282,6 +408,14 @@ fn sign_out(app: &mut SheetApp) {
     c.books.clear();
 }
 
+/// Disconnects and offers the servers on the network again (File › Shared › Change server).
+fn change_server(app: &mut SheetApp) {
+    sign_out(app);
+    app.collab.want_server = None;
+    app.collab.error = None;
+    start_finding(&mut app.collab);
+}
+
 /// Each frame: network events in, the person's edits and position out.
 pub fn tick(app: &mut SheetApp, ctx: &egui::Context) {
     #[cfg(not(target_arch = "wasm32"))]
@@ -289,13 +423,8 @@ pub fn tick(app: &mut SheetApp, ctx: &egui::Context) {
     crate::dex_ui::releases::tick(app);
     crate::dex_ui::share::tick(app);
     crate::dex_ui::mention::publish(app, ctx);
+    start_up(app, ctx);
     if app.collab.client.is_none() && app.collab.docs.is_empty() {
-        if let Some(rx) = &app.collab.finding
-            && let Ok(found) = rx.try_recv()
-        {
-            app.collab.found = found;
-            app.collab.finding = None;
-        }
         return;
     }
     // The person's edits first, so they are pending before anyone else's are applied.
@@ -324,12 +453,6 @@ pub fn tick(app: &mut SheetApp, ctx: &egui::Context) {
     if app.collab.client.as_ref().is_some_and(Client::online) && crate::now_ms() - app.collab.last_update_check > 4.0 * 3600.0 * 1000.0 {
         app.collab.last_update_check = crate::now_ms();
         app.collab.send(crate::dex_ui::releases::check_msg(app));
-    }
-    if let Some(rx) = &app.collab.finding
-        && let Ok(found) = rx.try_recv()
-    {
-        app.collab.found = found;
-        app.collab.finding = None;
     }
     // A shared file waiting to be written needs a frame even when nobody touches the window.
     if app.collab.client.as_ref().is_some_and(|c| !c.online())
@@ -388,6 +511,13 @@ fn send_presence(app: &mut SheetApp) {
 
 fn handle(app: &mut SheetApp, e: Event) {
     match e {
+        Event::Pending { code, message } => {
+            if !matches!(app.collab.status, Status::Pending(_)) {
+                app.toast = Some((message, crate::now_ms()));
+            }
+            app.collab.status = Status::Pending(code);
+            app.collab.error = None;
+        }
         Event::Connected { me, users, server } => {
             app.collab.status = Status::Online;
             app.collab.me = Some(me);
@@ -628,12 +758,6 @@ fn message(app: &mut SheetApp, m: ServerMsg) {
         ServerMsg::Rules { book, rules } => crate::dex_ui::automation::on_rules(app, book, rules),
         ServerMsg::Template { info, xlsx, sha256 } => crate::dex_ui::templates::on_template(app, info, &xlsx, &sha256),
         ServerMsg::Ok { what } => {
-            if what == "Password changed."
-                && let Some(p) = app.collab.new_password_sent.take()
-                && let Some(c) = app.collab.client.as_mut()
-            {
-                c.config.password = p;
-            }
             app.toast = Some((what, crate::now_ms()));
         }
         ServerMsg::Error { message, book } => {
@@ -645,7 +769,8 @@ fn message(app: &mut SheetApp, m: ServerMsg) {
             }
             app.message = Some(("Dexterity Sheets".into(), message));
         }
-        ServerMsg::Challenge { .. } | ServerMsg::Welcome { .. } | ServerMsg::Pong => {}
+        // Administrators manage people and devices in the Server Manager.
+        ServerMsg::Challenge { .. } | ServerMsg::Welcome { .. } | ServerMsg::Pending { .. } | ServerMsg::Profiles { .. } | ServerMsg::Pong => {}
     }
 }
 
@@ -706,24 +831,34 @@ pub fn run_command(app: &mut SheetApp, id: &str, p: &Json) -> Option<Result<Json
             Some(u) => crate::dex_ui::releases::request_install(app, &u.version).map(|()| Json::Null),
             None => Err("No update is available.".into()),
         },
-        // Scriptable sign-in, for tests and the control channel.
-        "collab.signIn" => {
-            let s = |k: &str| p.get(k).and_then(Json::as_str).unwrap_or("").to_string();
-            app.collab.form_server = s("server");
-            app.collab.form_user = s("user");
-            app.collab.form_password = s("password");
-            app.collab.form_loaded = true;
+        // Connects to the office server as this PC's Windows account: {server?} (otherwise the
+        // remembered one, or the only one on the network). For the control channel and tests.
+        "collab.connect" => {
+            let server = p.get("server").and_then(Json::as_str).map(str::to_string).unwrap_or_else(|| load_remembered().server);
             let ctx = app.collab_ctx.clone();
             match ctx {
                 Some(ctx) => {
-                    sign_in(&mut app.collab, &ctx);
-                    match app.collab.error.clone() {
-                        Some(e) => Err(e),
-                        None => Ok(json!({"status": "connecting"})),
+                    if server.trim().is_empty() {
+                        app.collab.auto_pick = true;
+                        load_identity(&mut app.collab);
+                        start_finding(&mut app.collab);
+                        Ok(json!({"status": "looking"}))
+                    } else {
+                        app.collab.client = None;
+                        connect(&mut app.collab, &ctx, &server);
+                        match app.collab.error.clone() {
+                            Some(e) => Err(e),
+                            None => Ok(json!({"status": if app.collab.identity.is_some() { "connecting" } else { "preparing" }})),
+                        }
                     }
                 }
                 None => Err("the window is not ready yet".into()),
             }
+        }
+        // The name others see: {display}.
+        "collab.setDisplay" => {
+            let shown = p.get("display").and_then(Json::as_str).unwrap_or("").trim().to_string();
+            set_display(app, &shown).map(|()| json!({"display": shown}))
         }
         "collab.signOut" => {
             sign_out(app);
@@ -770,6 +905,8 @@ pub fn run_command(app: &mut SheetApp, id: &str, p: &Json) -> Option<Result<Json
             Ok(json!({
                 "status": format!("{:?}", c.status),
                 "me": c.me.as_ref().map(|m| m.user.clone()),
+                "account": c.identity.as_ref().map(|i| i.account.clone()),
+                "device": c.identity.as_ref().map(|i| i.code.clone()),
                 "books": c.books.iter().map(|b| json!({"name": b.name, "id": b.id, "openBy": b.open_by, "file": b.source.as_ref().map(|s| s.path.clone())})).collect::<Vec<_>>(),
                 "docs": docs,
                 "sharing": c.joining.iter().map(|j| j.name.clone()).collect::<Vec<_>>(),
@@ -835,11 +972,11 @@ fn share_active(app: &mut SheetApp, name: Option<&str>) -> Result<Json, String> 
     app.settle_drafts()?;
     let uid = app.session.active().ok_or("no workbook open")?.uid;
     if !app.collab.signed_in() {
-        // Sign in first; the workbook is shared right after.
+        // Connect first; the workbook is shared right after.
         app.collab.share_after_sign_in = Some(uid);
         app.open_backstage(crate::backstage::Page::Shared);
-        app.toast = Some(("Sign in to the office server: the workbook is shared as soon as you are in.".into(), crate::now_ms()));
-        return Ok(json!({"after": "signIn"}));
+        app.toast = Some(("Connecting to the office server: the workbook is shared as soon as you are in.".into(), crate::now_ms()));
+        return Ok(json!({"after": "connect"}));
     }
     share_doc(app, uid, name)
 }
@@ -1425,27 +1562,50 @@ fn stop_sharing(app: &mut SheetApp) -> Result<Json, String> {
 pub fn shared_page(app: &mut SheetApp, ui: &mut Ui, close: &mut bool) {
     let t = Tokens::get(ui.ctx());
     if !app.collab.form_loaded {
-        let r = load_remembered();
-        app.collab.form_server = r.server;
-        app.collab.form_user = r.user;
+        app.collab.form_server = load_remembered().server;
         app.collab.form_loaded = true;
-        start_finding(&mut app.collab);
+        load_identity(&mut app.collab);
+        if app.collab.client.is_none() && app.collab.finding.is_none() && app.collab.found.is_empty() {
+            start_finding(&mut app.collab);
+        }
     }
     if let Some(err) = app.collab.error.clone() {
         ui.label(RichText::new(err).color(t.danger));
         ui.add_space(8.0);
     }
-    match (&app.collab.status, app.collab.me.clone()) {
-        (Status::SignedOut, _) => sign_in_form(app, ui, &t),
+    match (app.collab.status.clone(), app.collab.me.clone()) {
+        (Status::SignedOut, _) => server_picker(app, ui, &t),
         (Status::Connecting, _) => {
             ui.horizontal(|ui| {
                 ui.spinner();
-                ui.label(format!("Signing in to {}…", app.collab.client.as_ref().map(|c| c.config.server.clone()).unwrap_or_default()));
+                let who = app.collab.identity.as_ref().map(|i| format!(" as {} ({})", i.display, i.account)).unwrap_or_default();
+                ui.label(format!("Connecting to {}{who}…", app.collab.client.as_ref().map(|c| c.config.server.clone()).unwrap_or_default()));
             });
             if ui.button("Cancel").clicked() {
                 app.collab.client = None;
                 app.collab.status = Status::SignedOut;
             }
+        }
+        (Status::Pending(code), _) => {
+            ui.label(RichText::new(format!("Waiting for an administrator to approve this PC — device code {code}")).font(theme::ui_bold(15.0)));
+            ui.add_space(6.0);
+            ui.label(
+                RichText::new(
+                    "You have used the office server from another PC before, so this one needs approval. Tell your administrator the device code above; they approve it in the Server Manager (People and devices). This window connects by itself once it is approved.",
+                )
+                .color(t.text_dim),
+            );
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                ui.spinner();
+                ui.label(RichText::new("Asking again every few seconds…").color(t.text_dim).small());
+            });
+            ui.add_space(10.0);
+            if ui.button("Change server").clicked() {
+                change_server(app);
+            }
+            ui.add_space(14.0);
+            account_section(app, ui, &t);
         }
         (_, Some(me)) => books_list(app, ui, &t, &me, close),
         (_, None) => {
@@ -1462,11 +1622,14 @@ fn start_finding(c: &mut Collab) {
     });
 }
 
-fn sign_in_form(app: &mut SheetApp, ui: &mut Ui, t: &Tokens) {
+/// Not connected: the servers on the network, one click each, or one typed in. No user name or
+/// password: everyone connects as their Windows account.
+fn server_picker(app: &mut SheetApp, ui: &mut Ui, t: &Tokens) {
     ui.label(RichText::new("Share any workbook with your team, wherever it is saved, and edit it together live. A file you share keeps everyone's edits; the office server also keeps every change with the name and time, so you can always see who changed what.").color(t.text_dim));
     ui.add_space(14.0);
+    let ctx = ui.ctx().clone();
     let c = &mut app.collab;
-    ui.label(RichText::new("Servers on this network").font(theme::ui_bold(13.5)));
+    ui.label(RichText::new("Office servers on this network").font(theme::ui_bold(13.5)));
     ui.horizontal(|ui| {
         if c.finding.is_some() {
             ui.spinner();
@@ -1478,38 +1641,111 @@ fn sign_in_form(app: &mut SheetApp, ui: &mut Ui, t: &Tokens) {
             start_finding(c);
         }
     });
+    let mut go: Option<String> = None;
     for f in c.found.clone() {
-        let picked = c.form_server == f.address;
-        if ui.selectable_label(picked, format!("{}   ({})", f.name, f.address)).clicked() {
-            c.form_server = f.address.clone();
-        }
+        ui.horizontal(|ui| {
+            if ui.add(egui::Button::new(RichText::new("Connect").color(t.on_accent)).fill(t.accent)).clicked() {
+                go = Some(f.address.clone());
+            }
+            ui.label(RichText::new(&f.name).strong());
+            ui.label(RichText::new(&f.address).color(t.text_dim));
+        });
     }
     ui.add_space(10.0);
-    let mut submit = false;
-    egui::Grid::new("collab_signin").num_columns(2).spacing(vec2(14.0, 8.0)).show(ui, |ui| {
+    ui.horizontal(|ui| {
         ui.label("Server");
-        ui.add(egui::TextEdit::singleline(&mut c.form_server).hint_text("computer name or IP, e.g. DDS-SERVER").desired_width(280.0));
-        ui.end_row();
-        ui.label("User name");
-        ui.add(egui::TextEdit::singleline(&mut c.form_user).desired_width(280.0));
-        ui.end_row();
-        ui.label("Password");
-        let r = ui.add(egui::TextEdit::singleline(&mut c.form_password).password(true).desired_width(280.0));
-        if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-            submit = true;
+        let r = ui.add(egui::TextEdit::singleline(&mut c.form_server).hint_text("computer name or IP, e.g. DDS-SERVER").desired_width(260.0));
+        let enter = r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+        if (ui.button("Connect").clicked() || enter) && !c.form_server.trim().is_empty() {
+            go = Some(c.form_server.trim().to_string());
         }
+    });
+    if let Some(server) = go {
+        connect(c, &ctx, &server);
+    }
+    ui.add_space(12.0);
+    match (&c.identity, &c.identity_rx) {
+        (Some(me), _) => {
+            ui.label(
+                RichText::new(format!("You connect as {} ({}), from this PC (device code {}).", me.display, me.account, me.code))
+                    .color(t.text_dim)
+                    .small(),
+            );
+        }
+        (None, Some(_)) => {
+            ui.horizontal(|ui| {
+                ui.spinner();
+                ui.label(RichText::new("Getting this PC ready…").color(t.text_dim).small());
+            });
+        }
+        (None, None) => {}
+    }
+    ui.label(
+        RichText::new("There are no accounts or passwords: you connect with your Windows account. Your first PC is trusted at once; another PC waits for an administrator to approve it.")
+            .color(t.text_dim)
+            .small(),
+    );
+}
+
+/// The Windows account, this PC's device code and the name others see (which the person may
+/// change).
+fn account_section(app: &mut SheetApp, ui: &mut Ui, t: &Tokens) {
+    let Some(me) = app.collab.identity.clone() else { return };
+    ui.label(RichText::new("You").font(theme::ui_bold(13.5)));
+    egui::Grid::new("collab_me").num_columns(2).spacing(vec2(14.0, 6.0)).show(ui, |ui| {
+        ui.label("Windows account");
+        ui.label(&me.account);
+        ui.end_row();
+        ui.label("This PC's device code");
+        ui.label(RichText::new(&me.code).monospace().strong())
+            .on_hover_text("An administrator compares this code before approving a new PC in the Server Manager.");
+        ui.end_row();
+        ui.label("Name others see");
+        ui.horizontal(|ui| {
+            ui.add(egui::TextEdit::singleline(&mut app.collab.display_edit).desired_width(220.0));
+            let changed = app.collab.display_edit.trim() != me.display && !app.collab.display_edit.trim().is_empty();
+            if ui.add_enabled(changed, egui::Button::new("Save")).on_disabled_hover_text("Type a different name first.").clicked() {
+                let shown = app.collab.display_edit.trim().to_string();
+                if let Err(e) = set_display(app, &shown) {
+                    app.collab.error = Some(e);
+                }
+            }
+        });
         ui.end_row();
     });
-    ui.add_space(10.0);
-    if ui.add(egui::Button::new(RichText::new("Sign in").color(t.on_accent)).fill(t.accent).min_size(vec2(110.0, 30.0))).clicked() {
-        submit = true;
+    if me.plain {
+        ui.label(
+            RichText::new("Windows data protection was not available, so this PC's device key is kept as a plain file in your own app-data folder.")
+                .color(t.text_dim)
+                .small(),
+        );
     }
-    if submit {
-        let ctx = ui.ctx().clone();
-        sign_in(c, &ctx);
+}
+
+/// Changes the name others see: remembered on this PC, and sent to the server when connected.
+fn set_display(app: &mut SheetApp, shown: &str) -> Result<(), String> {
+    let shown = shown.trim();
+    if shown.is_empty() || shown.chars().count() > 80 {
+        return Err("Type the name others should see (up to 80 characters).".into());
     }
-    ui.add_space(10.0);
-    ui.label(RichText::new("Accounts are created by your administrator on the server. There is no guest access.").color(t.text_dim).small());
+    let r = load_remembered();
+    save_remembered(&Remembered { server: r.server, display: shown.to_string() });
+    if let Some(i) = app.collab.identity.as_mut() {
+        i.display = shown.to_string();
+    }
+    app.collab.display_edit = shown.to_string();
+    if let Some(c) = app.collab.client.as_mut() {
+        c.config.display = shown.to_string();
+    }
+    if app.collab.signed_in() {
+        app.collab.send(ClientMsg::SetDisplay { display: shown.to_string() });
+        if let Some(m) = app.collab.me.as_mut() {
+            m.display = shown.to_string();
+        }
+    } else {
+        app.toast = Some((format!("Others will see you as {shown} from your next connection."), crate::now_ms()));
+    }
+    Ok(())
 }
 
 fn books_list(app: &mut SheetApp, ui: &mut Ui, t: &Tokens, me: &UserInfo, close: &mut bool) {
@@ -1521,13 +1757,14 @@ fn books_list(app: &mut SheetApp, ui: &mut Ui, t: &Tokens, me: &UserInfo, close:
             Role::Editor => "editor",
             Role::Viewer => "view only",
         };
-        ui.label(format!("Signed in as {} ({}) on {}", me.display, role, app.collab.server_name));
+        let account = app.collab.identity.as_ref().map_or_else(|| me.user.clone(), |i| i.account.clone());
+        ui.label(format!("Signed in as {} ({account}, {role}) on {}", me.display, app.collab.server_name));
         if let Status::Reconnecting(why) = &app.collab.status {
             ui.label(RichText::new(format!("— reconnecting ({why})")).color(t.danger));
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if ui.button("Sign out").clicked() {
-                sign_out(app);
+            if ui.button("Change server").on_hover_text("Disconnect and pick another office server").clicked() {
+                change_server(app);
             }
             if ui.button("Refresh").clicked() {
                 app.collab.send(ClientMsg::ListBooks);
@@ -1640,37 +1877,7 @@ fn books_list(app: &mut SheetApp, ui: &mut Ui, t: &Tokens, me: &UserInfo, close:
         });
     }
     ui.add_space(22.0);
-    ui.collapsing("Change my password", |ui| {
-        ui.horizontal(|ui| {
-            ui.add(egui::TextEdit::singleline(&mut app.collab.old_password).password(true).hint_text("current password").desired_width(180.0));
-            ui.add(
-                egui::TextEdit::singleline(&mut app.collab.new_password)
-                    .password(true)
-                    .hint_text("new password (6+ characters)")
-                    .desired_width(220.0),
-            );
-            let ready = !app.collab.old_password.is_empty() && app.collab.new_password.chars().count() >= 6;
-            if ui
-                .add_enabled(ready, egui::Button::new("Change"))
-                .on_disabled_hover_text("Type your current password and a new one of 6+ characters.")
-                .clicked()
-            {
-                let old = std::mem::take(&mut app.collab.old_password);
-                let p = std::mem::take(&mut app.collab.new_password);
-                // The current password is proved over this connection's login challenge, as
-                // at sign-in: it never crosses the network itself.
-                match app.collab.client.as_ref().and_then(|c| c.proof(&old)) {
-                    Some(old_proof) => {
-                        if app.collab.try_send(ClientMsg::ChangePassword { old_proof, new_password: p.clone() }) {
-                            app.collab.new_password_sent = Some(p);
-                            app.toast = Some(("Changing the password…".into(), crate::now_ms()));
-                        }
-                    }
-                    None => app.collab.error = Some("Not connected to the office server: the password was not changed.".into()),
-                }
-            }
-        });
-    });
+    account_section(app, ui, t);
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1768,7 +1975,7 @@ pub fn status(app: &mut SheetApp, ui: &mut Ui, t: &Tokens) {
         SyncState::Uploading(n) => (amber, format!("Shared · saving {n} edit(s)…")),
         SyncState::Offline(n) => (t.danger, format!("Offline · {n} edit(s) not on the server yet")),
         SyncState::Reloading => (t.danger, "Shared · out of step, reloading from the server…".to_string()),
-        SyncState::SignedOut(n) => (t.danger, format!("Not signed in · {n} edit(s) not on the server")),
+        SyncState::SignedOut(n) => (t.danger, format!("Not connected · {n} edit(s) not on the server")),
     };
     ui.add(egui::Label::new(small("●".into(), dot)).selectable(false));
     ui.add(egui::Label::new(small(text, t.text_dim)).selectable(false));
@@ -2140,7 +2347,7 @@ pub fn update_badge(app: &mut SheetApp, ui: &mut Ui, t: &Tokens) {
                         "Office server: asking..."
                     }
                 } else {
-                    "Office server: not signed in (File › Shared)."
+                    "Office server: not connected (File › Shared)."
                 };
                 ui.label(server);
                 let rt = &app.updates_rt;
