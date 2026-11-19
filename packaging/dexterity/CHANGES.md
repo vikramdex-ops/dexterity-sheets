@@ -9,6 +9,8 @@ its newest changes); the release notes on GitHub list every one of them with its
 
 ## Unreleased
 
+## 1.6.7 · 19 November 2026
+
 - More fixes and improvements from official GridCraft (still GridCraft 0.19.1): 23 changes, the newest below. The release notes on GitHub list them all.
 - From GridCraft: Drag a selected chart's data outline to change its range (#4389, #4390)
 - From GridCraft: XLSX: read, evaluate and write Excel 2010 conditional formats

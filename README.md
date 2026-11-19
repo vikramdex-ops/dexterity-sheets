@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <sub><!-- dex:release -->Version <b>1.6.6</b> · 18 November 2026 · based on GridCraft 0.19.1<!-- /dex:release --> · Windows 10 and 11 · no administrator rights needed · updates itself</sub>
+  <sub><!-- dex:release -->Version <b>1.6.7</b> · 19 November 2026 · based on GridCraft 0.19.1<!-- /dex:release --> · Windows 10 and 11 · no administrator rights needed · updates itself</sub>
 </p>
 
 <p align="center">
@@ -104,12 +104,14 @@
 ## What's new
 
 <!-- dex:whatsnew -->
-- More fixes and improvements from official GridCraft (still GridCraft 0.19.1): 3 changes, the newest below. The release notes on GitHub list them all.
-- From GridCraft: Fuzzer: undo checks follow the bounded undo history
-- From GridCraft: Flush a saved workbook to disk before replacing the old one
-- From GridCraft: Sort: Custom Sort dialog redesign
+- More fixes and improvements from official GridCraft (still GridCraft 0.19.1): 23 changes, the newest below. The release notes on GitHub list them all.
+- From GridCraft: Drag a selected chart's data outline to change its range (#4389, #4390)
+- From GridCraft: XLSX: read, evaluate and write Excel 2010 conditional formats
+- From GridCraft: RATE follows Excel's iteration
+- From GridCraft: Fix main's build and tests after the recent merges
+- From GridCraft: xtask: `parity --check` accepts a CRLF checkout of the checklist
 
-[Everything in 1.6.6](https://github.com/vikramdex-ops/dexterity-sheets/releases/tag/v1.6.6).
+[Everything in 1.6.7](https://github.com/vikramdex-ops/dexterity-sheets/releases/tag/v1.6.7) and 3 more.
 <!-- /dex:whatsnew -->
 
 Dexterity Sheets is built on the open-source [GridCraft](https://github.com/storytold/gridcraft)
