@@ -29,7 +29,7 @@ Draw tab's pen strokes, and printing to a real printer.
 | Data ▸ Data Validation ▸ Circle Invalid Data | run on a sheet with invalid values | **dead**: the command found the cells but nothing was drawn | `07a0f893`: red circles drawn, cleared when the value is corrected; Clear Validation Circles added |
 | Formulas ▸ Formula Auditing ▸ Remove Arrows | menu | only "remove all"; Excel's precedent / dependent variants missing | `07a0f893`: split button with all three |
 | Data ▸ Outline | buttons | Auto Outline and Clear Outline reserved but missing | `07a0f893` |
-| View ▸ Show | buttons | Focus Cell missing | `07a0f893` |
+| View ▸ Show | buttons | Focus Cell missing | `07a0f893`; replaced by Highlight Row/Column (also in the status bar, Ctrl+Alt+H) |
 | Command search (title bar, Automate) and Alt, Q | opened from the key tip | the Q key tip was reserved, silent | `40e3b3d9`: opens the search |
 | Conditional Formatting from the command search or a key tip | run with no rule | **dead**: the engine asked for a "newFormattingRule" dialog the UI did not have | `1f780550`: opens New Formatting Rule |
 | Conditional Formatting Rules Manager | dialog | could only reorder and delete; no way to add a rule from it | `1f780550`: New Rule… button (Edit Rule: see "Left") |

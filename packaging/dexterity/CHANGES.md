@@ -9,6 +9,8 @@ its newest changes); the release notes on GitHub list every one of them with its
 
 ## Unreleased
 
+- **Highlight Row/Column** replaces Focus Cell and the Options row highlight: one button at the bottom right of the status bar (by the zoom), View › Highlight on the ribbon or Ctrl+Alt+H turns it on; its popover picks None, Blue, Green, Yellow, Orange, Pink, Purple or Grey and Row, Column or Both. A selection highlights all its rows and columns, the headers show it more strongly, cell fills stay visible through it, it works with frozen panes and while typing, and it is remembered for you. When co-editing, a tick shows each teammate's row and column faintly in their colour.
+
 ## 1.6.0 · 12 November 2026
 
 - **Now built on GridCraft 0.19.1** (was 0.18.0): 16 changes from official GridCraft are in this version. The newest are below; the release notes on GitHub list them all.
