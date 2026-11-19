@@ -70,6 +70,17 @@ Nothing in it needs an AI service, an API key or any secret.
      markers back and the sync stops;
    - a file Dexterity changed that upstream removed or moved, a file we deleted that is on no
      list, a binary both sides changed: the sync stops.
+   - **the whole-tree ledger**: after the merge, every significant line Dexterity ever added to a
+     file official GridCraft owns (the diff from `GRIDCRAFT_COMMIT` to our `main`, about a
+     thousand lines in some seventy files) must still be in that file, including files git merged
+     cleanly. A line that carried a hook counts as kept when its marker is there. A missing line
+     stops the sync (`LOST <file>`). When upstream now does the same thing itself and our line is
+     no longer wanted, a person lists it in `packaging/dexterity/overlay-retired.txt` as
+     `path: line` and the sync continues.
+   Every file Dexterity adds must match `OURS` in `sync_upstream.py` (any `dex_*.rs` or `dex/`
+   file does); `check_overlay.py` fails CI when one does not. `crates/ui-egui/tests/it/dex_features.rs`
+   runs every Dexterity command through the real window, so a hook that is still in the text but
+   no longer reached also fails CI. Add each new Dexterity command there in the same change.
    Then `cargo fmt`, `check_overlay.py` (every hook present, nothing forbidden back), new
    user-visible "GridCraft" text outside the rebranded files → a `branding` issue to review.
    `GRIDCRAFT_COMMIT` / `GRIDCRAFT_RELEASE` are written, `CHANGES.md` gets what came from

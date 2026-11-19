@@ -103,6 +103,12 @@ OURS = [
     "crates/ui-egui/src/updates_ui.rs",
     "docs/images/*",
     ".gitattributes",
+    "apps/gridcraft/src/regional.rs",
+    "crates/core/src/locale.rs",
+    "crates/ui-egui/tests/it/dex_*.rs",
+    # Any file named for Dexterity is ours wherever it sits.
+    "*/dex_*.rs",
+    "*/dex/*",
 ]
 DELETED_BY_US = [
     ".github/workflows/*",
@@ -342,6 +348,62 @@ def lost_lines(path, check):
     gone = [f"missing: {l}" for l, n in check["added"].items() if final.get(l, 0) < n and not any(m in l for m in placed)]
     back = [f"back again: {l}" for l, n in check["removed"].items() if final.get(l, 0) > n]
     return gone + back
+
+
+RETIRED = f"{HERE}/overlay-retired.txt"
+
+
+def retired_lines():
+    """`path: line` pairs a person confirmed may go (upstream now does the same thing itself)."""
+    out = set()
+    if os.path.exists(RETIRED):
+        for raw in read(RETIRED).splitlines():
+            if raw.strip() and not raw.lstrip().startswith("#") and ": " in raw:
+                path, line = raw.split(": ", 1)
+                out.add((path.strip(), norm(line)))
+    return out
+
+
+def overlay_ledger(base, ours):
+    """Every significant line Dexterity added (`base` = the GridCraft commit, `ours` = our main)
+    to a file official GridCraft owns, with how often it stood in our copy of the file."""
+    ledger = {}
+    for path in git("diff", "--name-only", "--diff-filter=M", base, ours).splitlines():
+        if matches(path, OURS) or matches(path, DELETED_BY_US) or matches(path, UPSTREAM_DOCS) or path in GENERATED or path == "Cargo.lock":
+            continue
+        diff = run(["git", "diff", "-U0", "--no-color", base, ours, "--", path]).stdout
+        added = {norm(l[1:]) for l in diff.splitlines() if l.startswith("+") and not l.startswith("+++") and significant(l[1:])}
+        if not added:
+            continue
+        old = run(["git", "show", f"{base}:{path}"]).stdout.splitlines()
+        if rebranded(path):
+            # A rebranded upstream line comes back by itself in upstream's newest wording.
+            added -= {norm(rebrand(l + "\n")) for l in old}
+        mine = count_lines(run(["git", "show", f"{ours}:{path}"]).stdout)
+        if added:
+            ledger[path] = {l: mine.get(l, 0) for l in added}
+    return ledger
+
+
+def overlay_losses(base, ours):
+    """Ledger lines missing from the merged working tree. A line that carried a hook counts as
+    kept when the hook's marker is in the file; a file upstream removed is reported elsewhere."""
+    retired = retired_lines()
+    lost = {}
+    for path, lines in overlay_ledger(base, ours).items():
+        if not os.path.exists(path):
+            continue
+        try:
+            text = read(path)
+        except (OSError, UnicodeDecodeError):
+            lost[path] = ["(the file cannot be read)"]
+            continue
+        final = count_lines(text)
+        placed = [m for m in hook_markers(path) if m in norm(text)]
+        gone = [f"missing: {l}" for l, n in lines.items() if l not in final and (path, l) not in retired and not any(m in l for m in placed)]
+        if gone:
+            lost[path] = gone
+    return lost
 
 
 def marked_files():
@@ -584,6 +646,12 @@ def finish(state, park, unresolved=()):
     hooks = run([sys.executable, f"{HERE}/check_overlay.py"])
     if hooks.returncode != 0:
         return stop(state, [l for l in hooks.stdout.splitlines() if l.startswith("OVERLAY:")], park)
+    # The conflict check above only sees lines in hunks git could not merge. A clean merge can
+    # still drop a Dexterity line (upstream deleted or rewrote the code around it), so every line
+    # Dexterity ever added to an upstream-owned file must still be in that file.
+    dropped = overlay_losses(previous, main_sha)
+    if dropped:
+        return stop(state, [f"LOST {p} ({len(l)} Dexterity line(s) a clean merge dropped; restore them or list them in {RETIRED})" for p, l in dropped.items()], park, dropped)
     old_release = gridcraft_release(previous, head) or cargo_version(previous)
     new_release = gridcraft_release(head, head) or cargo_version(head)
     version = read(f"{HERE}/VERSION").strip()

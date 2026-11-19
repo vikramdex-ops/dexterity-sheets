@@ -139,6 +139,27 @@ def unruled() -> int:
     return out.returncode
 
 
+def unprotected_files(root):
+    """Files Dexterity added that the sync does not know are ours. Upstream adding a file with the
+    same name later would be merged hunk by hunk, and a deletion upstream would stop nothing, so
+    every new file must match `OURS` in sync_upstream.py. Skipped (with a note) when git or the
+    recorded GridCraft commit is not available, e.g. a shallow CI checkout."""
+    import subprocess
+
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import sync_upstream  # noqa: E402
+
+    try:
+        base = open(os.path.join(root, "packaging/dexterity/GRIDCRAFT_COMMIT"), encoding="utf-8").read().strip()
+        r = subprocess.run(["git", "diff", "--name-only", "--diff-filter=A", base, "HEAD"], cwd=root, capture_output=True, text=True, encoding="utf-8")
+    except OSError:
+        r = None
+    if r is None or r.returncode != 0:
+        print("NOTE: new-file protection not checked (no git history for the recorded GridCraft commit)")
+        return []
+    return [f"{p}: added by Dexterity but not in OURS (sync_upstream.py); add it or a pattern that covers it" for p in r.stdout.split() if not sync_upstream.matches(p, sync_upstream.OURS)]
+
+
 def main() -> int:
     if "--unruled" in sys.argv:
         return unruled()
@@ -173,6 +194,7 @@ def main() -> int:
                 print(f"NOTE: upstream GridCraft now registers {i}; its version is used. Remove the Dexterity copy from cmd/dex.rs and dex_ui.rs.")
     except OSError:
         pass
+    missing += unprotected_files(root)
     for m in missing:
         print("OVERLAY:", m)
     if missing:
