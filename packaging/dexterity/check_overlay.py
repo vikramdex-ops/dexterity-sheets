@@ -68,6 +68,10 @@ HOOKS = [
     ("crates/ui-egui/src/{ribbon.rs,ribbon/*.rs}", '"data.clearValidationCircles"', "Data Validation menu: Clear Validation Circles"),
     ("crates/ui-egui/src/{ribbon.rs,ribbon/*.rs}", "crate::dex_ui::outline_buttons(app, ui);", "Data: Auto Outline and Clear Outline"),
     ("crates/ui-egui/src/{ribbon.rs,ribbon/*.rs}", "crate::dex_ui::focus_cell_button(app, ui);", "View: Focus Cell"),
+    # Highlight Row/Column (crates/ui-egui/src/dex_ui/highlight.rs): one setting, painted by us.
+    ("crates/ui-egui/src/{grid.rs,grid/*.rs}", "crate::dex_ui::highlight::upstream_row(app, sel.active.row)", "GridCraft's own row band gives way to Highlight Row/Column (no band painted twice)"),
+    ("crates/ui-egui/src/{grid.rs,grid/*.rs}", "crate::dex_ui::highlight::paint_headers(&painter, &geo, sh, app, &quads);", "Highlight Row/Column: the highlighted headers tinted stronger"),
+    ("crates/ui-egui/src/{tabs.rs,tabs/*.rs}", "crate::dex_ui::highlight::status_button(app, ui, &t);", "status bar: Highlight Row/Column button by the zoom controls"),
     ("crates/xlsx/src/fmla.rs", "pub(crate) struct TableNames", "bare table names written as Table[] (Excel reads a bare name as #NAME?)"),
     ("crates/xlsx/src/fmla.rs", "Expr::Name(n) => is_table(n)", "the formula writer's fast path still rewrites bare table names"),
     ("crates/xlsx/src/fmla.rs", "Expr::Name(s.table)", "Table[] reads back as the bare table name it was written from"),

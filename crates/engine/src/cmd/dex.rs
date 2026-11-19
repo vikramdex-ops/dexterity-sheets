@@ -29,15 +29,56 @@ pub struct DexState {
     /// The last top-level command that changed a workbook and can be repeated (F4 / Ctrl+Y),
     /// with the parameters that name where it ran removed, so it runs on the selection.
     pub repeat: Option<(String, Json)>,
-    /// View ▸ Focus Cell: the active cell's row and column are highlighted.
+    /// Highlight Row/Column (View ▸ Focus Cell, the status bar's highlight button): the active
+    /// cell's row and/or column (the selection's, for a range) are tinted.
     pub focus_cell: bool,
-    /// Focus Cell colour as `#RRGGBB`; `None` = the front end's default.
+    /// Highlight colour as `#RRGGBB`; `None` = the front end's default.
     pub focus_color: Option<String>,
+    /// What is highlighted: the row, the column or both.
+    pub focus_mode: FocusMode,
+    /// While co-editing, each teammate's row/column is tinted faintly in their presence colour.
+    pub focus_peers: bool,
     /// Data ▸ Circle Invalid Data: (document uid, sheet index, cell) for each circle.
     pub circles: Vec<(u64, usize, CellRef)>,
     /// How many times each command ran (ids only, never parameters), for the office server's
     /// feature-adoption report; the desktop app takes and resets it about once an hour.
     pub usage: std::collections::BTreeMap<String, u64>,
+}
+
+/// What Highlight Row/Column tints.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum FocusMode {
+    Row,
+    Column,
+    #[default]
+    Both,
+}
+
+impl FocusMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            FocusMode::Row => "row",
+            FocusMode::Column => "column",
+            FocusMode::Both => "both",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<FocusMode> {
+        match s.to_ascii_lowercase().as_str() {
+            "row" | "rows" => Some(FocusMode::Row),
+            "column" | "columns" | "col" => Some(FocusMode::Column),
+            "both" => Some(FocusMode::Both),
+            _ => None,
+        }
+    }
+
+    pub fn rows(self) -> bool {
+        self != FocusMode::Column
+    }
+
+    pub fn cols(self) -> bool {
+        self != FocusMode::Row
+    }
 }
 
 /// Parameters that say where a command ran. Repeat drops them so the command runs on the
@@ -136,7 +177,7 @@ pub fn specs() -> Vec<CommandSpec> {
         ),
         cmd!(noundo "formulas.removePrecedentArrows", "Remove Precedent Arrows", ["Formulas", "Formula Auditing", "Remove Arrows"], None, "{} → {removed: \"precedents\"}", has_doc, |_, _| Ok(json!({"removed": "precedents"}))),
         cmd!(noundo "formulas.removeDependentArrows", "Remove Dependent Arrows", ["Formulas", "Formula Auditing", "Remove Arrows"], None, "{} → {removed: \"dependents\"}", has_doc, |_, _| Ok(json!({"removed": "dependents"}))),
-        cmd!(noundo "view.focusCell", "Focus Cell", ["View", "Show"], None, "{on?: bool (toggles without it), color?: \"#RRGGBB\"} → {on, color}", always, focus_cell),
+        cmd!(noundo "view.focusCell", "Highlight Row/Column (Focus Cell)", ["View", "Show"], None, "{on?: bool, color?: \"#RRGGBB\" (turns it on) | \"none\" (turns it off), mode?: row|column|both, peers?: bool} (toggles with none of them) → {on, color, mode, peers}", always, focus_cell),
         cmd!(
             query "file.recoverUnsaved",
             "Recover Unsaved Work",
@@ -231,18 +272,46 @@ fn clear_circles(s: &mut Session, _: &Json) -> Result<Json> {
 }
 
 fn focus_cell(s: &mut Session, p: &Json) -> Result<Json> {
-    if let Some(c) = str_param(p, "color") {
-        let hex = c.trim_start_matches('#');
-        if hex.len() != 6 || !hex.chars().all(|ch| ch.is_ascii_hexdigit()) {
-            return Err(bad("view.focusCell", "color must be #RRGGBB"));
+    // Validate everything before changing anything.
+    let mode = match str_param(p, "mode") {
+        Some(m) => Some(FocusMode::parse(m).ok_or_else(|| bad("view.focusCell", "mode must be row, column or both"))?),
+        None => None,
+    };
+    let color = match str_param(p, "color") {
+        Some(c) if c.eq_ignore_ascii_case("none") => Some(None),
+        Some(c) => {
+            let hex = c.trim_start_matches('#');
+            if hex.len() != 6 || !hex.chars().all(|ch| ch.is_ascii_hexdigit()) {
+                return Err(bad("view.focusCell", "color must be #RRGGBB or none"));
+            }
+            Some(Some(format!("#{}", hex.to_ascii_uppercase())))
         }
-        s.dex.focus_color = Some(format!("#{}", hex.to_ascii_uppercase()));
-        // Picking a colour turns the highlight on, as in Excel's colour menu.
-        s.dex.focus_cell = bool_param(p, "on").unwrap_or(true);
-    } else {
-        s.dex.focus_cell = bool_param(p, "on").unwrap_or(!s.dex.focus_cell);
+        None => None,
+    };
+    let on = bool_param(p, "on");
+    let peers = bool_param(p, "peers");
+    if let Some(m) = mode {
+        s.dex.focus_mode = m;
     }
-    Ok(json!({"on": s.dex.focus_cell, "color": s.dex.focus_color}))
+    if let Some(v) = peers {
+        s.dex.focus_peers = v;
+    }
+    match color {
+        // Picking a colour turns the highlight on, as in Excel's colour menu; "none" turns it off
+        // and keeps the colour for next time.
+        Some(Some(hex)) => {
+            s.dex.focus_color = Some(hex);
+            s.dex.focus_cell = on.unwrap_or(true);
+        }
+        Some(None) => s.dex.focus_cell = on.unwrap_or(false),
+        None => match on {
+            Some(v) => s.dex.focus_cell = v,
+            // Only a bare call toggles: setting the mode or the teammates option leaves it as is.
+            None if mode.is_none() && peers.is_none() => s.dex.focus_cell = !s.dex.focus_cell,
+            None => {}
+        },
+    }
+    Ok(json!({"on": s.dex.focus_cell, "color": s.dex.focus_color, "mode": s.dex.focus_mode.as_str(), "peers": s.dex.focus_peers}))
 }
 
 /// The list itself lives in the app window (the Edit History pane, fed by the office server);
@@ -462,8 +531,15 @@ mod tests {
         assert_eq!(s.execute("view.focusCell", json!({})).unwrap()["on"], true);
         assert_eq!(s.execute("view.focusCell", json!({})).unwrap()["on"], false);
         let r = s.execute("view.focusCell", json!({"color": "#ffcc00"})).unwrap();
-        assert_eq!(r, json!({"on": true, "color": "#FFCC00"}));
+        assert_eq!(r, json!({"on": true, "color": "#FFCC00", "mode": "both", "peers": false}));
         assert!(s.execute("view.focusCell", json!({"color": "yellow"})).is_err());
+        assert!(s.execute("view.focusCell", json!({"mode": "diagonal"})).is_err());
+        // Mode and the teammates option leave it on; "none" turns it off and keeps the colour.
+        let r = s.execute("view.focusCell", json!({"mode": "row", "peers": true})).unwrap();
+        assert_eq!(r, json!({"on": true, "color": "#FFCC00", "mode": "row", "peers": true}));
+        let r = s.execute("view.focusCell", json!({"color": "none"})).unwrap();
+        assert_eq!(r["on"], false);
+        assert_eq!(r["color"], "#FFCC00");
     }
 
     #[test]

@@ -382,6 +382,26 @@ insert(
     "    ui.add_space(6.0);\n    crate::dex_ui::focus_cell_button(app, ui);\n",
 )
 
+# ---- Highlight Row/Column (dex_ui/highlight.rs) ------------------------------------------------
+replace(
+    f"{UI}/grid/show.rs",
+    "        let active_row = app.ui.highlight_active_row.then_some(sel.active.row);\n        paint_quadrant(QuadrantPaint {\n",
+    "        let active_row = crate::dex_ui::highlight::upstream_row(app, sel.active.row);\n        paint_quadrant(QuadrantPaint {\n",
+)
+insert(
+    f"{UI}/grid/show.rs",
+    "crate::dex_ui::highlight::paint_headers(",
+    "        paint_headers(&painter, &geo, sh, &sel, &t, &quads, &headings);\n",
+    "        crate::dex_ui::highlight::paint_headers(&painter, &geo, sh, app, &quads);\n",
+)
+insert(
+    f"{UI}/tabs.rs",
+    "crate::dex_ui::highlight::status_button(",
+    "                    for (icon, tip, mode, cmd) in [\n",
+    "                    crate::dex_ui::highlight::status_button(app, ui, &t);\n",
+    after=False,
+)
+
 # ---- UI test: File › Account shows Dexterity Sheets' own version -------------------------------
 replace(
     "crates/ui-egui/tests/it/file_menu.rs",

@@ -91,6 +91,8 @@ pub struct Collab {
     pub templates: crate::dex_ui::templates::Templates,
     /// Automation rules of the shared workbook (`dex_ui::automation`).
     pub automation: crate::dex_ui::automation::Automation,
+    /// Highlight Row/Column's remembered setting (`dex_ui::highlight`).
+    pub highlight: crate::dex_ui::highlight::Highlight,
     pub client: Option<Client>,
     pub status: Status,
     pub me: Option<UserInfo>,
@@ -422,6 +424,7 @@ pub fn tick(app: &mut SheetApp, ctx: &egui::Context) {
     crate::dex_ui::recovery::tick(app);
     crate::dex_ui::releases::tick(app);
     crate::dex_ui::share::tick(app);
+    crate::dex_ui::highlight::tick(app, ctx);
     crate::dex_ui::mention::publish(app, ctx);
     start_up(app, ctx);
     if app.collab.client.is_none() && app.collab.docs.is_empty() {
@@ -1887,6 +1890,11 @@ pub fn paint_peers(p: &Painter, geo: &Geo, sh: &Sheet, app: &SheetApp, rows: (u3
     let Some(sd) = active_shared(app) else { return };
     let me = app.collab.client.as_ref().map(|c| c.instance.clone());
     let _ = me;
+    // Teammates' row/column bands first (Highlight Row/Column's option), under every outline.
+    for peer in sd.peers.iter().filter(|peer| peer.sheet == sh.name) {
+        let ranges: Vec<RangeRef> = peer.range.split(',').filter_map(|part| RangeRef::parse(part.trim())).collect();
+        crate::dex_ui::highlight::paint_peer(p, geo, sh, app, &ranges, color(peer.color), rows, cols);
+    }
     for peer in &sd.peers {
         if peer.sheet != sh.name {
             continue;

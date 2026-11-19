@@ -127,7 +127,7 @@ is used.
 |---|---|---|---|---|
 | Ribbon (11 tabs plus contextual tabs), backstage, task panes, key tips | present | `cargo xtask parity`; `crates/ui-egui/src/ribbon/` | — | |
 | Search / Tell Me box (Alt+Q) | partial | `crates/ui-egui/src/dialogs/command_search.rs`; `keytip_table/generated.rs:373` (`ui.search` reserved) | **H** (finding a command by name is how people cope with an unfamiliar ribbon) | `40e3b3d9`: Alt, Q opens it; fuzzy matching arrives with upstream PR #1339 |
-| Focus Cell (View ▸ Focus Cell, Excel Dec 2024) | present | `keytip_table/generated.rs:354` reserved | M | added `07a0f893` |
+| Focus Cell (View ▸ Focus Cell, Excel Dec 2024) | present | `keytip_table/generated.rs:354` reserved | M | added `07a0f893`; now Highlight Row/Column (status bar button, View › Highlight, Ctrl+Alt+H; row / column / both, eight colours, remembered per user; `dex_ui/highlight.rs`) |
 | Formulas ▸ Remove Arrows ▸ Remove Precedent / Dependent Arrows | present | `formulas.removeArrows` present; `keytip_table/generated.rs:226` reserved | M | added `07a0f893` |
 | Fill ▸ Across Worksheets, grouped sheets | missing | `keytip_table/generated.rs:82` | L | |
 | Select Objects pointer, Navigation pane, Reset Window Position | missing | `keytip_table/generated.rs:75`, `:354`… | L | |
