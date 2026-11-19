@@ -9,6 +9,16 @@ its newest changes); the release notes on GitHub list every one of them with its
 
 ## Unreleased
 
+- More fixes and improvements from official GridCraft (still GridCraft 0.19.1): 23 changes, the newest below. The release notes on GitHub list them all.
+- From GridCraft: Drag a selected chart's data outline to change its range (#4389, #4390)
+- From GridCraft: XLSX: read, evaluate and write Excel 2010 conditional formats
+- From GridCraft: RATE follows Excel's iteration
+- From GridCraft: Fix main's build and tests after the recent merges
+- From GridCraft: xtask: `parity --check` accepts a CRLF checkout of the checklist
+- From GridCraft: xlsx/csv: cap secondary reader allocations
+- From GridCraft: Delete separate rows or columns in one pass
+- From GridCraft: Create new saved files without group/other write permission
+
 ## 1.6.6 · 18 November 2026
 
 - More fixes and improvements from official GridCraft (still GridCraft 0.19.1): 3 changes, the newest below. The release notes on GitHub list them all.
