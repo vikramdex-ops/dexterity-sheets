@@ -9,6 +9,14 @@ its newest changes); the release notes on GitHub list every one of them with its
 
 ## Unreleased
 
+- More fixes and improvements from official GridCraft (still GridCraft 0.19.1): 6 changes, the newest below. The release notes on GitHub list them all.
+- From GridCraft: Shapes: select, resize from every handle and rotate
+- From GridCraft: Wire craft-xls and craft-drawingml from craft-libs main
+- From GridCraft: Cut over xlsx omml to craft-math
+- From GridCraft: xlsx: fix main after the ODS cutover (clippy, empty first sheet, values, package checks)
+- From GridCraft: Find and Replace: Undo and Redo reach the sheet while the dialog is open
+- From GridCraft: Cut over gridcraft-xlsx ODS reader to craft-ods
+
 ## 1.6.7 · 19 November 2026
 
 - More fixes and improvements from official GridCraft (still GridCraft 0.19.1): 23 changes, the newest below. The release notes on GitHub list them all.
