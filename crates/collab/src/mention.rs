@@ -1,13 +1,15 @@
-//! @mentions in comments (Dexterity Sheets).
+//! @mentions in comments, notes and cell text (Dexterity Sheets).
 //!
-//! A comment or reply that names a colleague as `@Display Name` (or `@username`) tells that
-//! person: the server finds mentions new in an edit ([`new_mentions`]) and sends each person a
+//! A comment, reply, note or the text typed in a cell that names a colleague as `@Display Name`
+//! (or `@username`) tells that person: the server finds mentions new in an edit
+//! ([`new_mentions`]) and sends each person a
 //! notification that opens the workbook at the comment. The app suggests people while `@` is
 //! typed ([`typing`], [`suggestions`]). Mentions are plain text, so they survive saving as .xlsx
 //! and read the same in Excel.
 
 use std::collections::HashMap;
 
+use gridcraft_engine::core::{CellRef, Value};
 use gridcraft_engine::model::{Comment, Workbook};
 
 use crate::patch::{Slot, WbPatch};
@@ -68,6 +70,8 @@ pub struct Mention {
     pub quote: String,
     /// User names, in the order they appear.
     pub users: Vec<String>,
+    /// `comment`, `note` or `cell` (text typed in the cell itself).
+    pub source: &'static str,
 }
 
 /// The mentions `patch` adds, comparing the workbook before and after it. Only comments and
@@ -78,7 +82,26 @@ pub struct Mention {
 pub fn new_mentions(before: &Workbook, after: &Workbook, patch: &WbPatch, people: &[Person]) -> Vec<Mention> {
     let mut out = Vec::new();
     for sp in &patch.sheets {
-        if !sp.fields.contains_key("comments") && !sp.keyed.contains_key("comments") {
+        let comments = sp.fields.contains_key("comments") || sp.keyed.contains_key("comments");
+        // Cells whose new text names someone (formulas never mention anyone).
+        let typed: Vec<(CellRef, String, Vec<String>)> = sp
+            .cells
+            .iter()
+            .filter_map(|ch| {
+                let d = ch.cell.as_ref()?;
+                if d.f.is_some() {
+                    return None;
+                }
+                let Value::Text(t) = &d.v else { return None };
+                let t = t.to_string();
+                if !t.contains('@') {
+                    return None;
+                }
+                let who = mentioned(&t, people);
+                (!who.is_empty()).then(|| (CellRef::new(ch.r, ch.c), t, who))
+            })
+            .collect();
+        if !comments && typed.is_empty() {
             continue;
         }
         let was_named = match &patch.structure {
@@ -92,6 +115,36 @@ pub fn new_mentions(before: &Workbook, after: &Workbook, patch: &WbPatch, people
         let (Some(old), Some(new)) = (before.sheets.iter().find(|s| s.name == was_named), after.sheets.iter().find(|s| s.name == sp.name)) else {
             continue;
         };
+        if !typed.is_empty() {
+            // Every text with an `@` the sheet's cells held before, so a cell that only moved
+            // (rows inserted above it) or was copied tells nobody again.
+            let mut had: HashMap<String, usize> = HashMap::new();
+            for (_, c) in old.cells.iter() {
+                if let Value::Text(t) = &c.value
+                    && t.contains('@')
+                {
+                    *had.entry(t.to_string()).or_default() += 1;
+                }
+            }
+            for (at, t, who) in typed {
+                let before_here = old.cells.get(at).and_then(|c| if let Value::Text(p) = &c.value { Some(p.to_string()) } else { None });
+                if before_here.as_deref() == Some(t.as_str()) {
+                    continue;
+                }
+                if let Some(n) = had.get_mut(&t).filter(|n| **n > 0) {
+                    *n -= 1;
+                    continue;
+                }
+                let already = before_here.map(|p| mentioned(&p, people)).unwrap_or_default();
+                let users: Vec<String> = who.into_iter().filter(|u| !already.contains(u)).collect();
+                if !users.is_empty() {
+                    out.push(Mention { sheet: sp.name.clone(), cell: at.a1(), quote: quote(&t), users, source: "cell" });
+                }
+            }
+        }
+        if !comments {
+            continue;
+        }
         // Every text the sheet's comments held before, so a comment that only moved is not new.
         let mut had: HashMap<&str, usize> = HashMap::new();
         for c in old.comments.values() {
@@ -109,7 +162,13 @@ pub fn new_mentions(before: &Workbook, after: &Workbook, patch: &WbPatch, people
                 let already = prior.and_then(|p| entries(p).nth(k)).map(|p| mentioned(p, people)).unwrap_or_default();
                 let users: Vec<String> = mentioned(t, people).into_iter().filter(|u| !already.contains(u)).collect();
                 if !users.is_empty() {
-                    out.push(Mention { sheet: sp.name.clone(), cell: at.a1(), quote: quote(t), users });
+                    out.push(Mention {
+                        sheet: sp.name.clone(),
+                        cell: at.a1(),
+                        quote: quote(t),
+                        users,
+                        source: if c.threaded { "comment" } else { "note" },
+                    });
                 }
             }
         }
@@ -267,6 +326,43 @@ mod tests {
         assert!(diff(&one, &moved).is_empty());
         // Resolving or deleting tells nobody.
         assert!(diff(&one, &empty).is_empty());
+    }
+
+    fn cells(texts: &[(&str, &str)]) -> Workbook {
+        let mut wb = Workbook::new();
+        if let Some(s) = wb.sheets.first_mut() {
+            let s = std::sync::Arc::make_mut(s);
+            for (at, t) in texts {
+                s.set_value(CellRef::parse(at).expect("cell"), Value::Text((*t).into()));
+            }
+        }
+        wb
+    }
+
+    #[test]
+    fn text_typed_in_a_cell_and_notes_mention_people_once() {
+        let empty = cells(&[]);
+        let typed = cells(&[("C3", "@Rahul to confirm the rating")]);
+        let m = diff(&empty, &typed);
+        assert_eq!(m.len(), 1, "{m:?}");
+        assert_eq!((m[0].cell.as_str(), m[0].source, m[0].users.clone()), ("C3", "cell", vec!["rahul".to_string()]));
+        // The same text moved down (rows inserted) or copied elsewhere tells nobody again.
+        let moved = cells(&[("C4", "@Rahul to confirm the rating")]);
+        assert!(diff(&typed, &moved).is_empty());
+        // Editing the cell to add someone tells only them.
+        let more = cells(&[("C3", "@Rahul and @Vikram to confirm the rating")]);
+        assert_eq!(diff(&typed, &more).iter().flat_map(|m| m.users.clone()).collect::<Vec<_>>(), vec!["vikram"]);
+        // An e-mail address is no mention.
+        assert!(diff(&empty, &cells(&[("A1", "rahul@example.com")])).is_empty());
+        // A note (not threaded) mentions too, and says so.
+        let mut note = book(&[("B2", "@Vikram see the vendor data", &[])]);
+        if let Some(s) = note.sheets.first_mut() {
+            for c in std::sync::Arc::make_mut(s).comments.values_mut() {
+                c.threaded = false;
+            }
+        }
+        let m = diff(&book(&[]), &note);
+        assert_eq!((m.len(), m[0].source), (1, "note"));
     }
 
     #[test]

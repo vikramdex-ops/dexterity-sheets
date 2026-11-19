@@ -34,7 +34,19 @@ use crate::proto::{
     self, Access, BookInfo, Change, ClientMsg, Conflict, DeviceInfo, DeviceStatus, FileSource, LastEdit, Logged, Notice, Peer, ProfileInfo, Role,
     Rule, ServerMsg, TemplateInfo, UpdateInfo, UserInfo, VersionInfo,
 };
-use crate::{Error, Result, auth, identity, mention, now_ms};
+use crate::proto::{Assignment, PersonInfo};
+use crate::tasks::{self, MentionRecord};
+use crate::{Error, Result, auth, connect, identity, mention, now_ms};
+
+/// This PC's network name, as links to its workbooks name it.
+fn host_name() -> String {
+    std::env::var("COMPUTERNAME")
+        .or_else(|_| std::env::var("HOSTNAME"))
+        .ok()
+        .map(|h| h.trim().to_string())
+        .filter(|h| !h.is_empty() && h.chars().all(|c| c.is_ascii_alphanumeric() || "-._".contains(c)))
+        .unwrap_or_else(|| "localhost".into())
+}
 
 /// Write a fresh snapshot after this many edits.
 const SNAPSHOT_EVERY: u64 = 300;
@@ -142,6 +154,10 @@ pub struct State {
     statuses: HashMap<String, (String, String, String)>,
     /// sha256 of installers already hashed: (path, size, modified) → hash.
     hashes: HashMap<(PathBuf, u64, std::time::SystemTime), String>,
+    /// `host:port` as links name this server (`dexterity://open/<address>/<book>`).
+    address: String,
+    /// Notices waiting to be posted to Dexterity Connect.
+    outbox: connect::Outbox,
 }
 
 pub struct Server {
@@ -164,7 +180,8 @@ pub struct Profiles {
     pub profiles: BTreeMap<String, ProfileInfo>,
     /// Accounts carried over from an older server's `users.json`, not yet matched to anyone: the
     /// first Windows account with the same user name (any domain, any case) takes over the name,
-    /// role and colour, and the workbooks, access and notices filed under the old name.
+    /// role and colour, and the workbooks, access and notices filed under the old name. An old
+    /// administrator account is taken over only once its PC is approved.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub carry_over: Vec<UserRecord>,
 }
@@ -248,6 +265,16 @@ impl Profiles {
                     p.devices.push(device(DeviceStatus::Revoked));
                 }
                 return (Admission::Revoked, adopted);
+            }
+            if carried.as_ref().is_some_and(|c| c.role == Role::Admin) {
+                // The old name alone proves nothing: any domain's account with the same user name
+                // matches it. An administrator's account is only taken over once someone approves
+                // this PC (another administrator, or the Server Manager on the server itself).
+                if let Some(p) = self.profiles.get_mut(&user) {
+                    p.devices.push(device(DeviceStatus::Pending));
+                }
+                log::warn!("{account} matches the carried-over administrator account; its PC {code} waits for approval");
+                return (Admission::Pending(code), adopted);
             }
         }
         let Some(p) = self.profiles.get_mut(&user) else { return (Admission::Revoked, adopted) };
@@ -432,7 +459,8 @@ fn compact_log(dir: &Path, b: &mut Book, keep_after: u64) -> Result<()> {
     Ok(())
 }
 
-fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
+/// Writes a file whole or not at all (a temporary file renamed over it).
+pub fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
     let tmp = path.with_extension("tmp");
     {
         let mut f = File::create(&tmp)?;
@@ -495,7 +523,10 @@ impl Server {
             }
         }
         fs::create_dir_all(dir.join("updates"))?;
+        let outbox = connect::Outbox::load(&dir);
         let mut state = State {
+            address: format!("{}:{}", host_name(), proto::DEFAULT_PORT),
+            outbox,
             dir,
             name,
             profiles,
@@ -583,6 +614,8 @@ impl Server {
                 },
             );
             send(&tx, &ServerMsg::Welcome { me, conn, users });
+            // Everyone's People list shows this person online now (theirs arrives with it).
+            st.broadcast_people();
             let role = st.users.iter().find(|u| u.user == user).map_or(Role::Viewer, |u| u.role);
             for notice in st.notices_at_sign_in(&user, role) {
                 send(&tx, &ServerMsg::Notice { notice });
@@ -769,7 +802,9 @@ fn book_of(m: &ClientMsg) -> Option<String> {
         | ClientMsg::Versions { book }
         | ClientMsg::SaveVersion { book, .. }
         | ClientMsg::GetVersion { book, .. }
-        | ClientMsg::RestoreVersion { book, .. } => Some(book.clone()),
+        | ClientMsg::RestoreVersion { book, .. }
+        | ClientMsg::Assign { book, .. }
+        | ClientMsg::SetAssignment { book, .. } => Some(book.clone()),
         _ => None,
     }
 }
@@ -943,6 +978,106 @@ impl State {
                 let _ = c.tx.send(frame);
             }
         }
+        // Who has what open changed with it.
+        self.broadcast_people();
+    }
+
+    /// Everyone's People list (each sees only the workbooks they may open themselves).
+    fn broadcast_people(&self) {
+        for c in self.conns.values() {
+            let Some(u) = self.users.iter().find(|u| u.user == c.user) else { continue };
+            if let Some(frame) = encode(&ServerMsg::People { people: self.people_for(&u.user, u.role) }) {
+                let _ = c.tx.send(frame);
+            }
+        }
+    }
+
+    /// The account as Windows spells it (`DDS\Vikram`), else the key itself.
+    fn account_of(&self, user: &str) -> String {
+        self.profiles
+            .profiles
+            .get(user)
+            .map(|p| if p.account.is_empty() { p.user.clone() } else { p.account.clone() })
+            .unwrap_or_else(|| user.to_string())
+    }
+
+    /// Everyone on the server as `viewer` may see them: no devices or keys, and of the workbooks
+    /// each has open only those `viewer` may open. People whose every PC is revoked are left out.
+    fn people_for(&self, viewer: &str, role: Role) -> Vec<PersonInfo> {
+        let now = now_ms();
+        let mut out: Vec<PersonInfo> = self
+            .users
+            .iter()
+            .filter(|u| !u.disabled)
+            .map(|u| {
+                let mut books: Vec<(String, String)> = self
+                    .conns
+                    .values()
+                    .filter(|c| c.user == u.user)
+                    .flat_map(|c| c.open.iter())
+                    .filter_map(|id| self.metas.get(id))
+                    .filter(|m| permission(m, viewer, role, now).is_some())
+                    .map(|m| (m.id.clone(), m.name.clone()))
+                    .collect();
+                books.sort();
+                books.dedup();
+                PersonInfo {
+                    user: u.user.clone(),
+                    account: self.account_of(&u.user),
+                    display: u.display.clone(),
+                    color: u.color,
+                    role: format!("{:?}", u.role).to_lowercase(),
+                    online: self.conns.values().any(|c| c.user == u.user),
+                    books,
+                }
+            })
+            .collect();
+        out.sort_by(|a, b| b.online.cmp(&a.online).then_with(|| a.display.to_lowercase().cmp(&b.display.to_lowercase())));
+        out
+    }
+
+    /// Queues a Direct message to `user` on Dexterity Connect, when a hub is set up.
+    fn tell_connect(&mut self, user: &str, text: String, title: String, lines: Vec<String>) {
+        if !connect::load_config(&self.dir).ready() {
+            return;
+        }
+        let now = now_ms();
+        let id = format!("c-{now}-{}", NOTICE_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
+        let to = vec![self.account_of(user)];
+        self.outbox.push(connect::Outgoing { id, to, text, title, lines, created: now, tries: 0, next: now });
+    }
+
+    /// A workbook's assignments with its name filled in.
+    fn assignments(&self, book: &str) -> Vec<Assignment> {
+        let name = self.metas.get(book).map(|m| m.name.clone()).unwrap_or_default();
+        tasks::load_assignments(&self.book_dir(book))
+            .into_iter()
+            .map(|mut a| {
+                a.book = book.to_string();
+                a.book_name = name.clone();
+                a
+            })
+            .collect()
+    }
+
+    /// `user`'s assignments in every workbook they may still open: open ones first, by due date.
+    fn assigned_to(&self, user: &str, role: Role) -> Vec<Assignment> {
+        let now = now_ms();
+        let mut out: Vec<Assignment> = self
+            .metas
+            .values()
+            .filter(|m| permission(m, user, role, now).is_some())
+            .flat_map(|m| self.assignments(&m.id))
+            .filter(|a| a.user == user)
+            .collect();
+        out.sort_by(|a, b| {
+            (a.status == "done")
+                .cmp(&(b.status == "done"))
+                .then_with(|| (a.due.is_empty()).cmp(&b.due.is_empty()))
+                .then_with(|| a.due.cmp(&b.due))
+                .then_with(|| b.created.cmp(&a.created))
+        });
+        out
     }
 
     fn books_for(&self, user: &str, role: Role) -> Vec<BookInfo> {
@@ -974,20 +1109,20 @@ impl State {
     /// Tells each person mentioned in a comment, with the cell, once they can open the workbook.
     /// The person who wrote it hears about anyone mentioned who can't open it (they were not
     /// told), so they can share it with them.
-    fn tell_mentioned(&self, book: &str, user: &str, display: &str, mentions: &[mention::Mention]) {
-        let Some(m) = self.metas.get(book) else { return };
+    fn tell_mentioned(&mut self, book: &str, user: &str, display: &str, mentions: &[mention::Mention]) {
+        let Some(m) = self.metas.get(book).cloned() else { return };
         let now = now_ms();
         let mut no_access: Vec<String> = Vec::new();
         for men in mentions {
             for who in men.users.iter().filter(|w| *w != user) {
-                let Some(rec) = self.users.iter().find(|u| u.user == *who && !u.disabled) else { continue };
-                if permission(m, who, rec.role, now).is_none() {
+                let Some(rec) = self.users.iter().find(|u| u.user == *who && !u.disabled).cloned() else { continue };
+                if permission(&m, who, rec.role, now).is_none() {
                     if !no_access.contains(&rec.display) {
                         no_access.push(rec.display.clone());
                     }
                     continue;
                 }
-                log::info!("{book}: {user} mentioned {who} in a comment on {}!{}", men.sheet, men.cell);
+                log::info!("{book}: {user} mentioned {who} in a {} on {}!{}", men.source, men.sheet, men.cell);
                 self.notify(
                     who,
                     Notice {
@@ -998,8 +1133,34 @@ impl State {
                         text: men.quote.clone(),
                         sheet: men.sheet.clone(),
                         cell: men.cell.clone(),
+                        source: men.source.to_string(),
                         ..Notice::default()
                     },
+                );
+                let record = MentionRecord {
+                    book: book.to_string(),
+                    name: m.name.clone(),
+                    sheet: men.sheet.clone(),
+                    cell: men.cell.clone(),
+                    by: user.to_string(),
+                    from: display.to_string(),
+                    text: men.quote.clone(),
+                    source: men.source.to_string(),
+                    at: now,
+                };
+                if let Err(e) = tasks::log_mention(&self.dir, who, &record) {
+                    log::warn!("mention log of {who}: {e}");
+                }
+                let link = proto::link_at(&self.address, book, &men.sheet, &men.cell);
+                let place = format!("{}!{}", men.sheet, men.cell);
+                self.tell_connect(
+                    who,
+                    format!(
+                        "{display} mentioned you in a {} in **{}** ({place}): \u{201c}{}\u{201d}\n\n[Open at {place}]({link})",
+                        men.source, m.name, men.quote
+                    ),
+                    m.name.clone(),
+                    vec![format!("{place} · {}", men.source)],
                 );
             }
         }
@@ -1774,6 +1935,153 @@ impl State {
                 self.reply(conn, &ServerMsg::Version { book, version, xlsx: proto::b64(&bytes) });
             }
             ClientMsg::RestoreVersion { book, version } => return self.on_restore_version(Caller { user, role, display }, book, version),
+            ClientMsg::ListPeople => {
+                let people = self.people_for(&user, role);
+                self.reply(conn, &ServerMsg::People { people });
+            }
+            ClientMsg::Assign { book, sheet, cell, user: who, title, due, status } => {
+                let what = self.on_assign(&Caller { user: user.clone(), role, display }, &book, &sheet, &cell, &who, &title, due, status)?;
+                self.reply(conn, &ServerMsg::Ok { what });
+            }
+            ClientMsg::SetAssignment { book, id, status } => {
+                self.on_set_assignment(&Caller { user: user.clone(), role, display }, &book, &id, &status)?;
+                let items = self.assigned_to(&user, role);
+                self.reply(conn, &ServerMsg::Assigned { items });
+            }
+            ClientMsg::ListAssigned => {
+                let items = self.assigned_to(&user, role);
+                self.reply(conn, &ServerMsg::Assigned { items });
+            }
+        }
+        Ok(())
+    }
+
+    /// Assigns `cell` of `sheet` to `who`; returns what to tell the person who did it.
+    #[allow(clippy::too_many_arguments)]
+    fn on_assign(
+        &mut self,
+        by: &Caller,
+        book: &str,
+        sheet: &str,
+        cell: &str,
+        who: &str,
+        title: &str,
+        due: Option<String>,
+        status: Option<String>,
+    ) -> Result<String> {
+        self.require(&by.user, by.role, book, true)?;
+        let m = self.metas.get(book).cloned().ok_or_else(|| Error::Denied("no such workbook".into()))?;
+        let sheet = sheet.trim();
+        if sheet.is_empty() || sheet.chars().count() > 31 {
+            return Err(Error::Denied("name the sheet the cell is on".into()));
+        }
+        let cell = tasks::clean_range(cell).ok_or_else(|| Error::Denied(format!("\"{cell}\" is not a cell or range (B4, B4:D9)")))?;
+        let who_key = identity::account_key(who);
+        let rec = self
+            .users
+            .iter()
+            .find(|u| !u.disabled && (u.user == who_key || u.display.eq_ignore_ascii_case(who.trim())))
+            .cloned()
+            .ok_or_else(|| Error::Denied(format!("nobody called \"{}\" has signed in to this server", who.trim())))?;
+        if permission(&m, &rec.user, rec.role, now_ms()).is_none() {
+            return Err(Error::Denied(format!("{} can't open \"{}\": share it with them first", rec.display, m.name)));
+        }
+        let due = tasks::clean_due(due.as_deref().unwrap_or("")).ok_or_else(|| Error::Denied("type the due date as YYYY-MM-DD".into()))?;
+        let status = tasks::clean_status(status.as_deref().unwrap_or("")).ok_or_else(|| Error::Denied("the status is open or done".into()))?;
+        let title: String = title.chars().filter(|c| !c.is_control()).take(tasks::TITLE_MAX).collect::<String>().trim().to_string();
+        let dir = self.book_dir(book);
+        let mut all = tasks::load_assignments(&dir);
+        if all.len() >= tasks::ASSIGNMENTS_MAX {
+            return Err(Error::Denied("this workbook already holds the most assignments it can: mark some done and remove them".into()));
+        }
+        let now = now_ms();
+        let a = Assignment {
+            id: format!("a{now}-{}", auth::hex(&auth::random_bytes::<3>())),
+            book: book.to_string(),
+            book_name: String::new(),
+            sheet: sheet.to_string(),
+            cell: cell.clone(),
+            user: rec.user.clone(),
+            by: by.user.clone(),
+            by_display: by.display.clone(),
+            title: title.clone(),
+            due: due.clone(),
+            status: status.to_string(),
+            created: now,
+            updated: now,
+        };
+        all.push(a);
+        tasks::save_assignments(&dir, &all)?;
+        log::info!("{book}: {} assigned {sheet}!{cell} to {}", by.user, rec.user);
+        if rec.user != by.user {
+            let when = if due.is_empty() { String::new() } else { format!(" (due {due})") };
+            self.notify(
+                &rec.user,
+                Notice {
+                    kind: "assigned".into(),
+                    book: book.to_string(),
+                    name: m.name.clone(),
+                    by: by.display.clone(),
+                    text: format!("{}{when}", if title.is_empty() { "Please take a look" } else { &title }),
+                    sheet: sheet.to_string(),
+                    cell: first_cell(&cell),
+                    ..Notice::default()
+                },
+            );
+            let link = proto::link_at(&self.address, book, sheet, &first_cell(&cell));
+            let place = format!("{sheet}!{cell}");
+            let mut lines = vec![place.clone()];
+            if !due.is_empty() {
+                lines.push(format!("Due {due}"));
+            }
+            self.tell_connect(
+                &rec.user,
+                format!(
+                    "{} assigned you {place} in **{}**{when}{}\n\n[Open at {place}]({link})",
+                    by.display,
+                    m.name,
+                    if title.is_empty() { String::new() } else { format!(": {title}") }
+                ),
+                m.name.clone(),
+                lines,
+            );
+        }
+        Ok(format!("{sheet}!{cell} is assigned to {}.", rec.display))
+    }
+
+    /// Marks an assignment open or done.
+    fn on_set_assignment(&mut self, who: &Caller, book: &str, id: &str, status: &str) -> Result<()> {
+        let m = self.metas.get(book).cloned().ok_or_else(|| Error::Denied("no such workbook".into()))?;
+        let status = tasks::clean_status(status).ok_or_else(|| Error::Denied("the status is open or done".into()))?;
+        let dir = self.book_dir(book);
+        let mut all = tasks::load_assignments(&dir);
+        let a = all.iter_mut().find(|a| a.id == id).ok_or_else(|| Error::Denied("no such assignment (it may have been removed)".into()))?;
+        if !(a.user == who.user || a.by == who.user || m.created_by == who.user || who.role == Role::Admin) {
+            return Err(Error::Denied("only the person it is assigned to, who assigned it, or the workbook's owner can change it".into()));
+        }
+        let changed = a.status != status;
+        a.status = status.to_string();
+        a.updated = now_ms();
+        let a = a.clone();
+        tasks::save_assignments(&dir, &all)?;
+        if changed && status == "done" && a.by != who.user {
+            self.notify(
+                &a.by,
+                Notice {
+                    kind: "assignmentDone".into(),
+                    book: book.to_string(),
+                    name: m.name.clone(),
+                    by: who.display.clone(),
+                    text: if a.title.is_empty() {
+                        format!("{}!{} is done", a.sheet, a.cell)
+                    } else {
+                        format!("{} ({}!{}) is done", a.title, a.sheet, a.cell)
+                    },
+                    sheet: a.sheet.clone(),
+                    cell: first_cell(&a.cell),
+                    ..Notice::default()
+                },
+            );
         }
         Ok(())
     }
@@ -2383,6 +2691,121 @@ impl Server {
     pub fn updates_dir(&self) -> PathBuf {
         lock(&self.state).dir.join("updates")
     }
+
+    /// The data folder.
+    pub fn data_dir(&self) -> PathBuf {
+        lock(&self.state).dir.clone()
+    }
+
+    /// The name teammates see.
+    pub fn name(&self) -> String {
+        lock(&self.state).name.clone()
+    }
+
+    /// `host:port` as links name this server.
+    pub fn address(&self) -> String {
+        lock(&self.state).address.clone()
+    }
+
+    /// Read API: every shared workbook, who shared it and who has it open.
+    pub fn api_books(&self) -> Vec<serde_json::Value> {
+        let st = lock(&self.state);
+        st.metas
+            .values()
+            .map(|m| {
+                let mut online: Vec<String> = st.conns.values().filter(|c| c.open.contains(&m.id)).map(|c| st.account_of(&c.user)).collect();
+                online.sort();
+                online.dedup();
+                let sharer = m.source.as_ref().map_or(m.created_by.as_str(), |s| s.user.as_str());
+                serde_json::json!({"id": m.id, "name": m.name, "sharer": st.account_of(sharer), "online": online, "link": proto::link(&st.address, &m.id)})
+            })
+            .collect()
+    }
+
+    /// Read API: what is assigned to `user` (lower case), open ones first.
+    pub fn api_assigned(&self, user: &str) -> Vec<serde_json::Value> {
+        let st = lock(&self.state);
+        let role = st.users.iter().find(|u| u.user == user).map_or(Role::Viewer, |u| u.role);
+        st.assigned_to(user, role)
+            .into_iter()
+            .map(|a| {
+                let at = first_cell(&a.cell);
+                serde_json::json!({
+                    "book": a.book_name, "sheet": a.sheet, "cell": a.cell, "title": a.title, "status": a.status,
+                    "due": if a.due.is_empty() { serde_json::Value::Null } else { serde_json::json!(a.due) },
+                    "link": proto::link_at(&st.address, &a.book, &a.sheet, &at),
+                })
+            })
+            .collect()
+    }
+
+    /// Read API: where `user` (lower case) was mentioned after `since` (ms since 1970), oldest first.
+    pub fn api_mentions(&self, user: &str, since: i64) -> Vec<serde_json::Value> {
+        let (dir, address) = {
+            let st = lock(&self.state);
+            (st.dir.clone(), st.address.clone())
+        };
+        tasks::mentions_of(&dir, user, since)
+            .into_iter()
+            .map(|m| {
+                let at =
+                    chrono::DateTime::from_timestamp_millis(m.at).map(|t| t.to_rfc3339_opts(chrono::SecondsFormat::Secs, true)).unwrap_or_default();
+                serde_json::json!({
+                    "book": m.name, "sheet": m.sheet, "cell": m.cell, "from": m.from, "text": m.text, "at": at,
+                    "link": proto::link_at(&address, &m.book, &m.sheet, &m.cell),
+                })
+            })
+            .collect()
+    }
+
+    /// Notices due to be posted to Dexterity Connect now.
+    pub fn connect_due(&self) -> Vec<connect::Outgoing> {
+        lock(&self.state).outbox.due(now_ms())
+    }
+
+    /// A notice reached Connect (or was refused for good): off the queue.
+    pub fn connect_done(&self, id: &str) {
+        lock(&self.state).outbox.done(id);
+    }
+
+    /// A notice did not reach Connect: tried again later.
+    pub fn connect_retry(&self, id: &str) {
+        lock(&self.state).outbox.retry(id, now_ms());
+    }
+
+    /// The "Sheets pulse" card: workbooks, who is working, open and overdue assignments.
+    pub fn pulse_lines(&self) -> Vec<String> {
+        let st = lock(&self.state);
+        let online: HashSet<&String> = st.conns.values().map(|c| &c.user).collect();
+        let mut lines = vec![format!("{} shared workbook(s) · {} people connected", st.metas.len(), online.len())];
+        let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+        let (mut open, mut overdue) = (0usize, 0usize);
+        for m in st.metas.values() {
+            for a in tasks::load_assignments(&st.book_dir(&m.id)).into_iter().filter(|a| a.status != "done") {
+                open += 1;
+                if !a.due.is_empty() && a.due < today {
+                    overdue += 1;
+                }
+            }
+        }
+        lines.push(format!("{open} open assignment(s), {overdue} overdue"));
+        let mut busy: Vec<(usize, &str)> = st
+            .metas
+            .values()
+            .map(|m| (st.conns.values().filter(|c| c.open.contains(&m.id)).map(|c| &c.user).collect::<HashSet<_>>().len(), m.name.as_str()))
+            .filter(|(n, _)| *n > 0)
+            .collect();
+        busy.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(b.1)));
+        for (n, name) in busy.into_iter().take(5) {
+            lines.push(format!("{name}: {n} working in it now"));
+        }
+        lines
+    }
+}
+
+/// The first cell of `B4:D9` (a link goes to one cell).
+fn first_cell(range: &str) -> String {
+    range.split(':').next().unwrap_or(range).to_string()
 }
 
 /// The audit lines for a patch: one per cell whose content a person changed (values that were
@@ -2493,6 +2916,7 @@ pub fn start_on(dir: PathBuf, name: String, port: u16) -> Result<(Arc<Server>, u
     let server = Arc::new(Server::open(dir, name.clone())?);
     let listener = TcpListener::bind(("0.0.0.0", port))?;
     let port = listener.local_addr()?.port();
+    lock(&server.state).address = format!("{}:{port}", host_name());
     let s = server.clone();
     std::thread::Builder::new().name("dexsheets-accept".into()).spawn(move || s.serve(listener))?;
     let version = env!("CARGO_PKG_VERSION").to_string();

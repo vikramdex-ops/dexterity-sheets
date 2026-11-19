@@ -10,8 +10,9 @@
   "C:\Program Files\Dexterity Sheets Server":
     - DexSheetsServer.exe as the Windows service "Dexterity Sheets Server": starts at boot, runs
       as LocalSystem, restarts itself if it ever stops, stopped and removed on uninstall;
-    - Windows Firewall rules for TCP 47810 (workbooks) and UDP 47811 (discovery), for the Domain
-      and Private (office) network profiles only;
+    - Windows Firewall rules for TCP 47810 (workbooks), TCP 47812 (the read API Dexterity
+      Connect asks, with a token made in the Server Manager) and UDP 47811 (discovery), for the
+      Domain and Private (office) network profiles only;
     - DexSheetsServerManager.exe, the control panel (Start menu), offered at the end of setup to
       see who has connected and approve new PCs (there are no accounts or passwords to create:
       people sign in with their Windows account, and the first one becomes the administrator);
@@ -149,6 +150,8 @@
           <!-- The office network only (Domain and Private profiles), never Public. -->
           <fw:FirewallException Id="FwTcpDomain" Name="Dexterity Sheets Server (TCP)" Port="47810" Protocol="tcp" Profile="domain" Scope="any" />
           <fw:FirewallException Id="FwTcpPrivate" Name="Dexterity Sheets Server (TCP)" Port="47810" Protocol="tcp" Profile="private" Scope="any" />
+          <fw:FirewallException Id="FwApiDomain" Name="Dexterity Sheets Read API (TCP)" Port="47812" Protocol="tcp" Profile="domain" Scope="any" />
+          <fw:FirewallException Id="FwApiPrivate" Name="Dexterity Sheets Read API (TCP)" Port="47812" Protocol="tcp" Profile="private" Scope="any" />
           <fw:FirewallException Id="FwUdpDomain" Name="Dexterity Sheets Discovery (UDP)" Port="47811" Protocol="udp" Profile="domain" Scope="any" />
           <fw:FirewallException Id="FwUdpPrivate" Name="Dexterity Sheets Discovery (UDP)" Port="47811" Protocol="udp" Profile="private" Scope="any" />
         </File>

@@ -12,6 +12,8 @@
 //! its administrator. No accounts or passwords to create.
 //! Updates: drop DexteritySheets-<version>-x64.msi into <data>\updates, or configure
 //! <data>\update-source.json {"repo": "owner/name", "token": "…"} to fetch GitHub releases.
+//! Dexterity Connect: the read API answers on TCP 47812 (DEXSHEETS_API_PORT to change it) with a
+//! token made in the Server Manager; notices go to the hub set there (<data>\connect.json).
 //! options: --data DIR (default %ProgramData%\Dexterity Sheets\Server), --port N, --name "Server name"
 //! (the name otherwise comes from <data>\server.json {"name": "…"}, set in the Server Manager)
 //! Most offices never need these commands: the Server Manager app does all of it.
@@ -24,6 +26,7 @@ use std::sync::Mutex;
 use gridcraft_collab::proto::{DEFAULT_PORT, DeviceStatus, Role};
 use gridcraft_collab::server;
 
+mod connect;
 mod github;
 #[cfg(windows)]
 mod service;
@@ -183,6 +186,15 @@ fn serve(dir: PathBuf, name: String, port: u16) -> Result<std::sync::Arc<server:
     let watch_dir = dir.clone();
     let watched = srv.clone();
     let _ = std::thread::Builder::new().name("github-updates".into()).spawn(move || github::watch(watch_dir, watched));
+    // The read API for Dexterity Connect: refuses every request until a token is made in the
+    // Server Manager. A busy port leaves the server itself running.
+    let api_port = std::env::var("DEXSHEETS_API_PORT").ok().and_then(|p| p.parse().ok()).unwrap_or(gridcraft_collab::api::DEFAULT_PORT);
+    match gridcraft_collab::api::start(srv.clone(), api_port) {
+        Ok(p) => log::info!("read API for Dexterity Connect on TCP port {p} ({} token(s))", gridcraft_collab::api::load_tokens(&dir).len()),
+        Err(e) => log::error!("read API not started on TCP port {api_port}: {e}"),
+    }
+    let posting = srv.clone();
+    let _ = std::thread::Builder::new().name("connect-push".into()).spawn(move || connect::watch(posting));
     log::info!("Teammates: open Dexterity Sheets, choose File > Shared, and pick this server.");
     Ok(srv)
 }

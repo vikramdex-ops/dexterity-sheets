@@ -29,7 +29,9 @@ pub const KINDS: &[(&str, &str)] = &[
     ("shared", "A spreadsheet is shared with me"),
     ("permission", "My access to a spreadsheet changes"),
     ("revoked", "My access is removed"),
-    ("mention", "I am mentioned in a comment"),
+    ("mention", "I am mentioned in a comment, a note or a cell"),
+    ("assigned", "A cell is assigned to me"),
+    ("assignmentDone", "Something I assigned is done"),
     ("changed", "Others changed a shared spreadsheet while I was away"),
     ("template", "A template I used has a new approved version"),
     ("automation", "An automation rule reports something"),
@@ -221,6 +223,7 @@ pub fn tick(app: &mut SheetApp) {
 /// A notice from the server (or the app): kept in the history, shown as a Windows notification
 /// if the person wants this kind and has not muted the workbook.
 pub fn notice(app: &mut SheetApp, n: Notice) {
+    crate::dex_ui::people::on_notice(app, &n);
     let p = &mut app.collab.share.prefs;
     p.history.insert(0, n.clone());
     p.history.truncate(HISTORY);
@@ -245,7 +248,8 @@ pub fn notice(app: &mut SheetApp, n: Notice) {
         lines.push(format!("Permission: {}", if n.permission == "editor" { "Editor" } else { "Viewer" }));
     }
     match n.kind.as_str() {
-        "mention" => lines.push(format!("{}: {}", place(&n), n.text)),
+        "mention" | "assigned" => lines.push(format!("{}: {}", place(&n), n.text)),
+        "assignmentDone" => lines.push(n.text.clone()),
         "mentionNoAccess" => lines.push(n.text.clone()),
         _ => {}
     }
@@ -271,7 +275,13 @@ fn title_of(n: &Notice) -> String {
         "permission" => format!("Your access to {} changed", n.name),
         "revoked" => "Your access to a shared spreadsheet has changed".into(),
         "changed" if !n.by.is_empty() => format!("{} updated a shared spreadsheet", n.by),
-        "mention" => format!("{} mentioned you in a comment", if n.by.is_empty() { "Someone" } else { &n.by }),
+        "mention" => format!(
+            "{} mentioned you in a {}",
+            if n.by.is_empty() { "Someone" } else { &n.by },
+            if n.source.is_empty() { "comment" } else { n.source.as_str() }
+        ),
+        "assigned" => format!("{} assigned you a cell to look at", if n.by.is_empty() { "Someone" } else { &n.by }),
+        "assignmentDone" => format!("{} finished what you assigned", if n.by.is_empty() { "Someone" } else { &n.by }),
         "mentionNoAccess" => "Someone you mentioned can't open the spreadsheet".into(),
         _ => n.text.clone(),
     }
@@ -282,6 +292,8 @@ fn notice_line(n: &Notice) -> String {
     let line = if n.name.is_empty() || t.contains(&n.name) { t } else { format!("{t}: {}", n.name) };
     match n.kind.as_str() {
         "mention" if !n.cell.is_empty() => format!("{line} ({}): \u{201c}{}\u{201d}", place(n), n.text),
+        "assigned" if !n.cell.is_empty() => format!("{line} ({}): {}", place(n), n.text),
+        "assignmentDone" => format!("{line}: {}", n.text),
         "mentionNoAccess" => n.text.clone(),
         _ => line,
     }
@@ -301,7 +313,7 @@ fn activate(app: &mut SheetApp, uid: u64) {
 
 /// Opens a shared workbook at a cell (a mention): now if it is open here, otherwise once the
 /// server has sent it.
-fn go_to(app: &mut SheetApp, book: &str, sheet: &str, cell: &str) {
+pub(crate) fn go_to(app: &mut SheetApp, book: &str, sheet: &str, cell: &str) {
     if !cell.is_empty() {
         app.collab.share.goto = Some((book.into(), sheet.into(), cell.into(), crate::clock::monotonic_ms()));
     }
@@ -332,7 +344,13 @@ fn go_to_pending(app: &mut SheetApp) {
     }
     if app.run("selection.set", json!({"cell": cell})).is_ok() {
         app.grid.ensure_visible = true;
-        let _ = app.run("review.showComments", json!({"on": true}));
+        // The Comments pane only when a comment or note is there (a mention in a cell's own text,
+        // or an assignment, is the cell itself).
+        let at = gridcraft_engine::core::CellRef::parse(&cell.replace('$', ""));
+        let has_comment = app.session.active().and_then(|d| d.wb.active()).is_some_and(|s| at.is_some_and(|c| s.comments.contains_key(&c)));
+        if has_comment {
+            let _ = app.run("review.showComments", json!({"on": true}));
+        }
     }
 }
 
@@ -347,7 +365,13 @@ fn native(title: &str, lines: &[String], launch: &str) {
         for l in lines.iter().take(2) {
             texts.push_str(&format!("<text>{}</text>", esc(l)));
         }
-        let open = if launch.contains("/open/") { "Open Spreadsheet" } else { "Open" };
+        let open = if launch.contains("?at=") {
+            "Go to cell"
+        } else if launch.contains("/open/") {
+            "Open Spreadsheet"
+        } else {
+            "Open"
+        };
         let xml = format!(
             "<toast activationType=\"protocol\" launch=\"{l}\"><visual><binding template=\"ToastGeneric\">{texts}</binding></visual><actions><action content=\"{open}\" activationType=\"protocol\" arguments=\"{l}\"/><action content=\"View Details\" activationType=\"protocol\" arguments=\"dexterity://notifications\"/></actions></toast>",
             l = esc(launch)

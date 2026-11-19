@@ -91,6 +91,8 @@ pub struct Collab {
     pub templates: crate::dex_ui::templates::Templates,
     /// Automation rules of the shared workbook (`dex_ui::automation`).
     pub automation: crate::dex_ui::automation::Automation,
+    /// People, assignments and the Connect panel (`dex_ui::people`).
+    pub people: crate::dex_ui::people::People,
     pub client: Option<Client>,
     pub status: Status,
     pub me: Option<UserInfo>,
@@ -528,6 +530,7 @@ fn handle(app: &mut SheetApp, e: Event) {
             app.collab.send(ClientMsg::ListBooks);
             app.collab.send(crate::dex_ui::releases::check_msg(app));
             app.collab.last_update_check = crate::now_ms();
+            crate::dex_ui::people::on_connected(app);
             // After a reconnect: fetch every open shared workbook again and resend what the
             // server never ordered.
             let ids: Vec<String> = app.collab.docs.iter().map(|d| d.book.id.clone()).collect();
@@ -755,6 +758,8 @@ fn message(app: &mut SheetApp, m: ServerMsg) {
         },
         ServerMsg::Notice { notice } => crate::dex_ui::share::notice(app, notice),
         ServerMsg::Templates { templates } => crate::dex_ui::templates::on_list(app, templates),
+        ServerMsg::People { people } => crate::dex_ui::people::on_people(app, people),
+        ServerMsg::Assigned { items } => crate::dex_ui::people::on_assigned(app, items),
         ServerMsg::Rules { book, rules } => crate::dex_ui::automation::on_rules(app, book, rules),
         ServerMsg::Template { info, xlsx, sha256 } => crate::dex_ui::templates::on_template(app, info, &xlsx, &sha256),
         ServerMsg::Ok { what } => {
@@ -783,6 +788,9 @@ impl SheetApp {
 /// Commands the window handles for sharing. `None` = not a sharing command.
 pub fn run_command(app: &mut SheetApp, id: &str, p: &Json) -> Option<Result<Json, String>> {
     if let Some(r) = crate::dex_ui::share::run_command(app, id, p) {
+        return Some(r);
+    }
+    if let Some(r) = crate::dex_ui::people::run_command(app, id, p) {
         return Some(r);
     }
     let r = match id {
@@ -2283,6 +2291,7 @@ pub fn update_badge(app: &mut SheetApp, ui: &mut Ui, t: &Tokens) {
         crate::dex_ui::tools::windows(app, ui.ctx());
         crate::dex_ui::templates::window(app, ui.ctx());
         crate::dex_ui::automation::window(app, ui.ctx());
+        crate::dex_ui::people::windows(app, ui.ctx());
     }
     if app.collab.signed_in() || !app.collab.share.prefs.history.is_empty() {
         ui.add_space(12.0);

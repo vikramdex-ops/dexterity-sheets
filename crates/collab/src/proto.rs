@@ -229,7 +229,77 @@ pub enum ClientMsg {
     GetUpdate {
         version: String,
     },
+    /// Everyone on the server: name, account, colour, whether they are connected and which of
+    /// the asker's shared workbooks they have open. Answered with `People` (also sent unasked
+    /// whenever someone comes, goes, opens or closes a workbook).
+    ListPeople,
+    /// Assigns a cell or range of a shared workbook to a person (anyone who may edit it). `due`:
+    /// `YYYY-MM-DD`; `status`: `open` (the default) or `done`.
+    Assign {
+        book: String,
+        sheet: String,
+        cell: String,
+        user: String,
+        #[serde(default)]
+        title: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        due: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        status: Option<String>,
+    },
+    /// Marks an assignment `open` or `done` (its assignee, who assigned it, the workbook's creator
+    /// or an administrator). Answered with `Assigned`.
+    SetAssignment {
+        book: String,
+        id: String,
+        status: String,
+    },
+    /// The asker's own assignments across every shared workbook they may open (`Assigned`).
+    ListAssigned,
     Ping,
+}
+
+/// A person on the server as everyone may see them: no devices or keys (administrators get
+/// those from `ListProfiles`).
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct PersonInfo {
+    /// The account in lower case (`dds\vikram`).
+    pub user: String,
+    /// The account as Windows spells it (`DDS\Vikram`).
+    pub account: String,
+    pub display: String,
+    pub color: [u8; 3],
+    pub role: String,
+    /// Connected now (from any PC).
+    pub online: bool,
+    /// The shared workbooks they have open, among those the asker may open: (id, name).
+    pub books: Vec<(String, String)>,
+}
+
+/// A cell or range of a shared workbook assigned to a person.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct Assignment {
+    pub id: String,
+    pub book: String,
+    /// The workbook's name (filled in when listed).
+    pub book_name: String,
+    pub sheet: String,
+    /// `B4` or `B4:D9`.
+    pub cell: String,
+    /// The assignee's account in lower case.
+    pub user: String,
+    /// Who assigned it (account in lower case) and their name.
+    pub by: String,
+    pub by_display: String,
+    pub title: String,
+    /// `YYYY-MM-DD`, or empty.
+    pub due: String,
+    /// `open` or `done`.
+    pub status: String,
+    pub created: i64,
+    pub updated: i64,
 }
 
 /// A newer app version the server can hand out.
@@ -429,8 +499,8 @@ pub struct TemplateInfo {
 pub struct Notice {
     pub id: String,
     pub time: i64,
-    /// `shared`, `permission`, `revoked`, `mention`, `mentionNoAccess`, `changed`, `update`,
-    /// `recovery`.
+    /// `shared`, `permission`, `revoked`, `mention`, `mentionNoAccess`, `assigned`,
+    /// `assignmentDone`, `changed`, `update`, `recovery`.
     pub kind: String,
     #[serde(skip_serializing_if = "String::is_empty")]
     pub book: String,
@@ -447,6 +517,9 @@ pub struct Notice {
     pub sheet: String,
     #[serde(skip_serializing_if = "String::is_empty")]
     pub cell: String,
+    /// A mention: where it was written, `comment`, `note` or `cell` (empty: a comment).
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub source: String,
 }
 
 /// A `dexterity://` link to a shared workbook on `server` (`host:port`), which opens it in the
@@ -733,6 +806,14 @@ pub enum ServerMsg {
     },
     Templates {
         templates: Vec<TemplateInfo>,
+    },
+    /// Everyone on the server (after `ListPeople`, and whenever who is here changes).
+    People {
+        people: Vec<PersonInfo>,
+    },
+    /// The person's own assignments, open ones first.
+    Assigned {
+        items: Vec<Assignment>,
     },
     Rules {
         book: String,

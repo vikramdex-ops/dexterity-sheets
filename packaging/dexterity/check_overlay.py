@@ -98,6 +98,9 @@ HOOKS = [
     ("crates/ui-egui/src/{ribbon.rs,ribbon/*.rs}", "crate::dex_ui::tools::review_buttons(app, ui);", "Review: Compare Files and Quality Check"),
     ("crates/ui-egui/src/backstage.rs", "crate::dex_ui::templates::new_page(app, ui, &mut out.close);", "File › New: office and personal templates"),
     ("crates/ui-egui/src/{ribbon.rs,ribbon/*.rs}", "crate::dex_ui::releases::help_buttons(app, ui);", "Automate: What's New, Report a Problem, Roll Back, Recover Unsaved Work"),
+    ("crates/ui-egui/src/{tabs.rs,tabs/*.rs}", "crate::dex_ui::people::status_button(app, ui);", "status bar: the Connect quick panel at the far left"),
+    ("crates/ui-egui/src/formula_bar.rs", "crate::dex_ui::mention::editor_keys(ui, id, &mut ed.text, ed.caret)", "cell editor: keys of the @mention list"),
+    ("crates/ui-egui/src/formula_bar.rs", "crate::dex_ui::mention::editor_list(ui, id, resp.rect, &mut ed.text, ed.caret)", "cell editor: @mention suggestions while typing text"),
 ]
 
 # Strings that must not come back into the shipped app's code from upstream.

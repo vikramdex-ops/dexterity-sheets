@@ -289,6 +289,28 @@ insert(
     '        app.open_dialog("accessibility", json!({}));\n    }\n',
     "    crate::dex_ui::tools::review_buttons(app, ui);\n",
 )
+# The Connect quick panel: its button at the far left of the status bar (dex_ui/people.rs).
+insert(
+    f"{UI}/tabs.rs",
+    "dex_ui::people::status_button(",
+    "                let mode = match app.session.mode {\n",
+    "                crate::dex_ui::people::status_button(app, ui);\n",
+    after=False,
+)
+# @mentions typed in a cell's text: the cell editor's keys first, then the list under it.
+insert(
+    f"{UI}/formula_bar.rs",
+    "dex_ui::mention::editor_keys(",
+    "    let EditorKeyOutcome { action, arrow, cancel, to_python } = editor_shortcuts(",
+    "    if !ed.is_formula()\n        && let Some(c) = crate::dex_ui::mention::editor_keys(ui, id, &mut ed.text, ed.caret)\n    {\n        (ed.caret, ed.anchor, ed.sync_caret, ed.completion) = (c, c, true, None);\n    }\n",
+    after=False,
+)
+insert(
+    f"{UI}/formula_bar.rs",
+    "dex_ui::mention::editor_list(",
+    "    show_editor_suggestions(ui, EditorSuggestion { app, id, resp: &resp, ed: &mut ed, galley: &output.galley, tokens: &t, mine });\n",
+    "    if !ed.is_formula()\n        && let Some(c) = crate::dex_ui::mention::editor_list(ui, id, resp.rect, &mut ed.text, ed.caret)\n    {\n        (ed.caret, ed.anchor, ed.sync_caret, ed.request_focus, ed.completion) = (c, c, true, true, None);\n    }\n",
+)
 insert(
     f"{UI}/app/files.rs",
     "dex_ui::share::open_link(",

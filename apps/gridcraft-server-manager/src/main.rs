@@ -6,11 +6,12 @@
 //!
 //! ```text
 //! DexSheetsServerManager [--data DIR] [--no-elevate]
-//!                        [--shot overview|people|updates|backup|versions|releases|feedback|health|adoption OUT.png]
+//!                        [--shot overview|people|updates|backup|connect|versions|releases|feedback|health|adoption OUT.png]
 //! ```
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod admin;
+mod connect_page;
 mod system;
 
 use std::path::{Path, PathBuf};
@@ -34,6 +35,7 @@ enum Page {
     People,
     Updates,
     Backup,
+    Connect,
     // The dashboard (admin.rs).
     Versions,
     Releases,
@@ -43,8 +45,18 @@ enum Page {
 }
 
 impl Page {
-    const ALL: [Page; 9] =
-        [Page::Overview, Page::People, Page::Updates, Page::Backup, Page::Versions, Page::Releases, Page::Feedback, Page::Health, Page::Adoption];
+    const ALL: [Page; 10] = [
+        Page::Overview,
+        Page::People,
+        Page::Updates,
+        Page::Backup,
+        Page::Connect,
+        Page::Versions,
+        Page::Releases,
+        Page::Feedback,
+        Page::Health,
+        Page::Adoption,
+    ];
     /// The first page of the dashboard group in the page list.
     const DASHBOARD: Page = Page::Versions;
     fn label(self) -> &'static str {
@@ -53,6 +65,7 @@ impl Page {
             Page::People => "People and devices",
             Page::Updates => "App updates",
             Page::Backup => "Backup and restore",
+            Page::Connect => "Dexterity Connect",
             Page::Versions => "Installed versions",
             Page::Releases => "Releases",
             Page::Feedback => "Feedback",
@@ -66,6 +79,7 @@ impl Page {
             Page::People => "people",
             Page::Updates => "updates",
             Page::Backup => "backup",
+            Page::Connect => "connect",
             Page::Versions => "versions",
             Page::Releases => "releases",
             Page::Feedback => "feedback",
@@ -128,6 +142,8 @@ struct App {
     with_installers: bool,
     job: Option<Job>,
     shot: Option<(Page, PathBuf, u32)>,
+    // Dexterity Connect
+    connect: connect_page::ConnectPage,
     // Installed versions, Releases, Feedback, System health, Feature adoption
     dash: admin::Dashboard,
 }
@@ -181,7 +197,9 @@ impl App {
             job: None,
             shot: shot.map(|(p, path)| (p, path, 0)),
             dash: admin::Dashboard::default(),
+            connect: connect_page::ConnectPage::default(),
         };
+        app.connect.load(&app.dir);
         app.reload();
         app.check_network();
         app
@@ -310,6 +328,29 @@ impl App {
             card(ui, |ui| {
                 ui.label(RichText::new("No administrator yet").size(17.0).strong().color(ACCENT));
                 ui.label("The first person to connect from Dexterity Sheets becomes the administrator: open it on your own PC first. Nobody needs an account or a password; everyone signs in with their Windows account.");
+            });
+        }
+        // An administrator carried over from the old accounts list waits for approval here: with
+        // no other administrator signed in, this window is the only place to approve them.
+        let admin_in =
+            |p: &&ProfileInfo| p.role == Role::Admin && (p.devices.is_empty() || p.devices.iter().any(|d| d.status == DeviceStatus::Approved));
+        let waiting: Vec<String> = self
+            .profiles
+            .profiles
+            .values()
+            .filter(|p| p.role == Role::Admin && p.devices.iter().any(|d| d.status == DeviceStatus::Pending))
+            .map(|p| format!("{} ({})", p.display, shown_account(p)))
+            .collect();
+        if self.users_error.is_none() && !waiting.is_empty() && !self.profiles.profiles.values().any(|p| admin_in(&p)) {
+            card(ui, |ui| {
+                ui.label(RichText::new("An administrator waits for approval").size(17.0).strong().color(WARN));
+                ui.label(format!(
+                    "{} took over an administrator account from the old accounts list. Check the device code with them, then approve their PC on People and devices: until then nobody is the administrator.",
+                    waiting.join(", ")
+                ));
+                if ui.button("Open People and devices").clicked() {
+                    self.page = Page::People;
+                }
             });
         }
         let ctx = ui.ctx().clone();
@@ -625,7 +666,7 @@ impl App {
             card(ui, |ui| {
                 ui.label(RichText::new("Carried over from the old accounts list").strong());
                 ui.label(
-                    RichText::new("These accounts were made when people signed in with passwords. Each one passes, with its name, role and workbooks, to the first Windows account with the same user name that connects.")
+                    RichText::new("These accounts were made when people signed in with passwords. Each one passes, with its name, role and workbooks, to the first Windows account with the same user name that connects. An administrator's account passes only once you approve that person's PC here.")
                         .color(DIM)
                         .small(),
                 );
@@ -893,6 +934,7 @@ impl eframe::App for App {
                 Page::People => self.people(ui),
                 Page::Updates => self.updates(ui),
                 Page::Backup => self.backup(ui),
+                Page::Connect => self.connect_page(ui),
                 Page::Versions => self.versions_page(ui),
                 Page::Releases => self.releases_page(ui),
                 Page::Feedback => self.feedback_page(ui),
