@@ -74,6 +74,9 @@
 <td width="33%" valign="top"><p><b>Let the server do the routine checks.</b> <b>Automation rules</b> on a shared spreadsheet: every Monday find overdue items and run the Quality Check, or stamp the date when a status becomes Completed. Fixed steps only, no macros.</p></td>
 <td width="33%" valign="top"><p><b>Told when it matters.</b> Type <b>@</b> in a comment to mention a colleague: they get a Windows notification that opens the cell. You also hear when something is shared with you, your access changes, others edited while you were away (one summary), or a new version is ready.</p></td>
 </tr>
+<tr>
+<td width="33%" valign="top"><p><b>Works with the office's other apps.</b> Right-click a row to discuss it in <b>Dexterity Connect</b> with a link that opens at the cell, or to add it to the workbook's notes in <b>Slate</b> (the <b>Notes</b> button, bottom right). <b>Find in Sleuth</b> and <b>Open in Project Opener</b> are a right-click away too. Each item shows only when its app is installed (<a href="docs/dexterity-suite.md">how it works</a>).</p></td>
+</tr>
 </table>
 
 ## A look around

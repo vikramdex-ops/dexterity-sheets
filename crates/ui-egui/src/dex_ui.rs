@@ -31,6 +31,7 @@ pub mod mention;
 pub mod recovery;
 pub mod releases;
 pub mod share;
+pub mod suite;
 pub mod templates;
 pub mod tools;
 use crate::icons::Icon;
@@ -165,6 +166,7 @@ pub fn run_command(app: &mut SheetApp, id: &str, p: &Json) -> Option<Result<Json
     match id {
         // The engine command is the catalogue entry; the copies and the dialog are the window's.
         "file.recoverUnsaved" => return Some(recovery::run_command(app, p)),
+        _ if id.starts_with("suite.") => return suite::run_command(app, id, p),
         "automate.rules" => return Some(automation::run_command(app, p)),
         "file.newFromTemplate" | "file.saveAsTemplate" => return templates::run_command(app, id, p),
         "review.compareFiles" | "data.qualityCheck" | "formulas.diagnostics" | "formulas.explainError" => return tools::run_command(app, id, p),

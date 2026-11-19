@@ -9,6 +9,14 @@ its newest changes); the release notes on GitHub list every one of them with its
 
 ## Unreleased
 
+- **Works with the office's other apps.** Each item shows only when its app is installed on your PC:
+  - **Share to Connect…** and **Discuss This Row in Connect…** open Dexterity Connect with a link to the cell. Discuss also adds the row's values, and Connect asks before anything is sent.
+  - **Copy Link to This Cell** gives a link that opens the shared spreadsheet at that cell or range.
+  - **Notes** at the bottom right opens the workbook's notes in Slate. The notes file sits beside the workbook. Without Slate, the notes open in a small notes pane.
+  - **Add Note for This Row** adds the row and a link back to it to those notes.
+  - **Find in Sleuth** and **Open in Project Opener** are in the cell menu.
+  - Links in cells to Connect, Sleuth, Datum, Project Opener and Dexterity Sheets open with one click.
+
 ## 1.6.0 · 12 November 2026
 
 - **Now built on GridCraft 0.19.1** (was 0.18.0): 16 changes from official GridCraft are in this version. The newest are below; the release notes on GitHub list them all.
