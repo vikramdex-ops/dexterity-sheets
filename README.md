@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <sub><!-- dex:release -->Version <b>1.6.0</b> · 12 November 2026 · based on GridCraft 0.19.1<!-- /dex:release --> · Windows 10 and 11 · no administrator rights needed · updates itself</sub>
+  <sub><!-- dex:release -->Version <b>1.6.8</b> · 19 November 2026 · based on GridCraft 0.19.1<!-- /dex:release --> · Windows 10 and 11 · no administrator rights needed · updates itself</sub>
 </p>
 
 <p align="center">
@@ -108,14 +108,14 @@
 ## What's new
 
 <!-- dex:whatsnew -->
-- **Now built on GridCraft 0.19.1** (was 0.18.0): 16 changes from official GridCraft are in this version. The newest are below; the release notes on GitHub list them all.
-- From GridCraft: engine: work limits for Advanced Filter, Remove Duplicates, filters, AutoFit, macro footprints; range sizes saturate
-- From GridCraft: engine: index merges and bound the page in HTML export and clipboard HTML
-- From GridCraft: check, xtask stats: visited directories keyed by (dev, inode); stats reads only regular files
-- From GridCraft: Security: one work budget across every call of a lifted function
-- From GridCraft: print: bound the print area to the grid; render charts once and budget picture and chart output
+- More fixes and improvements from official GridCraft (still GridCraft 0.19.1): 6 changes, the newest below. The release notes on GitHub list them all.
+- From GridCraft: Shapes: select, resize from every handle and rotate
+- From GridCraft: Wire craft-xls and craft-drawingml from craft-libs main
+- From GridCraft: Cut over xlsx omml to craft-math
+- From GridCraft: xlsx: fix main after the ODS cutover (clippy, empty first sheet, values, package checks)
+- From GridCraft: Find and Replace: Undo and Redo reach the sheet while the dialog is open
 
-[Everything in 1.6.0](https://github.com/vikramdex-ops/dexterity-sheets/releases/tag/v1.6.0) and 3 more.
+[Everything in 1.6.8](https://github.com/vikramdex-ops/dexterity-sheets/releases/tag/v1.6.8) and 1 more.
 <!-- /dex:whatsnew -->
 
 Dexterity Sheets is built on the open-source [GridCraft](https://github.com/storytold/gridcraft)
@@ -284,7 +284,7 @@ only by administrators; uninstalling never deletes it. Full guide:
 | | |
 |---|---|
 | **Share** | Open the file from wherever it is saved and click **Share › Share…** (or *File › Shared › Share the current workbook*). The file stays where it is: the app of the person who shared it saves everyone's edits into it a second after each change, and on Ctrl+S. *File › Shared › New shared workbook* starts an empty one. |
-| **Who can open it** | Everyone at the office, or named people, each as an **Editor** or a **Viewer**, optionally until an end date; choose whether viewers may save a copy. **Copy link** gives a link for a chat or e-mail that opens the spreadsheet in the app after checking the reader's access. |
+| **Who can open it** | Everyone at the office, or named people, each as an **Editor** or a **Viewer**, optionally until an end date; choose whether viewers may save a copy. **Copy link** gives a link for a chat or e-mail that opens the spreadsheet in the app after checking the reader's access; **Share to Dexterity Connect** puts that link in the office messenger, ready to send. |
 | **Where your edits are** | The status bar says **saved on the server**, **saving N edit(s)**, **offline** or **out of step, reloading**; a workbook being shared shows **Sharing · uploading** until the server has it. |
 | **Opening a shared file** | Opening a file that is being shared joins the live workbook, so a file on the network drive never splits into two versions. Reopening your own shared file rejoins it and brings the file up to date. |
 | **Stop sharing** | *Share › Stop sharing (keep my file)*: the file gets every edit and is just a file again; everyone else is told and keeps a copy in their window. If another program changed the file while it was shared, it is never overwritten: the app says so and the edits stay in the shared workbook (Save As keeps them). |

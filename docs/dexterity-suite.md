@@ -11,7 +11,7 @@ The code is in `crates/ui-egui/src/dex_ui/suite.rs`. Its tests are in
 
 | Where | Item | What it does | Shown when |
 |---|---|---|---|
-| Title bar › Share | **Share to Connect…** | Opens Connect's share window with the workbook's name and sheet as the title, plus a link to the selected cell or range. You pick who gets it, and Connect asks before it sends. | Connect is installed and a workbook is open |
+| Title bar › Share | **Share to Dexterity Connect** | The Share menu's own item (since 1.6.4, shared spreadsheets): opens Connect's share window with the spreadsheet's name and its link. The command `suite.shareToConnect` builds the same kind of link with the selected cell or range, for scripts and the command search. | A shared spreadsheet is open |
 | Title bar › Share, cell menu | **Discuss This Row in Connect…** | The same, but the message also carries the active row as `header: value` lines. The headers come from the first used row of the sheet, or from the table's header row when the cell is in a table. At most 12 pairs are sent, each value cut to 80 characters. | Connect is installed |
 | Cell menu | **Copy Link to This Cell** | For a shared workbook, copies `dexterity://open/<server>/<book>?at=<Sheet>!<Cell or range>`. For a file that is not shared, copies the file's path and the cell, and says that only sharing gives a link that opens at the cell. | The workbook is saved or shared |
 | Status bar, bottom right | **Notes** | Opens the workbook's notes in Slate. Without Slate, it opens them in a small notes pane in the app. | A workbook is open. A new workbook nobody has saved says on hover why it has no notes yet |

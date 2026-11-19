@@ -759,16 +759,14 @@ fn run(app: &mut SheetApp, id: &str, p: Json) {
     }
 }
 
-/// Title-bar Share menu: Share to Connect… and Discuss This Row in Connect.
+/// Title-bar Share menu: Discuss This Row in Connect. Sharing the whole spreadsheet is the menu's
+/// own "Share to Dexterity Connect" (`collab.shareToConnect`); `suite.shareToConnect` stays a
+/// command for the control channel and the command search.
 pub fn share_menu(app: &mut SheetApp, ui: &mut Ui) {
     if app.session.active().is_none() || !installed(app).connect {
         return;
     }
     ui.separator();
-    if ui.button("Share to Connect…").on_hover_text("Post a link to this spreadsheet in Dexterity Connect (you choose who, and confirm)").clicked()
-    {
-        run(app, "suite.shareToConnect", json!({}));
-    }
     if ui.button("Discuss This Row in Connect…").on_hover_text("Post this row's values and a link to it in Dexterity Connect").clicked() {
         run(app, "suite.discussRow", json!({}));
     }

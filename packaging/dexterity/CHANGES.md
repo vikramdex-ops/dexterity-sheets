@@ -14,7 +14,7 @@ its newest changes); the release notes on GitHub list every one of them with its
 - **Upgrading an office server:** its accounts (`users.json`) are carried over at the first start and the file is kept as `users.json.bak`; each account, with its role, colour and workbooks, passes to the first Windows account with the same user name. **Every PC must update to this version**: older apps can't sign in any more and are told "This server needs Dexterity Sheets … or newer — update from Help › Updates", and Help › Updates still brings them the new version from the server.
 - **Highlight Row/Column** replaces Focus Cell and the Options row highlight: one button at the bottom right of the status bar (by the zoom), View › Highlight on the ribbon or Ctrl+Alt+H turns it on; its popover picks None, Blue, Green, Yellow, Orange, Pink, Purple or Grey and Row, Column or Both. A selection highlights all its rows and columns, the headers show it more strongly, cell fills stay visible through it, it works with frozen panes and while typing, and it is remembered for you. When co-editing, a tick shows each teammate's row and column faintly in their colour.
 - **Works with the office's other apps.** Each item shows only when its app is installed on your PC:
-  - **Share to Connect…** and **Discuss This Row in Connect…** open Dexterity Connect with a link to the cell. Discuss also adds the row's values, and Connect asks before anything is sent.
+  - **Discuss This Row in Connect…** (Share menu and cell menu) opens Dexterity Connect with the row's values and a link to the cell; Connect asks before anything is sent.
   - **Copy Link to This Cell** gives a link that opens the shared spreadsheet at that cell or range.
   - **Notes** at the bottom right opens the workbook's notes in Slate. The notes file sits beside the workbook. Without Slate, the notes open in a small notes pane.
   - **Add Note for This Row** adds the row and a link back to it to those notes.
@@ -27,6 +27,82 @@ its newest changes); the release notes on GitHub list every one of them with its
 - **Connect quick panel:** the **Connect** button at the left of the status bar shows your recent mentions and assignments and has **Discuss in Connect**, which opens Dexterity Connect's share dialog with a link to the current cell.
 - **Dexterity Connect can read the office server:** Server Manager › Dexterity Connect makes and revokes tokens for a read-only API on TCP 47812 (people's assignments and mentions, the shared spreadsheets), so Nib can answer "what's assigned to me?". The server installer opens TCP 47812 for the office network; every request needs a token, which is shown once and only its fingerprint is kept.
 - **Notices in Dexterity Connect:** with a Connect hub and an integration token set on the same page, mentions and assignments also arrive as Direct messages in Connect, and everyone's Pulse shows a "Sheets pulse" card (spreadsheets, people working, open and overdue assignments). A hub that is away never holds anything up: notices wait and are sent later.
+
+## 1.6.8 · 19 November 2026
+
+- More fixes and improvements from official GridCraft (still GridCraft 0.19.1): 6 changes, the newest below. The release notes on GitHub list them all.
+- From GridCraft: Shapes: select, resize from every handle and rotate
+- From GridCraft: Wire craft-xls and craft-drawingml from craft-libs main
+- From GridCraft: Cut over xlsx omml to craft-math
+- From GridCraft: xlsx: fix main after the ODS cutover (clippy, empty first sheet, values, package checks)
+- From GridCraft: Find and Replace: Undo and Redo reach the sheet while the dialog is open
+- From GridCraft: Cut over gridcraft-xlsx ODS reader to craft-ods
+
+## 1.6.7 · 19 November 2026
+
+- More fixes and improvements from official GridCraft (still GridCraft 0.19.1): 23 changes, the newest below. The release notes on GitHub list them all.
+- From GridCraft: Drag a selected chart's data outline to change its range (#4389, #4390)
+- From GridCraft: XLSX: read, evaluate and write Excel 2010 conditional formats
+- From GridCraft: RATE follows Excel's iteration
+- From GridCraft: Fix main's build and tests after the recent merges
+- From GridCraft: xtask: `parity --check` accepts a CRLF checkout of the checklist
+- From GridCraft: xlsx/csv: cap secondary reader allocations
+- From GridCraft: Delete separate rows or columns in one pass
+- From GridCraft: Create new saved files without group/other write permission
+
+## 1.6.6 · 18 November 2026
+
+- More fixes and improvements from official GridCraft (still GridCraft 0.19.1): 3 changes, the newest below. The release notes on GitHub list them all.
+- From GridCraft: Fuzzer: undo checks follow the bounded undo history
+- From GridCraft: Flush a saved workbook to disk before replacing the old one
+- From GridCraft: Sort: Custom Sort dialog redesign
+
+## 1.6.5 · 17 November 2026
+
+- More fixes and improvements from official GridCraft (still GridCraft 0.19.1): 22 changes, the newest below. The release notes on GitHub list them all.
+- From GridCraft: pdf: follow up shared writer cutover with merged-library pin
+- From GridCraft: pdf: move object and xref envelope writing to craft-pdf
+- From GridCraft: Equation parse errors follow the interface language
+- From GridCraft: Status bar statistics, resize tips, sheet notes and macro toasts follow the interface language
+- From GridCraft: Equation fallback text in xlsx is drawn at a normal font size
+- From GridCraft: xlsx: share SpreadsheetML string reader/writer codec (cutover stage 1)
+- From GridCraft: XLSX: a hidden Total Row keeps its calculations
+- From GridCraft: XLSX: keep Page Setup's first page number
+
+## 1.6.4 · 17 November 2026
+
+- **Share › Share to Dexterity Connect**: opens Dexterity Connect, the office messenger, with the shared spreadsheet's name and its link filled in; choose who it is for and send. In the message the link opens the spreadsheet in Dexterity Sheets. If the messenger is not installed, a message says so.
+- More fixes and improvements from official GridCraft (still GridCraft 0.19.1): 3 changes, the newest below. The release notes on GitHub list them all.
+- From GridCraft: Sandbox: test the socket owner ioctls with a real pointer
+
+## 1.6.3 · 14 November 2026
+
+- More fixes and improvements from official GridCraft (still GridCraft 0.19.1): 8 changes, the newest below. The release notes on GitHub list them all.
+- From GridCraft: perf: win back formula-entry and XLSX-save time lost since 23829d8c
+- From GridCraft: XLSX: warn when a pivot cache can't be read or is too large
+- From GridCraft: Keep mid-field quotes when splitting with Text to Columns
+- From GridCraft: calc: linear dependency extraction for range-operator chains
+- From GridCraft: fix(functions): reject negative fractions in GCD and LCM
+- From GridCraft: functions: ACCRINTM accrues zero when issue equals settlement
+
+## 1.6.2 · 13 November 2026
+
+- More fixes and improvements from official GridCraft (still GridCraft 0.19.1): 6 changes, the newest below. The release notes on GitHub list them all.
+- From GridCraft: Charts: resolved data and rendering are cached between frames
+- From GridCraft: PDF: writer cleanup, q nesting limit, image dedupe, style only on change
+- From GridCraft: LINEST, LOGEST, TREND, GROWTH: solve by Householder QR
+- From GridCraft: Grid: resizing several selected columns applies the width on release
+- From GridCraft: Shift+arrows, Enter and Tab no longer get stuck on a merged cell
+- From GridCraft: Insert: WordArt (insert.wordArt)
+
+## 1.6.1 · 13 November 2026
+
+- More fixes and improvements from official GridCraft (still GridCraft 0.19.1): 5 changes, the newest below. The release notes on GitHub list them all.
+- From GridCraft: xlsx: .xls data validation from craft-xls
+- From GridCraft: xlsx: OPC packages through craft-opc; craft-libs at aa84415b
+- From GridCraft: xlsx: encrypted workbooks through craft-offcrypto and craft-cfb
+- From GridCraft: xlsx, engine: CSV and SYLK through craft-csv
+- From GridCraft: xlsx: read .xls through craft-xls
 
 ## 1.6.0 · 12 November 2026
 
