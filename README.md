@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <sub><!-- dex:release -->Version <b>1.6.8</b> · 19 November 2026 · based on GridCraft 0.19.1<!-- /dex:release --> · Windows 10 and 11 · no administrator rights needed · updates itself</sub>
+  <sub><!-- dex:release -->Version <b>1.6.9</b> · 19 November 2026 · based on GridCraft 0.19.1<!-- /dex:release --> · Windows 10 and 11 · no administrator rights needed · updates itself</sub>
 </p>
 
 <p align="center">
@@ -104,14 +104,10 @@
 ## What's new
 
 <!-- dex:whatsnew -->
-- More fixes and improvements from official GridCraft (still GridCraft 0.19.1): 6 changes, the newest below. The release notes on GitHub list them all.
-- From GridCraft: Shapes: select, resize from every handle and rotate
-- From GridCraft: Wire craft-xls and craft-drawingml from craft-libs main
-- From GridCraft: Cut over xlsx omml to craft-math
-- From GridCraft: xlsx: fix main after the ODS cutover (clippy, empty first sheet, values, package checks)
-- From GridCraft: Find and Replace: Undo and Redo reach the sheet while the dialog is open
+- More fixes and improvements from official GridCraft (still GridCraft 0.19.1): 1 change, the newest below. The release notes on GitHub list them all.
+- From GridCraft: Preserve OMML import fallback after shared math cutover
 
-[Everything in 1.6.8](https://github.com/vikramdex-ops/dexterity-sheets/releases/tag/v1.6.8) and 1 more.
+[Everything in 1.6.9](https://github.com/vikramdex-ops/dexterity-sheets/releases/tag/v1.6.9).
 <!-- /dex:whatsnew -->
 
 Dexterity Sheets is built on the open-source [GridCraft](https://github.com/storytold/gridcraft)

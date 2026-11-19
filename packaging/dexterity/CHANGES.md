@@ -9,6 +9,8 @@ its newest changes); the release notes on GitHub list every one of them with its
 
 ## Unreleased
 
+## 1.6.9 · 19 November 2026
+
 - More fixes and improvements from official GridCraft (still GridCraft 0.19.1): 1 change, the newest below. The release notes on GitHub list them all.
 - From GridCraft: Preserve OMML import fallback after shared math cutover
 
