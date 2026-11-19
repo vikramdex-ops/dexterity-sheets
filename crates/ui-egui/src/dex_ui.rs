@@ -28,6 +28,7 @@ pub(crate) fn desktop() -> bool {
 pub mod automation;
 pub mod highlight;
 pub mod mention;
+pub mod people;
 pub mod recovery;
 pub mod releases;
 pub mod share;

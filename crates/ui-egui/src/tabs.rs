@@ -396,6 +396,7 @@ pub fn status_bar(app: &mut SheetApp, ui: &mut Ui) {
                 ui.add(egui::Label::new(rich).selectable(false));
             };
             ui.horizontal_centered(|ui| {
+                crate::dex_ui::people::status_button(app, ui);
                 let mode = match app.session.mode {
                     gridcraft_engine::Mode::Ready => "Ready",
                     gridcraft_engine::Mode::Enter => "Enter",

@@ -73,7 +73,7 @@
 <tr>
 <td width="33%" valign="top"><p><b>Start from the office's templates.</b> <b>File › New</b> lists the approved project trackers, registers and minutes, with a preview. A new spreadsheet is your own copy: a later version of the template never changes it.</p></td>
 <td width="33%" valign="top"><p><b>Let the server do the routine checks.</b> <b>Automation rules</b> on a shared spreadsheet: every Monday find overdue items and run the Quality Check, or stamp the date when a status becomes Completed. Fixed steps only, no macros.</p></td>
-<td width="33%" valign="top"><p><b>Told when it matters.</b> Type <b>@</b> in a comment to mention a colleague: they get a Windows notification that opens the cell. You also hear when something is shared with you, your access changes, others edited while you were away (one summary), or a new version is ready.</p></td>
+<td width="33%" valign="top"><p><b>Told when it matters.</b> Type <b>@</b> in a comment, a note or a cell to mention a colleague, or assign them cells with a due date: they get a Windows notification with <b>Go to cell</b>. You also hear when something is shared with you, your access changes, others edited while you were away (one summary), or a new version is ready.</p></td>
 </tr>
 <tr>
 <td width="33%" valign="top"><p><b>Works with the office's other apps.</b> Right-click a row to discuss it in <b>Dexterity Connect</b> with a link that opens at the cell, or to add it to the workbook's notes in <b>Slate</b> (the <b>Notes</b> button, bottom right). <b>Find in Sleuth</b> and <b>Open in Project Opener</b> are a right-click away too. Each item shows only when its app is installed (<a href="docs/dexterity-suite.md">how it works</a>).</p></td>
@@ -261,6 +261,7 @@ Everything else is in the Server Manager too, so the job can be handed to anyone
 |---|---|
 | **Server** | Running or stopped, with Start / Stop / Restart; the name, computer name and addresses teammates use; whether the firewall is open (and a button to open it); the data folder and its size; the server log |
 | **People and devices** | Everyone who has connected, with their PCs (device code, PC name, last seen): approve or revoke a PC, change a role, remove a person. PCs waiting for approval are at the top. The last administrator can't be locked out. |
+| **Dexterity Connect** | Tokens for the read-only API Dexterity Connect asks on TCP 47812 (assignments, mentions, shared spreadsheets), shown once and revocable; optionally the Connect hub and integration token, so mentions and assignments also arrive in Connect with a Sheets pulse card |
 | **App updates** | Fetch new versions of Dexterity Sheets from this GitHub repository automatically, or add an `.msi` by hand; every PC on the network is offered it |
 | **Backup and restore** | One `.zip` with everyone's profile and PCs, every shared workbook, edit history and version; restoring keeps the data it replaces |
 | **Installed versions** | Which Dexterity Sheets version each PC runs, its channel and when it was last seen, with a count per version |
@@ -292,7 +293,9 @@ only by administrators; uninstalling never deletes it. Full guide:
 | **Versions** | *Review › Versions*: keep a labelled version ("Issued for review Rev B"), open any version as a separate copy, or restore one for everyone (the current state is kept first). Ctrl+S keeps a version too. |
 | **Offline** | Edits made while the server can't be reached are kept and sent on reconnect; the status bar shows how many are waiting. |
 | **Conflicts** | Two people changing the same cell at the same moment: the later edit wins, both are told who changed it and which value was kept, and the replaced value stays in Edit History. Different cells never conflict. |
-| **@mentions** | Type **@** in a comment or reply and pick a colleague: they get a Windows notification with the spreadsheet, cell and comment, and clicking it opens that cell. Someone signed out is told at sign-in; if a person you mention can't open the spreadsheet, you are told so you can share it. |
+| **People** | *Review › People*: everyone on the office server, online or offline, and which shared spreadsheet they are in (only spreadsheets you may open). |
+| **Assign To** | *Review › Assign To* gives the selected cells to a colleague with an optional due date; they are notified with Go to cell, see it under *Review › Assigned to Me* and mark it done. The **Connect** button at the left of the status bar shows your recent mentions and assignments and has *Discuss in Connect*. |
+| **@mentions** | Type **@** in a comment, reply, note or a cell's text and pick a colleague: they get a Windows notification with the spreadsheet, cell and text, and **Go to cell** opens that cell. Someone signed out is told at sign-in; if a person you mention can't open the spreadsheet, you are told so you can share it. |
 | **Automation rules** | *Share › Automation rules…*: on a schedule or when a value changes, the office server finds overdue items, runs the Quality Check, writes a report, stamps a completion time or notifies people. Fixed steps only: no macros or scripts. |
 
 What the server keeps on disk, and why nothing acknowledged can be lost, is in

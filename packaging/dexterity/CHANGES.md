@@ -20,6 +20,13 @@ its newest changes); the release notes on GitHub list every one of them with its
   - **Add Note for This Row** adds the row and a link back to it to those notes.
   - **Find in Sleuth** and **Open in Project Opener** are in the cell menu.
   - Links in cells to Connect, Sleuth, Datum, Project Opener and Dexterity Sheets open with one click.
+- **An old administrator account is no longer taken over by name alone.** When a carried-over account was an administrator, the first Windows account with that user name now waits for approval (device code) before it signs in with the administrator role; approve it in Server Manager › People and devices, which works even when no administrator is signed in, or from another administrator's app. Carried-over editors and viewers are let in as before.
+- **People:** Review › People lists everyone on the office server with the name they chose, their Windows account, their colour, whether they are online and which shared spreadsheet they are in (only spreadsheets you may open yourself). It keeps itself up to date.
+- **@mentions everywhere:** besides comments and replies, typing `@` in a note or in a cell's text (in the cell or the formula bar) suggests people from the People list. The person mentioned gets a Windows notification with **Go to cell**, which opens the spreadsheet at that cell.
+- **Assign To:** Review › Assign To gives the selected cells of a shared spreadsheet to a colleague, with an optional due date (YYYY-MM-DD) and a status (open or done). They are notified with Go to cell; **Review › Assigned to Me** lists their open items in every shared spreadsheet, with Go to cell and Mark done, and whoever assigned it is told when it is done.
+- **Connect quick panel:** the **Connect** button at the left of the status bar shows your recent mentions and assignments and has **Discuss in Connect**, which opens Dexterity Connect's share dialog with a link to the current cell.
+- **Dexterity Connect can read the office server:** Server Manager › Dexterity Connect makes and revokes tokens for a read-only API on TCP 47812 (people's assignments and mentions, the shared spreadsheets), so Nib can answer "what's assigned to me?". The server installer opens TCP 47812 for the office network; every request needs a token, which is shown once and only its fingerprint is kept.
+- **Notices in Dexterity Connect:** with a Connect hub and an integration token set on the same page, mentions and assignments also arrive as Direct messages in Connect, and everyone's Pulse shows a "Sheets pulse" card (spreadsheets, people working, open and overdue assignments). A hub that is away never holds anything up: notices wait and are sent later.
 
 ## 1.6.0 · 12 November 2026
 

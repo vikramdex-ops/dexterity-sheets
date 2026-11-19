@@ -75,6 +75,20 @@ pub fn review_buttons(app: &mut SheetApp, ui: &mut Ui) {
             app.run_or_alert("data.qualityCheck", json!({}));
         }
     });
+    // People on the office server and assignments (dex_ui/people.rs).
+    ui.vertical(|ui| {
+        if small_button(ui, Icon::Share, "People", "Everyone on the office server: who is online and in which spreadsheet", false).clicked() {
+            app.run_or_alert("collab.people", json!({}));
+        }
+        if small_button(ui, Icon::Comment, "Assign To", "Give the selected cells of this shared spreadsheet to someone, with a due date", false)
+            .clicked()
+        {
+            app.run_or_alert("collab.assign", json!({}));
+        }
+        if small_button(ui, Icon::Check, "Assigned to Me", "What others gave you to look at, in every shared spreadsheet", false).clicked() {
+            app.run_or_alert("collab.assigned", json!({}));
+        }
+    });
 }
 
 /// Formulas ▸ Formula Auditing: Diagnostics and Explain This Error.

@@ -1296,7 +1296,20 @@ fn accounts_from_users_json_pass_to_the_matching_windows_account() {
         crate::client::Event::Connected { me, .. } => assert_eq!(me.role, crate::proto::Role::Editor),
         e => panic!("{e:?}"),
     }
-    let v = Client::connect(config(port, r"DDS\Vikram", Arc::new(crate::auth::DeviceKey::generate().expect("key"))), Arc::new(|| {}));
+    // The old administrator's name alone is not enough: his PC waits for approval (here by the
+    // Server Manager, which edits profiles.json on the server even when no administrator is in).
+    let vkey = Arc::new(crate::auth::DeviceKey::generate().expect("key"));
+    let waiting = Client::connect(config(port, r"DDS\Vikram", vkey.clone()), Arc::new(|| {}));
+    match first_event(&waiting) {
+        crate::client::Event::Pending { code, .. } => assert_eq!(code, vkey.code()),
+        e => panic!("an adopted administrator must wait for approval: {e:?}"),
+    }
+    drop(waiting);
+    let mut all = crate::server::load_profiles(&dir).expect("profiles");
+    assert_eq!(all.profiles.get(r"dds\vikram").map(|p| p.role), Some(crate::proto::Role::Admin), "the role waits with him");
+    all.set_device(&vkey.code(), crate::proto::DeviceStatus::Approved, Some(r"dds\vikram")).expect("approve");
+    crate::server::save_profiles(&dir, &all).expect("save");
+    let v = Client::connect(config(port, r"DDS\Vikram", vkey), Arc::new(|| {}));
     match first_event(&v) {
         crate::client::Event::Connected { me, .. } => {
             assert_eq!(
@@ -1370,4 +1383,260 @@ fn a_taken_workbook_id_is_drawn_again() {
     assert_eq!(seen.len(), 4, "three taken candidates, then a free one: {seen:?}");
     assert!(id.starts_with("line-list-") && !seen[..3].contains(&id), "{id} {seen:?}");
     assert!(crate::server::slug("", |_| false).starts_with("book-"));
+}
+
+/// Task 0: a carried-over administrator account is taken over only after approval (the Server
+/// Manager or another administrator); a carried-over editor keeps today's trust on first use.
+#[test]
+fn a_carried_over_administrator_waits_for_approval_but_an_editor_does_not() {
+    let rec = |user: &str, role| crate::server::UserRecord { user: user.into(), display: user.into(), role, color: [1, 2, 3], disabled: false };
+    let mut p = crate::server::Profiles {
+        carry_over: vec![rec("boss", crate::proto::Role::Admin), rec("anita", crate::proto::Role::Editor)],
+        ..Default::default()
+    };
+    let key = |k: &crate::auth::DeviceKey| crate::auth::hex(&k.public_key());
+    let (bk, ak) = (crate::auth::DeviceKey::generate().expect("key"), crate::auth::DeviceKey::generate().expect("key"));
+    let (admitted, adopted) = p.admit(r"ELSEWHERE\Boss", "", &key(&bk), "PC1", 1);
+    assert_eq!(admitted, crate::server::Admission::Pending(bk.code()), "any domain's Boss would otherwise be an administrator");
+    assert_eq!(adopted.as_deref(), Some("boss"));
+    assert_eq!(p.profiles.get(r"elsewhere\boss").map(|x| x.role), Some(crate::proto::Role::Admin));
+    assert!(p.users().iter().any(|u| u.user == r"elsewhere\boss" && u.disabled), "not in until approved");
+    // Asking again changes nothing until someone approves it.
+    assert_eq!(p.admit(r"ELSEWHERE\Boss", "", &key(&bk), "PC1", 2).0, crate::server::Admission::Pending(bk.code()));
+    p.set_device(&bk.code(), crate::proto::DeviceStatus::Approved, None).expect("approved on the server");
+    assert_eq!(p.admit(r"ELSEWHERE\Boss", "", &key(&bk), "PC1", 3).0, crate::server::Admission::In);
+    // An editor carried over is in at once, as before.
+    assert_eq!(p.admit(r"DDS\Anita", "", &key(&ak), "PC2", 4).0, crate::server::Admission::In);
+    assert_eq!(p.profiles.get(r"dds\anita").map(|x| x.role), Some(crate::proto::Role::Editor));
+}
+
+fn people(c: &Client) -> Vec<crate::proto::PersonInfo> {
+    while c.events.try_recv().is_ok() {}
+    c.send(ClientMsg::ListPeople);
+    match recv(c, |e| matches!(e, crate::client::Event::Message(ServerMsg::People { .. }))) {
+        crate::client::Event::Message(ServerMsg::People { people }) => people,
+        _ => unreachable!(),
+    }
+}
+
+fn assigned(c: &Client) -> Vec<crate::proto::Assignment> {
+    match recv(c, |e| matches!(e, crate::client::Event::Message(ServerMsg::Assigned { .. }))) {
+        crate::client::Event::Message(ServerMsg::Assigned { items }) => items,
+        _ => unreachable!(),
+    }
+}
+
+/// Everyone sees who is on the server and in which workbook, but only the workbooks they may
+/// open themselves, and never anyone's devices.
+#[test]
+fn the_people_list_shows_who_is_here_and_where_within_each_ones_access() {
+    let lab = Lab::new("roster");
+    let a = lab.connect("usera");
+    share(&a, "Line list", &rich_workbook());
+    let ra = Replica::opened(&a);
+    let id = ra.sd.book.id.clone();
+    // Only User B is given it.
+    let access = crate::proto::Access { mode: "people".into(), people: [("userb".to_string(), "editor".to_string())].into(), ..Default::default() };
+    a.send(ClientMsg::SetAccess { book: id.clone(), access });
+    let b = lab.connect("userb");
+    let v = lab.connect("viewer");
+    let seen_by_b = people(&b);
+    let ua = seen_by_b.iter().find(|p| p.user == "usera").expect("User A listed");
+    assert!(ua.online && ua.display == "User A");
+    assert_eq!(ua.books, vec![(id.clone(), "Line list".to_string())], "B may open it, so B sees A is in it");
+    let seen_by_v = people(&v);
+    let ua = seen_by_v.iter().find(|p| p.user == "usera").expect("listed for the viewer too");
+    assert!(ua.online && ua.books.is_empty(), "the viewer may not open it, so its name is not shown");
+    // Nothing about devices travels to people who are not administrators.
+    let raw = serde_json::to_string(&seen_by_v).expect("json");
+    assert!(!raw.contains("devices") && !raw.contains(&lab.key("usera").code()), "{raw}");
+    drop(v);
+    // Someone leaving updates everyone's list without asking.
+    let gone = recv(
+        &b,
+        |e| matches!(e, crate::client::Event::Message(ServerMsg::People { people }) if people.iter().any(|p| p.user == "viewer" && !p.online)),
+    );
+    assert!(matches!(gone, crate::client::Event::Message(ServerMsg::People { .. })));
+}
+
+/// A range assigned to someone: they are told (notice with the cell), it is in their list, they
+/// mark it done and whoever assigned it hears so. Refusals say why.
+#[test]
+fn an_assignment_reaches_the_assignee_who_marks_it_done() {
+    let lab = Lab::new("assign");
+    crate::server::set_profile(&lab.dir, "userc", "User C", crate::proto::Role::Editor).expect("user");
+    let a = lab.connect("usera");
+    let b = lab.connect("userb");
+    share(&a, "MTO", &rich_workbook());
+    let ra = Replica::opened(&a);
+    let id = ra.sd.book.id.clone();
+    let assign = |who: &str, cell: &str, due: Option<&str>| ClientMsg::Assign {
+        book: id.clone(),
+        sheet: "Sheet1".into(),
+        cell: cell.into(),
+        user: who.into(),
+        title: "Check the rating".into(),
+        due: due.map(str::to_string),
+        status: None,
+    };
+    a.send(assign("USERB", "$b$4:c9", Some("2030-01-31")));
+    let n = notice(&b);
+    assert_eq!(
+        (n.kind.as_str(), n.by.as_str(), n.sheet.as_str(), n.cell.as_str(), n.book.as_str()),
+        ("assigned", "User A", "Sheet1", "B4", id.as_str())
+    );
+    assert!(n.text.contains("Check the rating") && n.text.contains("2030-01-31"), "{}", n.text);
+    b.send(ClientMsg::ListAssigned);
+    let items = assigned(&b);
+    assert_eq!(items.len(), 1);
+    let it = &items[0];
+    assert_eq!(
+        (it.cell.as_str(), it.status.as_str(), it.due.as_str(), it.book_name.as_str(), it.by.as_str()),
+        ("B4:C9", "open", "2030-01-31", "MTO", "usera")
+    );
+    // Bad input is refused with the reason.
+    a.send(assign("userb", "B4", Some("31/01/2030")));
+    assert!(error(&a).0.contains("YYYY-MM-DD"));
+    a.send(assign("nobody", "B4", None));
+    assert!(error(&a).0.contains("nobody called"));
+    a.send(assign("userb", "Sheet1!B4", None));
+    assert!(error(&a).0.contains("not a cell"));
+    // Someone who can't open the workbook can't be given part of it.
+    let access = crate::proto::Access { mode: "people".into(), people: [("userb".to_string(), "editor".to_string())].into(), ..Default::default() };
+    a.send(ClientMsg::SetAccess { book: id.clone(), access });
+    let _ = notice(&b);
+    a.send(assign("userc", "B4", None));
+    assert!(error(&a).0.contains("share it with them first"));
+    // A stranger can't mark it done; the assignee can, and User A hears.
+    let c = lab.connect("userc");
+    c.send(ClientMsg::SetAssignment { book: id.clone(), id: it.id.clone(), status: "done".into() });
+    assert!(!error(&c).0.is_empty());
+    b.send(ClientMsg::SetAssignment { book: id.clone(), id: it.id.clone(), status: "Done".into() });
+    let after = assigned(&b);
+    assert_eq!(after.first().map(|x| x.status.as_str()), Some("done"));
+    let n = notice(&a);
+    assert_eq!((n.kind.as_str(), n.by.as_str()), ("assignmentDone", "User B"));
+}
+
+/// One HTTP request to the read API; (status, body).
+fn http(port: u16, raw: &[u8]) -> (u16, String) {
+    use std::io::{Read, Write};
+    let mut s = std::net::TcpStream::connect(("127.0.0.1", port)).expect("connect");
+    s.set_read_timeout(Some(Duration::from_secs(10))).expect("timeout");
+    let _ = s.write_all(raw);
+    let mut out = Vec::new();
+    let _ = s.read_to_end(&mut out);
+    let text = String::from_utf8_lossy(&out).to_string();
+    let status = text.split(' ').nth(1).and_then(|c| c.parse().ok()).unwrap_or(0);
+    let body = text.split_once("\r\n\r\n").map(|x| x.1.to_string()).unwrap_or_default();
+    (status, body)
+}
+
+fn get(port: u16, path: &str, token: Option<&str>) -> (u16, serde_json::Value) {
+    let auth = token.map(|t| format!("Authorization: Bearer {t}\r\n")).unwrap_or_default();
+    let (status, body) = http(port, format!("GET {path} HTTP/1.1\r\nHost: x\r\n{auth}\r\n").as_bytes());
+    (status, serde_json::from_str(&body).unwrap_or(serde_json::Value::Null))
+}
+
+/// The read API Dexterity Connect asks: token checks, the four answers, the user name as it
+/// arrives (URL-encoded, any case), and the size limits.
+#[test]
+fn the_read_api_answers_connect_with_a_token_only() {
+    let lab = Lab::new("api");
+    crate::server::set_profile(&lab.dir, r"DEX\Priya", "Priya Raman", crate::proto::Role::Editor).expect("user");
+    let port = crate::api::start(lab._server.clone(), 0).expect("api");
+    let (token, token_id) = crate::api::create_token(&lab.dir, "Dexterity Connect").expect("token");
+    assert!(!std::fs::read_to_string(crate::api::tokens_path(&lab.dir)).expect("file").contains(&token), "only the hash is kept");
+    // No token, a wrong token, another scheme: 401 whatever the path.
+    assert_eq!(get(port, "/api/v1/health", None).0, 401);
+    assert_eq!(get(port, "/api/v1/health", Some("dsk_wrong")).0, 401);
+    assert_eq!(get(port, "/nothing", None).0, 401);
+    let (s, _) = http(port, format!("GET /api/v1/health HTTP/1.1\r\nAuthorization: Basic {token}\r\n\r\n").as_bytes());
+    assert_eq!(s, 401);
+    let (s, health) = get(port, "/api/v1/health", Some(&token));
+    assert_eq!(s, 200);
+    assert_eq!((health["name"].as_str(), health["version"].as_str()), (Some("Test"), Some(crate::APP_VERSION.trim())));
+    assert_eq!(get(port, "/api/v1/nothing", Some(&token)).0, 404);
+    assert_eq!(get(port, "/api/v2/books", Some(&token)).0, 404);
+    // A workbook, a mention of Priya in a comment and a range assigned to her.
+    let a = lab.connect("usera");
+    let priya = Client::connect(config(lab.port, r"DEX\Priya", lab.key("priya")), Arc::new(|| {}));
+    recv(&priya, |e| matches!(e, crate::client::Event::Connected { .. }));
+    share(&a, "Line list 100", &rich_workbook());
+    let mut ra = Replica::opened(&a);
+    let id = ra.sd.book.id.clone();
+    a.send(ra.edit("review.newComment", json!({"sheet": "MTO", "cell": "B2", "text": "@Priya Raman please check the rating"})));
+    let n = notice(&priya);
+    assert_eq!((n.kind.as_str(), n.source.as_str(), n.cell.as_str()), ("mention", "comment", "B2"));
+    a.send(ClientMsg::Assign {
+        book: id.clone(),
+        sheet: "Line List".into(),
+        cell: "C9".into(),
+        user: r"dex\priya".into(),
+        title: "Rating".into(),
+        due: Some("2030-02-01".into()),
+        status: None,
+    });
+    let _ = notice(&priya);
+    let (s, rows) = get(port, "/api/v1/people/dex%5Cpriya/assigned", Some(&token));
+    assert_eq!(s, 200);
+    let row = &rows[0];
+    assert_eq!(
+        (row["book"].as_str(), row["sheet"].as_str(), row["cell"].as_str(), row["status"].as_str(), row["due"].as_str()),
+        (Some("Line list 100"), Some("Line List"), Some("C9"), Some("open"), Some("2030-02-01"))
+    );
+    let link = row["link"].as_str().unwrap_or_default();
+    assert!(link.starts_with("dexterity://open/") && link.ends_with(&format!("/{id}?at=Line%20List!C9")), "{link}");
+    assert_eq!(crate::proto::parse_link_at(link).and_then(|l| l.2), Some(("Line List".into(), "C9".into())));
+    // Any case, encoded or not.
+    assert_eq!(get(port, "/api/v1/people/DEX%5CPRIYA/assigned", Some(&token)).1, rows);
+    assert_eq!(get(port, "/api/v1/people/nobody/assigned", Some(&token)).1, json!([]));
+    let (s, m) = get(port, "/api/v1/people/dex%5Cpriya/mentions?since=2000-01-01T00:00:00Z", Some(&token));
+    assert_eq!(s, 200);
+    assert_eq!(m.as_array().map(Vec::len), Some(1), "{m}");
+    assert_eq!((m[0]["from"].as_str(), m[0]["cell"].as_str(), m[0]["book"].as_str()), (Some("User A"), Some("B2"), Some("Line list 100")));
+    assert!(m[0]["text"].as_str().unwrap_or_default().contains("please check"));
+    assert!(chrono::DateTime::parse_from_rfc3339(m[0]["at"].as_str().unwrap_or_default()).is_ok());
+    let later = crate::now_ms() + 60_000;
+    assert_eq!(get(port, &format!("/api/v1/people/dex%5Cpriya/mentions?since={later}"), Some(&token)).1, json!([]));
+    assert_eq!(get(port, "/api/v1/people/dex%5Cpriya/mentions?since=yesterday", Some(&token)).0, 400);
+    books_and_limits(&lab.dir, port, &token, &token_id, &id);
+}
+
+/// `/api/v1/books`; headers past 16 KB are refused (and the API keeps answering); a revoked
+/// token is refused at once.
+fn books_and_limits(dir: &std::path::Path, port: u16, token: &str, token_id: &str, id: &str) {
+    let (s, list) = get(port, "/api/v1/books", Some(token));
+    assert_eq!(s, 200);
+    let b = list.as_array().and_then(|l| l.iter().find(|b| b["id"] == json!(id))).cloned().unwrap_or_default();
+    assert_eq!((b["name"].as_str(), b["sharer"].as_str()), (Some("Line list 100"), Some("usera")));
+    assert_eq!(b["online"], json!(["usera"]));
+    assert!(b["link"].as_str().unwrap_or_default().ends_with(&format!("/{id}")));
+    let big = format!("GET /api/v1/health HTTP/1.1\r\nAuthorization: Bearer {token}\r\nX-Pad: {}\r\n\r\n", "a".repeat(20 * 1024));
+    assert_eq!(http(port, big.as_bytes()).0, 431);
+    assert_eq!(get(port, "/api/v1/health", Some(token)).0, 200, "still answering");
+    crate::api::revoke_token(dir, token_id).expect("revoke");
+    assert_eq!(get(port, "/api/v1/health", Some(token)).0, 401);
+}
+
+#[test]
+fn the_read_api_parser_is_strict() {
+    use crate::api::{parse_head, parse_since, percent_decode};
+    let r = parse_head(b"GET /api/v1/people/dex%5Cpriya/mentions?since=1 HTTP/1.1\r\nauthorization: bearer  abc \r\nHost: h").expect("parsed");
+    assert_eq!(
+        (r.method.as_str(), r.path.as_str(), r.query.as_str(), r.bearer.as_deref()),
+        ("GET", "/api/v1/people/dex%5Cpriya/mentions", "since=1", Some("abc"))
+    );
+    assert_eq!(parse_head(b"GET api HTTP/1.1"), Err(400));
+    assert_eq!(parse_head(b"GET / SPDY/3"), Err(400));
+    assert_eq!(parse_head(b"GET / HTTP/1.1\r\nno colon here"), Err(400));
+    assert_eq!(parse_head(&[0xff, 0xfe]), Err(400));
+    assert_eq!(percent_decode("dex%5Cpriya").as_deref(), Some(r"dex\priya"));
+    assert_eq!(percent_decode("bad%5"), None);
+    assert_eq!(percent_decode("%ff"), None);
+    assert_eq!(parse_since("1700000000000"), Some(1_700_000_000_000));
+    assert_eq!(parse_since("2026-11-12T10:00:00Z"), Some(1_794_477_600_000));
+    assert_eq!(parse_since("2026-11-12T15:30:00+05:30"), Some(1_794_477_600_000));
+    assert_eq!(parse_since("2026-11-12").map(|t| t > 0), Some(true));
+    assert_eq!(parse_since("soon"), None);
 }

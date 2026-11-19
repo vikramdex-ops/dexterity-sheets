@@ -11,6 +11,9 @@ pub const PORT: u16 = gridcraft_collab::proto::DEFAULT_PORT;
 pub const DISCOVERY_PORT: u16 = gridcraft_collab::proto::DISCOVERY_PORT;
 pub const FIREWALL_TCP: &str = "Dexterity Sheets Server (TCP)";
 pub const FIREWALL_UDP: &str = "Dexterity Sheets Discovery (UDP)";
+/// The read API Dexterity Connect asks (people's assignments and mentions, the shared workbooks).
+pub const API_PORT: u16 = gridcraft_collab::api::DEFAULT_PORT;
+pub const FIREWALL_API: &str = "Dexterity Sheets Read API (TCP)";
 
 pub fn default_data_dir() -> PathBuf {
     let base = std::env::var_os("ProgramData").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("."));
@@ -179,7 +182,7 @@ pub fn firewall_rule_exists(name: &str) -> bool {
 /// Opens the server's ports for the office network (Domain and Private profiles), as the installer
 /// does; replaces rules of the same name.
 pub fn open_firewall(server_exe: &Path) -> Result<(), String> {
-    for (name, proto, port) in [(FIREWALL_TCP, "TCP", PORT), (FIREWALL_UDP, "UDP", DISCOVERY_PORT)] {
+    for (name, proto, port) in [(FIREWALL_TCP, "TCP", PORT), (FIREWALL_API, "TCP", API_PORT), (FIREWALL_UDP, "UDP", DISCOVERY_PORT)] {
         let _ = quiet("netsh.exe").args(["advfirewall", "firewall", "delete", "rule"]).arg(format!("name={name}")).output();
         let o = quiet("netsh.exe")
             .args(["advfirewall", "firewall", "add", "rule"])

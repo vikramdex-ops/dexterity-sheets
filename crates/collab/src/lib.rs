@@ -14,12 +14,17 @@
 //! - [`sync`]: keeping an open workbook in step with the server.
 //! - [`server`]: the server.
 //! - [`discovery`]: finding servers on the LAN.
-//! - [`mention`]: @mentions in comments.
+//! - [`mention`]: @mentions in comments, notes and cells.
+//! - [`tasks`]: cells assigned to people, and the log of who was mentioned.
+//! - [`api`]: the read API Dexterity Connect asks (HTTP, TCP 47812).
+//! - [`connect`]: notices posted to Dexterity Connect.
 
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
+pub mod api;
 pub mod auth;
 pub mod client;
+pub mod connect;
 pub mod discovery;
 pub mod identity;
 pub mod mention;
@@ -27,6 +32,7 @@ pub mod patch;
 pub mod proto;
 pub mod server;
 pub mod sync;
+pub mod tasks;
 
 #[cfg(test)]
 mod tests;
