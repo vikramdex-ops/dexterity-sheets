@@ -9,6 +9,8 @@ its newest changes); the release notes on GitHub list every one of them with its
 
 ## Unreleased
 
+## 1.6.8 · 19 November 2026
+
 - More fixes and improvements from official GridCraft (still GridCraft 0.19.1): 6 changes, the newest below. The release notes on GitHub list them all.
 - From GridCraft: Shapes: select, resize from every handle and rotate
 - From GridCraft: Wire craft-xls and craft-drawingml from craft-libs main
