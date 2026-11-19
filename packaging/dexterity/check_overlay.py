@@ -80,10 +80,10 @@ HOOKS = [
     ("crates/numfmt/tests/render_equality.rs", "dexterity::golden(name, golden)", "the golden test knows the rows that differ here on purpose"),
     # Regional settings in number display (crates/numfmt/src/dex.rs): the only Dexterity lines in upstream's renderer.
     ("crates/numfmt/src/lib.rs", "mod dex;", "the regional-settings module of number formats is compiled in"),
-    ("crates/numfmt/src/lib.rs", "dex::as_typed(|| fmt.format_number(n, sys))", "TEXT() takes its format text as typed (`/` stays `/`)"),
+    ("crates/numfmt/src/lib.rs", "dex::as_typed(|| fmt.format_number(n, sys", "TEXT() takes its format text as typed (`/` stays `/`)"),
     ("crates/numfmt/src/lib.rs", "dex::general)", "General shows the locale's decimal point"),
     ("crates/numfmt/src/parse.rs", "Tok::Date(_) | Tok::Fill(_) | Tok::Slash", "`/` in a date code stays the date separator"),
-    ("crates/numfmt/src/render.rs", "crate::dex::general(", "a General section shows the locale's decimal point"),
+    ("crates/numfmt/src/lib.rs", "dex::general(general_text(", "a General section shows the locale's decimal point"),
     ("crates/numfmt/src/render.rs", "text.push(crate::dex::ctx().decimal)", "fractions of a second use the locale's decimal point"),
     ("crates/numfmt/src/render.rs", "Tok::Slash => out.text.push(crate::dex::ctx().date_sep)", "dates show the locale's date separator"),
     ("crates/numfmt/src/render.rs", "dex.grouping.separator_at(p)", "digits group the locale's way (3;2 in en-IN)"),

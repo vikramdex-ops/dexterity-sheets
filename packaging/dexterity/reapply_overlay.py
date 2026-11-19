@@ -501,10 +501,42 @@ replace(
     "            text: format_general_fit(n, GENERAL_WIDTH).map_or_else(|| OVERFLOW.into(), dex::general),\n",
     required=False,
 )
+# Since GridCraft 00e8f4fae0 General text is built once in `format_number` (`general_text`, `full`
+# for Save As CSV/Text) and handed to `render_general`: the locale's decimal point goes on there.
+replace(
+    f"{NUMFMT}/lib.rs",
+    "            |n: f64| Formatted { text: general_text(n, GENERAL_WIDTH).unwrap_or_else(|| OVERFLOW.into()), color: None, fill: None, numeric: true };\n",
+    "            |n: f64| Formatted { text: general_text(n, GENERAL_WIDTH).map_or_else(|| OVERFLOW.into(), dex::general), color: None, fill: None, numeric: true };\n",
+    required=False,
+)
+replace(
+    f"{NUMFMT}/lib.rs",
+    "            text: general_text(n, GENERAL_WIDTH).unwrap_or_else(|| OVERFLOW.into()),\n",
+    "            text: general_text(n, GENERAL_WIDTH).map_or_else(|| OVERFLOW.into(), dex::general),\n",
+    required=False,
+)
+replace(
+    f"{NUMFMT}/lib.rs",
+    '                let text = general_text(n.abs(), width).unwrap_or_else(|| "#".repeat(width.clamp(1, 11)));\n',
+    '                let text = dex::general(general_text(n.abs(), width).unwrap_or_else(|| "#".repeat(width.clamp(1, 11))));\n',
+    required=False,
+)
 replace(
     f"{NUMFMT}/lib.rs",
     "    let (f, overflow) = fmt.format_number(n, sys);\n",
     "    let (f, overflow) = dex::as_typed(|| fmt.format_number(n, sys));\n",
+    required=False,
+)
+replace(
+    f"{NUMFMT}/lib.rs",
+    "    let (f, overflow) = fmt.format_number(n, sys, false);\n",
+    "    let (f, overflow) = dex::as_typed(|| fmt.format_number(n, sys, false));\n",
+    required=False,
+)
+replace(
+    f"{NUMFMT}/tests.rs",
+    "    let (f, overflow) = fmt.format_number(n, sys, false);\n",
+    "    let (f, overflow) = crate::dex::as_typed(|| fmt.format_number(n, sys, false));\n",
     required=False,
 )
 replace(
@@ -722,6 +754,8 @@ pairs = [
     ('assert_eq!(csv, "2026-01-01,', 'assert_eq!(csv, "\\u{FEFF}2026-01-01,'),
     ('assert!(tsv.starts_with("2026-01-01\\t', 'assert!(tsv.starts_with("\\u{FEFF}2026-01-01\\t'),
     ('format!("124412140710{separator}', 'format!("\\u{FEFF}124412140710{separator}'),
+    ('format!("124412140710{s}', 'format!("\\u{FEFF}124412140710{s}'),
+    ('assert_eq!(output, format!("{}\\r\\n", expected.join(sep)));', 'assert_eq!(output, format!("\\u{FEFF}{}\\r\\n", expected.join(sep)));'),
 ]
 for old, new in pairs:
     if new not in s and old in s:

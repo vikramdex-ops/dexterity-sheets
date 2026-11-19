@@ -326,33 +326,17 @@ impl NumberFormat {
         Selected::Section(s0, false)
     }
 
-<<<<<<< Dexterity Sheets
     /// Formats a number. The flag is true when the value cannot be shown (date out of range, or
     /// no section for it).
-    fn format_number(&self, n: f64, sys: DateSystem) -> (Formatted, bool) {
-        let general = |n: f64| Formatted {
-            text: format_general_fit(n, GENERAL_WIDTH).map_or_else(|| OVERFLOW.into(), dex::general),
-            color: None,
-            fill: None,
-            numeric: true,
-        };
-||||||| before
-    /// Formats a number. The flag is true when the value cannot be shown (date out of range).
-    fn format_number(&self, n: f64, sys: DateSystem) -> (Formatted, bool) {
-        let general = |n: f64| Formatted {
-            text: format_general_fit(n, GENERAL_WIDTH).unwrap_or_else(|| OVERFLOW.into()),
-            color: None,
-            fill: None,
-            numeric: true,
-        };
-=======
-    /// Formats a number. The flag is true when the value cannot be shown (date out of range).
     /// With `full`, General is not narrowed to the cell width but written by [`general_full`].
     fn format_number(&self, n: f64, sys: DateSystem, full: bool) -> (Formatted, bool) {
         let general_text = |n: f64, width: usize| if full { Some(general_full(n)) } else { format_general_fit(n, width) };
-        let general =
-            |n: f64| Formatted { text: general_text(n, GENERAL_WIDTH).unwrap_or_else(|| OVERFLOW.into()), color: None, fill: None, numeric: true };
->>>>>>> official GridCraft
+        let general = |n: f64| Formatted {
+            text: general_text(n, GENERAL_WIDTH).map_or_else(|| OVERFLOW.into(), dex::general),
+            color: None,
+            fill: None,
+            numeric: true,
+        };
         if self.is_general() {
             return (general(n), false);
         }
@@ -366,7 +350,7 @@ impl NumberFormat {
             SecKind::Text => Some(render::render_text(sec, &general_text(n, GENERAL_WIDTH).unwrap_or_default())),
             SecKind::General => {
                 let width = if minus { GENERAL_WIDTH - 1 } else { GENERAL_WIDTH };
-                let text = general_text(n.abs(), width).unwrap_or_else(|| "#".repeat(width.clamp(1, 11)));
+                let text = dex::general(general_text(n.abs(), width).unwrap_or_else(|| "#".repeat(width.clamp(1, 11))));
                 Some(render::render_general(sec, &text))
             }
             SecKind::Date => {
@@ -612,13 +596,7 @@ pub fn text_function(v: &Value, code: &str, sys: DateSystem) -> Result<String, C
     if !n.is_finite() {
         return Err(CellError::Num);
     }
-<<<<<<< Dexterity Sheets
-    let (f, overflow) = dex::as_typed(|| fmt.format_number(n, sys));
-||||||| before
-    let (f, overflow) = fmt.format_number(n, sys);
-=======
-    let (f, overflow) = fmt.format_number(n, sys, false);
->>>>>>> official GridCraft
+    let (f, overflow) = dex::as_typed(|| fmt.format_number(n, sys, false));
     if overflow { Err(CellError::Value) } else { Ok(f.text) }
 }
 

@@ -87,13 +87,7 @@ pub(crate) fn render_general(sec: &Section, general: &str) -> Out {
     let mut out = Out::default();
     for t in &sec.toks {
         match t {
-<<<<<<< Dexterity Sheets
-            Tok::General => out.push(&crate::dex::general(format_general_fit(v, width).unwrap_or_else(|| "#".repeat(width.clamp(1, 11))))),
-||||||| before
-            Tok::General => out.push(&format_general_fit(v, width).unwrap_or_else(|| "#".repeat(width.clamp(1, 11)))),
-=======
             Tok::General => out.push(general),
->>>>>>> official GridCraft
             Tok::Fill(c) => out.fill(*c),
             other => out.push_tok(other),
         }

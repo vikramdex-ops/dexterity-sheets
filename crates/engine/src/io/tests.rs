@@ -641,13 +641,8 @@ fn delimited_exports_preserve_general_precision_and_explicit_number_formats() {
     }
     for (path, separator) in [("data.csv", ","), ("data.tsv", "\t")] {
         let output = String::from_utf8(save_bytes(&workbook, path).unwrap()).unwrap();
-<<<<<<< Dexterity Sheets
-        assert_eq!(output, format!("\u{FEFF}124412140710{separator}1.23456789012345{separator}1.24E+11\r\n"));
-||||||| before
-        assert_eq!(output, format!("124412140710{separator}1.23456789012345{separator}1.24E+11\r\n"));
-=======
         let tail: Vec<&str> = cells.iter().map(|(_, text)| *text).collect();
-        assert_eq!(output, format!("124412140710{s}1.23456789012345{s}1.24E+11{s}{}\r\n", tail.join(separator), s = separator));
+        assert_eq!(output, format!("\u{FEFF}124412140710{s}1.23456789012345{s}1.24E+11{s}{}\r\n", tail.join(separator), s = separator));
         // Reopening the file and saving it again changes nothing.
         let (reopened, _) = open_bytes(path, output.as_bytes()).unwrap();
         assert_eq!(String::from_utf8(save_bytes(&reopened, path).unwrap()).unwrap(), output);
@@ -697,8 +692,7 @@ fn delimited_exports_write_general_numbers_as_text_converts_them() {
             "124412140710",
             "124412140710 mm",
         ];
-        assert_eq!(output, format!("{}\r\n", expected.join(sep)));
->>>>>>> official GridCraft
+        assert_eq!(output, format!("\u{FEFF}{}\r\n", expected.join(sep)));
     }
 }
 

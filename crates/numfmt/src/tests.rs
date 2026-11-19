@@ -889,13 +889,7 @@ fn text_uncached(v: &Value, code: &str, sys: DateSystem) -> Result<String, CellE
     if !n.is_finite() {
         return Err(CellError::Num);
     }
-<<<<<<< Dexterity Sheets
-    let (f, overflow) = crate::dex::as_typed(|| fmt.format_number(n, sys));
-||||||| before
-    let (f, overflow) = fmt.format_number(n, sys);
-=======
-    let (f, overflow) = fmt.format_number(n, sys, false);
->>>>>>> official GridCraft
+    let (f, overflow) = crate::dex::as_typed(|| fmt.format_number(n, sys, false));
     if overflow { Err(CellError::Value) } else { Ok(f.text) }
 }
 
