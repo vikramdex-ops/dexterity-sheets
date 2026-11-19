@@ -2327,7 +2327,6 @@ impl State {
     }
 
     #[allow(clippy::too_many_arguments)]
-    #[allow(clippy::too_many_arguments)]
     fn take_patch(
         &mut self,
         conn: u64,
