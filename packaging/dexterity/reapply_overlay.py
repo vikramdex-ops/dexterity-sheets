@@ -231,6 +231,7 @@ if '("edit.repeat", DEX)' not in s:
         write(FUZZ, s2)
 insert(f"{UI}/lib.rs", "pub mod dex_ui;", "pub mod collab_ui;\n", "pub mod dex_ui;\n")
 insert("crates/ui-egui/tests/it/main.rs", "mod dex_parity;", "mod control_timeout;\n", "mod dex_parity;\n")
+insert("crates/ui-egui/tests/it/main.rs", "mod dex_suite;", "mod dex_parity;\n", "mod dex_suite;\n")
 # @mentions in comments: suggestions in the New Comment field and in replies.
 replace(
     f"{UI}/dialogs/show.rs",
@@ -294,6 +295,27 @@ insert(
     "dex_ui::share::open_link(",
     "    pub fn open_path(&mut self, path: &str) {\n",
     "        // Dexterity Sheets: a dexterity:// link to a shared spreadsheet, not a file.\n        if crate::dex_ui::share::open_link(self, path) {\n            return;\n        }\n",
+)
+# Office suite (dex_ui::suite): Notes at the bottom right, the cell menu's office items, links in
+# cells to the office apps.
+insert(
+    f"{UI}/tabs.rs",
+    "dex_ui::suite::notes_button(",
+    "                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {\n",
+    "                    crate::dex_ui::suite::notes_button(app, ui, &t);\n",
+)
+insert(
+    f"{UI}/grid/menus.rs",
+    "dex_ui::suite::cell_menu(",
+    # The first such block in the file is the cell menu's (the header menu's comes later).
+    '                        "edit.paste" => app.paste_from_clipboard(),\n                        other => app.run_or_alert(other, json!({})),\n                    }\n                }\n            }\n',
+    "            close |= crate::dex_ui::suite::cell_menu(app, ui);\n",
+)
+insert(
+    f"{UI}/grid/interact.rs",
+    "dex_ui::suite::follow_link(",
+    "pub fn follow_link(app: &mut SheetApp, target: &str) {\n",
+    "    if crate::dex_ui::suite::follow_link(app, target) {\n        return;\n    }\n",
 )
 insert(
     f"{UI}/dialogs/about.rs",

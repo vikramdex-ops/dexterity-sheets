@@ -85,6 +85,8 @@ pub struct Collab {
     pub releases: crate::dex_ui::releases::Releases,
     /// The Share dialog, links and notifications (`dex_ui::share`).
     pub share: crate::dex_ui::share::Share,
+    /// Connect, Slate, Sleuth, Project Opener: links, notes (`dex_ui::suite`).
+    pub suite: crate::dex_ui::suite::Suite,
     /// Compare Files, Quality Check, Formula Diagnostics results (`dex_ui::tools`).
     pub tools: crate::dex_ui::tools::Tools,
     /// The template library (`dex_ui::templates`).
@@ -1523,6 +1525,7 @@ pub fn share_menu(app: &mut SheetApp, ui: &mut Ui) {
     if ui.button("Shared workbooks…").clicked() {
         app.run_or_alert("collab.shared", json!({}));
     }
+    crate::dex_ui::suite::share_menu(app, ui);
 }
 
 /// Stops sharing the active workbook: its file gets every edit, the server's copy goes to its
@@ -2288,6 +2291,7 @@ pub fn update_badge(app: &mut SheetApp, ui: &mut Ui, t: &Tokens) {
         crate::dex_ui::recovery::dialog(app, ui.ctx());
         crate::dex_ui::releases::windows(app, ui.ctx());
         crate::dex_ui::share::windows(app, ui.ctx());
+        crate::dex_ui::suite::windows(app, ui.ctx());
         crate::dex_ui::tools::windows(app, ui.ctx());
         crate::dex_ui::templates::window(app, ui.ctx());
         crate::dex_ui::automation::window(app, ui.ctx());

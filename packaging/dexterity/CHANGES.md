@@ -13,6 +13,13 @@ its newest changes); the release notes on GitHub list every one of them with its
 - **Server Manager › People and devices** replaces People and Add many people: everyone who has connected, with their PCs, device codes and last-seen times; approve or revoke a PC, change a role, remove a person. Nobody is created by hand and there are no passwords, sign-in sheets or templates. The first person on a new server becomes its administrator, and the server installer no longer asks for one. For scripts: `DexSheetsServer profile list|role|approve|revoke|remove`.
 - **Upgrading an office server:** its accounts (`users.json`) are carried over at the first start and the file is kept as `users.json.bak`; each account, with its role, colour and workbooks, passes to the first Windows account with the same user name. **Every PC must update to this version**: older apps can't sign in any more and are told "This server needs Dexterity Sheets … or newer — update from Help › Updates", and Help › Updates still brings them the new version from the server.
 - **Highlight Row/Column** replaces Focus Cell and the Options row highlight: one button at the bottom right of the status bar (by the zoom), View › Highlight on the ribbon or Ctrl+Alt+H turns it on; its popover picks None, Blue, Green, Yellow, Orange, Pink, Purple or Grey and Row, Column or Both. A selection highlights all its rows and columns, the headers show it more strongly, cell fills stay visible through it, it works with frozen panes and while typing, and it is remembered for you. When co-editing, a tick shows each teammate's row and column faintly in their colour.
+- **Works with the office's other apps.** Each item shows only when its app is installed on your PC:
+  - **Share to Connect…** and **Discuss This Row in Connect…** open Dexterity Connect with a link to the cell. Discuss also adds the row's values, and Connect asks before anything is sent.
+  - **Copy Link to This Cell** gives a link that opens the shared spreadsheet at that cell or range.
+  - **Notes** at the bottom right opens the workbook's notes in Slate. The notes file sits beside the workbook. Without Slate, the notes open in a small notes pane.
+  - **Add Note for This Row** adds the row and a link back to it to those notes.
+  - **Find in Sleuth** and **Open in Project Opener** are in the cell menu.
+  - Links in cells to Connect, Sleuth, Datum, Project Opener and Dexterity Sheets open with one click.
 
 ## 1.6.0 · 12 November 2026
 

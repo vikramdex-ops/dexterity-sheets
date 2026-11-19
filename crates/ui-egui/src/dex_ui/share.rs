@@ -125,7 +125,8 @@ pub fn open_link(app: &mut SheetApp, s: &str) -> bool {
         app.collab.share.panel = true;
         return true;
     }
-    match proto::parse_link_at(s) {
+    // `?at=` may name a range and an Excel-quoted sheet (`dex_ui::suite::parse_link`).
+    match crate::dex_ui::suite::parse_link(s) {
         Some((server, book, at)) => {
             if let Some((sheet, cell)) = at {
                 app.collab.share.goto = Some((book.clone(), sheet, cell, crate::clock::monotonic_ms()));
@@ -330,9 +331,15 @@ fn go_to_pending(app: &mut SheetApp) {
         app.toast = Some((format!("The sheet \"{sheet}\" is no longer in this spreadsheet."), crate::now_ms()));
         return;
     }
-    if app.run("selection.set", json!({"cell": cell})).is_ok() {
+    let sel = if cell.contains(':') { json!({"range": cell}) } else { json!({"cell": cell}) };
+    if app.run("selection.set", sel).is_ok() {
         app.grid.ensure_visible = true;
-        let _ = app.run("review.showComments", json!({"on": true}));
+        // A mention's cell has its comment: show it. A plain link to a cell just goes there.
+        let first = cell.split(':').next().map(|c| c.replace('$', "")).and_then(|c| gridcraft_engine::core::CellRef::parse(&c));
+        let commented = app.session.active().and_then(|d| d.wb.active()).zip(first).is_some_and(|(sh, c)| sh.comments.contains_key(&c));
+        if commented {
+            let _ = app.run("review.showComments", json!({"on": true}));
+        }
     }
 }
 

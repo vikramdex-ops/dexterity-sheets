@@ -1118,6 +1118,9 @@ fn drag_object(app: &mut SheetApp, geo: &Geo, sh: &Sheet, p: Pos2) {
 /// callers, #2181); every other kind is refused with a message. The decision is the engine's
 /// ([`gridcraft_engine::links::classify`]), the same one `link.open` applies.
 pub fn follow_link(app: &mut SheetApp, target: &str) {
+    if crate::dex_ui::suite::follow_link(app, target) {
+        return;
+    }
     use gridcraft_engine::links::{LinkKind, classify};
     match classify(target) {
         LinkKind::Internal(r) => {
