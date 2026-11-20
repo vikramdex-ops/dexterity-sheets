@@ -184,7 +184,7 @@ fn two_people_edit_through_a_real_server() {
     for c in [&v, &a, &g] {
         recv(c, |e| matches!(e, crate::client::Event::Connected { .. }));
     }
-    v.send(ClientMsg::CreateBook { name: "Line List".into(), xlsx: None, source: None, sha256: None });
+    v.send(ClientMsg::CreateBook { name: "Line List".into(), xlsx: None, source: None, sha256: None, access: None });
     let opened = |c: &crate::client::Client| match recv(c, |e| matches!(e, crate::client::Event::Message(ServerMsg::Opened { .. }))) {
         crate::client::Event::Message(ServerMsg::Opened { book, snapshot_seq, xlsx, log, last_edits, peers, .. }) => {
             (book, snapshot_seq, crate::proto::unb64(&xlsx).expect("b64"), log, last_edits, peers)
@@ -245,13 +245,25 @@ fn two_people_edit_through_a_real_server() {
         user: "spoofed".into(),
         machine: "PC-1".into(),
     };
-    v.send(ClientMsg::CreateBook { name: "Line List".into(), xlsx: None, source: Some(src(r"D:\Job 12\Line List.xlsx")), sha256: None });
+    v.send(ClientMsg::CreateBook {
+        name: "Line List".into(),
+        xlsx: None,
+        source: Some(src(r"D:\Job 12\Line List.xlsx")),
+        sha256: None,
+        access: None,
+    });
     let (linked, ..) = opened(&v);
     assert_eq!(linked.name, "Line List (2)", "the name is free for a file from another folder");
     let source = linked.source.clone().expect("source");
     assert_eq!(source.user, "vikram", "the server records who shared it, whatever the client says");
     assert_eq!(source.key, r"pc-1|d:\job 12\line list.xlsx");
-    a.send(ClientMsg::CreateBook { name: "Line List".into(), xlsx: None, source: Some(src(r"D:\JOB 12\line list.XLSX")), sha256: None });
+    a.send(ClientMsg::CreateBook {
+        name: "Line List".into(),
+        xlsx: None,
+        source: Some(src(r"D:\JOB 12\line list.XLSX")),
+        sha256: None,
+        access: None,
+    });
     let (joined, ..) = opened(&a);
     assert_eq!(joined.id, linked.id, "the same file is joined, not shared twice");
     assert_eq!(crate::proto::file_key("PC-2", r"\\?\UNC\Files\Projects\a.xlsx"), r"\\files\projects\a.xlsx");
@@ -464,7 +476,34 @@ fn rich_workbook() -> Arc<Workbook> {
 fn share(c: &Client, name: &str, w: &Workbook) {
     let bytes = gridcraft_engine::io::save_bytes(w, "share.xlsx").expect("save");
     let sha256 = Some(crate::proto::sha256_hex(&bytes));
-    c.send(ClientMsg::CreateBook { name: name.into(), xlsx: Some(crate::proto::b64(&bytes)), source: None, sha256 });
+    c.send(ClientMsg::CreateBook { name: name.into(), xlsx: Some(crate::proto::b64(&bytes)), source: None, sha256, access: None });
+}
+
+/// Save on a shared workbook keeps a version on the server. People are Windows accounts
+/// (`DOMAIN\user`): the backslash once went into the version's file name, so every Save failed
+/// with "network or disk error: The system cannot find the path specified. (os error 3)".
+#[test]
+fn save_keeps_a_version_for_a_domain_account() {
+    let lab = Lab::new("save-domain");
+    crate::server::set_profile(&lab.dir, "OFFICE\\vikram", "Vikram", crate::proto::Role::Editor).expect("user");
+    let a = lab.connect("OFFICE\\vikram");
+    share(&a, "Line list", &rich_workbook());
+    let r = Replica::opened(&a);
+    let book = r.sd.book.id.clone();
+    a.send(ClientMsg::SaveVersion { book: book.clone(), label: "Saved by Vikram".into() });
+    let versions = match recv(&a, |e| matches!(e, crate::client::Event::Message(ServerMsg::Versions { .. } | ServerMsg::Error { .. }))) {
+        crate::client::Event::Message(ServerMsg::Versions { versions, .. }) => versions,
+        other => panic!("Save failed: {other:?}"),
+    };
+    let v = versions.iter().find(|v| v.label == "Saved by Vikram").expect("the saved version");
+    assert_eq!(v.user, "office\\vikram", "the version still names the person (accounts are kept in lower case)");
+    assert!(!v.id.contains('\\') && !v.id.contains('/'), "{}", v.id);
+    // It opens again (Versions pane › Open / Restore).
+    a.send(ClientMsg::GetVersion { book: book.clone(), version: v.id.clone() });
+    match recv(&a, |e| matches!(e, crate::client::Event::Message(ServerMsg::Version { .. } | ServerMsg::Error { .. }))) {
+        crate::client::Event::Message(ServerMsg::Version { xlsx, .. }) => assert!(!xlsx.is_empty()),
+        other => panic!("version did not open: {other:?}"),
+    }
 }
 
 /// Tests A and B: a populated workbook, shared, is on the server's disk with its content and
@@ -509,6 +548,7 @@ fn a_damaged_upload_is_refused() {
         xlsx: Some(crate::proto::b64(&bytes)),
         source: None,
         sha256: Some(crate::proto::sha256_hex(b"something else")),
+        access: None,
     });
     match recv(&a, |e| matches!(e, crate::client::Event::Message(ServerMsg::Error { .. } | ServerMsg::Opened { .. }))) {
         crate::client::Event::Message(ServerMsg::Error { message, book }) => {
@@ -682,11 +722,54 @@ fn a_large_workbook_and_a_burst_of_edits_arrive_complete_and_in_order() {
 // ---------------------------------------------------------------------------------------------
 // Sharing with specific people, notifications, web links, releases and feedback.
 
+/// The next notice of this kind (a share's own notice may come first).
+fn notice_of(c: &Client, kind: &str) -> crate::proto::Notice {
+    match recv(c, |e| matches!(e, crate::client::Event::Message(ServerMsg::Notice { notice }) if notice.kind == kind)) {
+        crate::client::Event::Message(ServerMsg::Notice { notice }) => notice,
+        _ => unreachable!(),
+    }
+}
+
 fn notice(c: &Client) -> crate::proto::Notice {
     match recv(c, |e| matches!(e, crate::client::Event::Message(ServerMsg::Notice { .. }))) {
         crate::client::Event::Message(ServerMsg::Notice { notice }) => notice,
         _ => unreachable!(),
     }
+}
+
+/// Sharing a workbook tells the people it is shared with at once (their desktop notification):
+/// the whole office for an office-wide share (the default, which once told nobody), only the
+/// named people for a share with specific people.
+#[test]
+fn sharing_tells_the_people_it_is_shared_with() {
+    let lab = Lab::new("share-notice");
+    let a = lab.connect("usera");
+    let b = lab.connect("userb");
+    let v = lab.connect("viewer");
+    share(&a, "Office tracker", &rich_workbook());
+    let n = notice(&b);
+    assert_eq!((n.kind.as_str(), n.name.as_str(), n.permission.as_str()), ("shared", "Office tracker", "editor"));
+    assert_eq!(n.by, "User A");
+    assert_eq!(notice(&v).permission, "viewer", "a view-only account is told it can view");
+    // With specific people: only they are told.
+    let bytes = gridcraft_engine::io::save_bytes(&rich_workbook(), "share.xlsx").expect("save");
+    let access = crate::proto::Access {
+        mode: "people".into(),
+        people: [("userb".to_string(), "viewer".to_string())].into_iter().collect(),
+        ..Default::default()
+    };
+    a.send(ClientMsg::CreateBook {
+        name: "For B".into(),
+        sha256: Some(crate::proto::sha256_hex(&bytes)),
+        xlsx: Some(crate::proto::b64(&bytes)),
+        source: None,
+        access: Some(access),
+    });
+    let n = notice(&b);
+    assert_eq!((n.name.as_str(), n.permission.as_str()), ("For B", "viewer"));
+    std::thread::sleep(Duration::from_millis(300));
+    let others: Vec<_> = v.events.try_iter().filter(|e| matches!(e, crate::client::Event::Message(ServerMsg::Notice { .. }))).collect();
+    assert!(others.is_empty(), "someone it was not shared with was told: {others:?}");
 }
 
 fn books(c: &Client) -> Vec<BookInfo> {
@@ -729,16 +812,28 @@ fn specific_people_see_and_edit_only_what_they_are_given() {
     let access = crate::proto::Access { mode: "people".into(), people, ..Default::default() };
     a.send(ClientMsg::SetAccess { book: id.clone(), access: access.clone() });
 
-    // B is told, by name, with the permission; C is told nothing and can't see or open it.
+    // Shared with the office first: both are told. Then B is told the new permission, by
+    // name; C that it is no longer shared, and C can't see or open it.
     let n = notice(&b);
-    assert_eq!((n.kind.as_str(), n.book.as_str(), n.by.as_str(), n.permission.as_str()), ("shared", id.as_str(), "User A", "viewer"));
+    assert_eq!((n.kind.as_str(), n.book.as_str(), n.by.as_str(), n.permission.as_str()), ("shared", id.as_str(), "User A", "editor"));
+    let n = notice(&b);
+    assert_eq!((n.kind.as_str(), n.book.as_str(), n.permission.as_str()), ("permission", id.as_str(), "viewer"));
+    assert_eq!(notice(&c).kind, "shared");
+    assert_eq!(notice(&c).kind, "revoked");
     assert!(books(&c).iter().all(|x| x.id != id), "not in C's list");
     c.send(ClientMsg::OpenBook { book: id.clone() });
     let (e, about) = error_or_opened(&c).expect_err("C may not open it");
     assert!(e.contains("ask User A"), "{e}");
     assert_eq!(about.as_deref(), Some(id.as_str()), "the refusal names the workbook, so \"Opening…\" ends");
     // Nor show where C is in it: presence needs access too.
-    c.send(ClientMsg::Presence { book: id.clone(), sheet: "Sheet1".into(), range: "A1".into(), editing: false });
+    c.send(ClientMsg::Presence {
+        book: id.clone(),
+        sheet: "Sheet1".into(),
+        range: "A1".into(),
+        editing: false,
+        draft_cell: String::new(),
+        draft: String::new(),
+    });
     assert_eq!(error(&c).1.as_deref(), Some(id.as_str()));
     // B opens it as a viewer: content yes, edits no.
     let bl = books(&b);
@@ -1039,7 +1134,7 @@ fn a_change_rule_stamps_the_row_and_tells_people_and_a_schedule_rule_writes_a_re
     a.send(ra.edit("cell.set", json!({"sheet": "Sheet1", "cell": "C3", "input": "Completed"})));
     ra.catch_up(&a, 2);
     assert!(ra.text("Sheet1", "D3").starts_with("20"), "time written: {:?}", ra.text("Sheet1", "D3"));
-    let n = notice(&b);
+    let n = notice_of(&b, "automation");
     assert_eq!(n.kind, "automation");
     assert!(n.text.contains("Completed") && n.text.contains("D3"), "{}", n.text);
 
@@ -1480,7 +1575,7 @@ fn an_assignment_reaches_the_assignee_who_marks_it_done() {
         status: None,
     };
     a.send(assign("USERB", "$b$4:c9", Some("2030-01-31")));
-    let n = notice(&b);
+    let n = notice_of(&b, "assigned");
     assert_eq!(
         (n.kind.as_str(), n.by.as_str(), n.sheet.as_str(), n.cell.as_str(), n.book.as_str()),
         ("assigned", "User A", "Sheet1", "B4", id.as_str())
@@ -1504,7 +1599,7 @@ fn an_assignment_reaches_the_assignee_who_marks_it_done() {
     // Someone who can't open the workbook can't be given part of it.
     let access = crate::proto::Access { mode: "people".into(), people: [("userb".to_string(), "editor".to_string())].into(), ..Default::default() };
     a.send(ClientMsg::SetAccess { book: id.clone(), access });
-    let _ = notice(&b);
+    // B was told when it was shared and still edits it: nothing new to tell B.
     a.send(assign("userc", "B4", None));
     assert!(error(&a).0.contains("share it with them first"));
     // A stranger can't mark it done; the assignee can, and User A hears.
@@ -1566,7 +1661,7 @@ fn the_read_api_answers_connect_with_a_token_only() {
     let mut ra = Replica::opened(&a);
     let id = ra.sd.book.id.clone();
     a.send(ra.edit("review.newComment", json!({"sheet": "MTO", "cell": "B2", "text": "@Priya Raman please check the rating"})));
-    let n = notice(&priya);
+    let n = notice_of(&priya, "mention");
     assert_eq!((n.kind.as_str(), n.source.as_str(), n.cell.as_str()), ("mention", "comment", "B2"));
     a.send(ClientMsg::Assign {
         book: id.clone(),
