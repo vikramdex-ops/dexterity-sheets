@@ -9,6 +9,8 @@ its newest changes); the release notes on GitHub list every one of them with its
 
 ## Unreleased
 
+## 1.7.3 · 20 November 2026
+
 - More fixes and improvements from official GridCraft (still GridCraft 0.19.1): 10 changes, the newest below. The release notes on GitHub list them all.
 - From GridCraft: xlsx: preserve external workbook target relationships on XLSB -> XLSX save
 - From GridCraft: xlsx: adopt craft-libs#1347 for XLSB external-book formula decoding (craft-libs#778)

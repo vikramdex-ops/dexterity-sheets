@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <sub><!-- dex:release -->Version <b>1.7.2</b> · 20 November 2026 · based on GridCraft 0.19.1<!-- /dex:release --> · Windows 10 and 11 · no administrator rights needed · updates itself</sub>
+  <sub><!-- dex:release -->Version <b>1.7.3</b> · 20 November 2026 · based on GridCraft 0.19.1<!-- /dex:release --> · Windows 10 and 11 · no administrator rights needed · updates itself</sub>
 </p>
 
 <p align="center">
@@ -108,9 +108,14 @@
 ## What's new
 
 <!-- dex:whatsnew -->
-- **Sheets notices arrive through Nib:** with a Connect hub set in Server Manager › Dexterity Connect, mentions and assignments now arrive in each person's conversation with Nib in Dexterity Connect, marked **Dexterity Sheets** · Mention or Task, instead of as Direct messages from a separate Sheets contact. A notice is never shown twice, even when the server had to send it again. Nothing to set up again: the same hub and token are used, and a Connect hub that has not been updated yet keeps receiving them as Direct messages. In Connect, an administrator can switch this off per integration (Control room › Integrations › Notices through Nib).
+- More fixes and improvements from official GridCraft (still GridCraft 0.19.1): 10 changes, the newest below. The release notes on GitHub list them all.
+- From GridCraft: xlsx: preserve external workbook target relationships on XLSB -> XLSX save
+- From GridCraft: xlsx: adopt craft-libs#1347 for XLSB external-book formula decoding (craft-libs#778)
+- From GridCraft: xlsx: add full workbook import/save/reopen round-trip parity test (craft-libs#778)
+- From GridCraft: mcp: add protocol transcript tests for initialize, cancel, and batch
+- From GridCraft: i18n(ru): translate 547 more labels, dialog strings and tooltips
 
-[Everything in 1.7.2](https://github.com/vikramdex-ops/dexterity-sheets/releases/tag/v1.7.2).
+[Everything in 1.7.3](https://github.com/vikramdex-ops/dexterity-sheets/releases/tag/v1.7.3) and 3 more.
 <!-- /dex:whatsnew -->
 
 Dexterity Sheets is built on the open-source [GridCraft](https://github.com/storytold/gridcraft)
