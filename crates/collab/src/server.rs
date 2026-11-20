@@ -1036,15 +1036,16 @@ impl State {
         out
     }
 
-    /// Queues a Direct message to `user` on Dexterity Connect, when a hub is set up.
-    fn tell_connect(&mut self, user: &str, text: String, title: String, lines: Vec<String>) {
+    /// Queues a notice for `user` on Dexterity Connect (it reaches them through Nib), when a hub
+    /// is set up. `kind` is `mention` or `task`.
+    fn tell_connect(&mut self, user: &str, kind: &str, text: String, title: String, lines: Vec<String>) {
         if !connect::load_config(&self.dir).ready() {
             return;
         }
         let now = now_ms();
         let id = format!("c-{now}-{}", NOTICE_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
         let to = vec![self.account_of(user)];
-        self.outbox.push(connect::Outgoing { id, to, text, title, lines, created: now, tries: 0, next: now });
+        self.outbox.push(connect::Outgoing { id, to, text, title, lines, kind: kind.to_string(), created: now, tries: 0, next: now });
     }
 
     /// A workbook's assignments with its name filled in.
@@ -1155,6 +1156,7 @@ impl State {
                 let place = format!("{}!{}", men.sheet, men.cell);
                 self.tell_connect(
                     who,
+                    "mention",
                     format!(
                         "{display} mentioned you in a {} in **{}** ({place}): \u{201c}{}\u{201d}\n\n[Open at {place}]({link})",
                         men.source, m.name, men.quote
@@ -2036,6 +2038,7 @@ impl State {
             }
             self.tell_connect(
                 &rec.user,
+                "task",
                 format!(
                     "{} assigned you {place} in **{}**{when}{}\n\n[Open at {place}]({link})",
                     by.display,

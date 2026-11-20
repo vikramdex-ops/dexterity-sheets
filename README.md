@@ -258,7 +258,7 @@ Everything else is in the Server Manager too, so the job can be handed to anyone
 |---|---|
 | **Server** | Running or stopped, with Start / Stop / Restart; the name, computer name and addresses teammates use; whether the firewall is open (and a button to open it); the data folder and its size; the server log |
 | **People and devices** | Everyone who has connected, with their PCs (device code, PC name, last seen): approve or revoke a PC, change a role, remove a person. PCs waiting for approval are at the top. The last administrator can't be locked out. |
-| **Dexterity Connect** | Tokens for the read-only API Dexterity Connect asks on TCP 47812 (assignments, mentions, shared spreadsheets), shown once and revocable; optionally the Connect hub and integration token, so mentions and assignments also arrive in Connect with a Sheets pulse card |
+| **Dexterity Connect** | Tokens for the read-only API Dexterity Connect asks on TCP 47812 (assignments, mentions, shared spreadsheets), shown once and revocable; optionally the Connect hub and integration token, so mentions and assignments also arrive in Connect, through Nib, with a Sheets pulse card |
 | **App updates** | Fetch new versions of Dexterity Sheets from this GitHub repository automatically, or add an `.msi` by hand; every PC on the network is offered it |
 | **Backup and restore** | One `.zip` with everyone's profile and PCs, every shared workbook, edit history and version; restoring keeps the data it replaces |
 | **Installed versions** | Which Dexterity Sheets version each PC runs, its channel and when it was last seen, with a count per version |
