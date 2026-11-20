@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <sub><!-- dex:release -->Version <b>1.7.0</b> · 20 November 2026 · based on GridCraft 0.19.1<!-- /dex:release --> · Windows 10 and 11 · no administrator rights needed · updates itself</sub>
+  <sub><!-- dex:release -->Version <b>1.7.1</b> · 20 November 2026 · based on GridCraft 0.19.1<!-- /dex:release --> · Windows 10 and 11 · no administrator rights needed · updates itself</sub>
 </p>
 
 <p align="center">
@@ -108,14 +108,11 @@
 ## What's new
 
 <!-- dex:whatsnew -->
-- **No more user names or passwords for the office server.** Dexterity Sheets connects by itself as your Windows account, to the server it used last or the only one on the network (File › Shared lists them when there are several, one click each, and has **Change server**). Your first PC is trusted at once; another PC shows "Waiting for an administrator to approve this PC" with a short device code. File › Shared shows who you are, this PC's device code and the name others see, which you can change.
-- **Server Manager › People and devices** replaces People and Add many people: everyone who has connected, with their PCs, device codes and last-seen times; approve or revoke a PC, change a role, remove a person. Nobody is created by hand and there are no passwords, sign-in sheets or templates. The first person on a new server becomes its administrator, and the server installer no longer asks for one. For scripts: `DexSheetsServer profile list|role|approve|revoke|remove`.
-- **Upgrading an office server:** its accounts (`users.json`) are carried over at the first start and the file is kept as `users.json.bak`; each account, with its role, colour and workbooks, passes to the first Windows account with the same user name. **Every PC must update to this version**: older apps can't sign in any more and are told "This server needs Dexterity Sheets … or newer — update from Help › Updates", and Help › Updates still brings them the new version from the server.
-- **Highlight Row/Column** replaces Focus Cell and the Options row highlight: one button at the bottom right of the status bar (by the zoom), View › Highlight on the ribbon or Ctrl+Alt+H turns it on; its popover picks None, Blue, Green, Yellow, Orange, Pink, Purple or Grey and Row, Column or Both. A selection highlights all its rows and columns, the headers show it more strongly, cell fills stay visible through it, it works with frozen panes and while typing, and it is remembered for you. When co-editing, a tick shows each teammate's row and column faintly in their colour.
-- **Works with the office's other apps.** Each item shows only when its app is installed on your PC:
-- **An old administrator account is no longer taken over by name alone.** When a carried-over account was an administrator, the first Windows account with that user name now waits for approval (device code) before it signs in with the administrator role; approve it in Server Manager › People and devices, which works even when no administrator is signed in, or from another administrator's app. Carried-over editors and viewers are let in as before.
+- More fixes and improvements from official GridCraft (still GridCraft 0.19.1): 2 changes, the newest below. The release notes on GitHub list them all.
+- From GridCraft: xlsx: delegate XLSB record and package parsing to craft-xlsx
+- From GridCraft: mcp: delegate server framing to craft-mcp-server
 
-[Everything in 1.7.0](https://github.com/vikramdex-ops/dexterity-sheets/releases/tag/v1.7.0) and 6 more.
+[Everything in 1.7.1](https://github.com/vikramdex-ops/dexterity-sheets/releases/tag/v1.7.1).
 <!-- /dex:whatsnew -->
 
 Dexterity Sheets is built on the open-source [GridCraft](https://github.com/storytold/gridcraft)
