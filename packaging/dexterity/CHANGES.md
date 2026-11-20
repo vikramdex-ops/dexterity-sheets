@@ -28,6 +28,11 @@ its newest changes); the release notes on GitHub list every one of them with its
 - **Dexterity Connect can read the office server:** Server Manager › Dexterity Connect makes and revokes tokens for a read-only API on TCP 47812 (people's assignments and mentions, the shared spreadsheets), so Nib can answer "what's assigned to me?". The server installer opens TCP 47812 for the office network; every request needs a token, which is shown once and only its fingerprint is kept.
 - **Notices in Dexterity Connect:** with a Connect hub and an integration token set on the same page, mentions and assignments also arrive as Direct messages in Connect, and everyone's Pulse shows a "Sheets pulse" card (spreadsheets, people working, open and overdue assignments). A hub that is away never holds anything up: notices wait and are sent later.
 
+## 1.6.9 · 19 November 2026
+
+- More fixes and improvements from official GridCraft (still GridCraft 0.19.1): 1 change, the newest below. The release notes on GitHub list them all.
+- From GridCraft: Preserve OMML import fallback after shared math cutover
+
 ## 1.6.8 · 19 November 2026
 
 - More fixes and improvements from official GridCraft (still GridCraft 0.19.1): 6 changes, the newest below. The release notes on GitHub list them all.
