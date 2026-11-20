@@ -39,14 +39,15 @@
 ## Start in three steps
 
 <p align="center">
-  <img src="docs/readme/steps.svg" width="100%" alt="1 Install, 2 Sign in, 3 Edit together">
+  <img src="docs/readme/steps.svg" width="100%" alt="1 Install, 2 Connect, 3 Edit together">
 </p>
 
 1. **Install.** [Download `DexteritySheets-Setup.exe`](https://github.com/vikramdex-ops/dexterity-sheets/releases/latest/download/DexteritySheets-Setup.exe) and double-click it. No
    administrator rights, nothing else to install. If Windows says *"Windows protected your PC"*,
    click **More info → Run anyway** (the installer isn't code-signed yet).
-2. **Sign in.** Open Dexterity Sheets and go to **File › Shared**. The office server is found on
-   its own; enter the user name and password IT gave you.
+2. **Connect.** Open Dexterity Sheets. It finds the office server on its own and connects as your
+   Windows account: no user name or password to type. (If there are several servers, pick yours
+   once in **File › Shared**.)
 3. **Share and edit together.** Open any workbook from wherever you keep it (your `D:` drive, a
    project folder, the network drive) and click **Share › Share…**. The file stays
    where it is and keeps everyone's edits; your team sees each other's changes almost instantly.
@@ -72,7 +73,10 @@
 <tr>
 <td width="33%" valign="top"><p><b>Start from the office's templates.</b> <b>File › New</b> lists the approved project trackers, registers and minutes, with a preview. A new spreadsheet is your own copy: a later version of the template never changes it.</p></td>
 <td width="33%" valign="top"><p><b>Let the server do the routine checks.</b> <b>Automation rules</b> on a shared spreadsheet: every Monday find overdue items and run the Quality Check, or stamp the date when a status becomes Completed. Fixed steps only, no macros.</p></td>
-<td width="33%" valign="top"><p><b>Told when it matters.</b> Type <b>@</b> in a comment to mention a colleague: they get a Windows notification that opens the cell. You also hear when something is shared with you, your access changes, others edited while you were away (one summary), or a new version is ready.</p></td>
+<td width="33%" valign="top"><p><b>Told when it matters.</b> Type <b>@</b> in a comment, a note or a cell to mention a colleague, or assign them cells with a due date: they get a Windows notification with <b>Go to cell</b>. You also hear when something is shared with you, your access changes, others edited while you were away (one summary), or a new version is ready.</p></td>
+</tr>
+<tr>
+<td width="33%" valign="top"><p><b>Works with the office's other apps.</b> Right-click a row to discuss it in <b>Dexterity Connect</b> with a link that opens at the cell, or to add it to the workbook's notes in <b>Slate</b> (the <b>Notes</b> button, bottom right). <b>Find in Sleuth</b> and <b>Open in Project Opener</b> are a right-click away too. Each item shows only when its app is installed (<a href="docs/dexterity-suite.md">how it works</a>).</p></td>
 </tr>
 </table>
 
@@ -85,7 +89,7 @@
 </tr>
 <tr>
 <td width="50%" valign="top"><img src="docs/images/update.png" alt="The Dexterity Sheets updates dialog: a newer version is available with its release notes and an Update now button; the status bar shows Update to 9.9.9"><p align="center"><sub><b>Updates itself.</b> A new release shows up in every running copy; one click downloads it from the office server (or, without one, from this repository's releases), checks it and installs it. No admin rights.</sub></p></td>
-<td width="50%" valign="top"><img src="docs/images/sign-in.png" alt="The sign-in page listing the office server found on the network, with server, user name and password fields"><p align="center"><sub><b>Named accounts only.</b> The office server is found on the network automatically. No guests, no anonymous edits.</sub></p></td>
+<td width="50%" valign="top"><img src="docs/images/sign-in.png" alt="File › Shared: connected to the office server found on the network as the Windows account, with this PC's device code and the name others see"><p align="center"><sub><b>Your Windows account, no password.</b> The office server is found and joined automatically. A new PC waits for an administrator's approval. No guests, no anonymous edits.</sub></p></td>
 </tr>
 <tr>
 <td width="50%" valign="top"><img src="docs/images/hero-sales.png" alt="A quarterly sales dashboard: a styled table with banded rows, filter buttons, data bars, icon sets and sparklines, a clustered column chart and a pie chart"><p align="center"><sub><b>A real spreadsheet.</b> Tables, conditional formatting, sparklines and live charts, saved as .xlsx that Excel opens without complaint.</sub></p></td>
@@ -96,7 +100,7 @@
 <td width="50%" valign="top"><img src="docs/images/budget.png" alt="A household budget with accounting formats, highlights, a colour scale and a bar chart"><p align="center"><sub><b>Formatting.</b> Number formats (with Indian 12,34,567 grouping and dd-mm dates, like Excel on your PC), cell styles, colour scales.</sub></p></td>
 </tr>
 <tr>
-<td width="50%" valign="top"><img src="docs/images/server-people.png" alt="Dexterity Sheets Server Manager, People page: everyone who can sign in, with role drop-downs, Reset password, Disable and Remove"><p align="center"><sub><b>Server Manager for IT.</b> Add people, change roles, reset passwords, disable or remove: no commands to type.</sub></p></td>
+<td width="50%" valign="top"><img src="docs/images/server-people.png" alt="Dexterity Sheets Server Manager, People and devices page: everyone who has connected with their PCs and device codes, a PC waiting for approval, role drop-downs, Approve, Revoke and Remove"><p align="center"><sub><b>Server Manager for IT.</b> See who connects from which PC, approve or revoke a PC, change roles: no accounts or commands.</sub></p></td>
 <td width="50%" valign="top"><img src="docs/images/server-updates.png" alt="Server Manager, App updates page: fetch new versions from GitHub automatically, or add an installer by hand"><p align="center"><sub><b>Updates for every PC.</b> The server fetches each new version and offers it to every Dexterity Sheets on the network.</sub></p></td>
 </tr>
 </table>
@@ -186,9 +190,11 @@ workbook: use **Save As** to keep them as a file.
 <details>
 <summary><b>Who can see or change a shared workbook?</b></summary>
 
-Only people with an account on the office server. IT gives each person a role: <b>viewer</b>
-(read only), <b>editor</b> (edit, create, share) or <b>admin</b>. Every change is recorded with
-the name of the person who made it.
+Only people on the office network, as their Windows account, from a PC the server trusts: each
+person's first PC is trusted when it first connects, any other PC waits for an administrator to
+approve it. Each person has a role: <b>viewer</b> (read only), <b>editor</b> (edit, create, share;
+everyone starts as one) or <b>admin</b> (the first person on a new server). Every change is
+recorded with the name of the person who made it.
 </details>
 
 <details>
@@ -238,23 +244,22 @@ firewall rules and a locked data folder, opened in the Server Manager, and unins
    [latest release](../../releases/latest) and click **Install** (Windows asks for administrator
    rights once). It installs the server as a Windows service that starts with Windows and
    restarts itself if it ever stops, and opens the firewall for the office network only.
-2. The **Dexterity Sheets Server Manager** opens. Create the first administrator account.
-3. Add your team on the **People** page, one by one, or many at once on **Add many people**:
-   type them into the list, paste rows copied from Excel, or click **Download template**, fill
-   it in, and **Import from file**. Every row is checked before anything is created; passwords
-   left empty are made for you. Then **Save the sign-in sheet** to hand the passwords out.
-
-<p align="center"><img src="docs/images/server-add-many.png" width="100%" alt="Server Manager, Add many people: a filled-in template imported, each row checked; rows that need fixing say why"></p>
+2. There are no accounts to create. Open Dexterity Sheets on your own PC first: the first person
+   to connect becomes the administrator; everyone else is added as an editor the first time they
+   open the app.
+3. When someone uses another PC, it waits on the Server Manager's **People and devices** page.
+   Approve it when they read you the same device code (Dexterity Sheets shows it in
+   **File › Shared**); revoke a PC that is lost or no longer theirs.
 
 Everything else is in the Server Manager too, so the job can be handed to anyone:
 
 | Page | What it does |
 |---|---|
 | **Server** | Running or stopped, with Start / Stop / Restart; the name, computer name and addresses teammates use; whether the firewall is open (and a button to open it); the data folder and its size; the server log |
-| **People** | Everyone who can sign in: change a role, reset a password (a readable one is made and shown once), disable or remove. The last administrator can't be locked out. |
-| **Add many people** | The bulk list described above |
+| **People and devices** | Everyone who has connected, with their PCs (device code, PC name, last seen): approve or revoke a PC, change a role, remove a person. PCs waiting for approval are at the top. The last administrator can't be locked out. |
+| **Dexterity Connect** | Tokens for the read-only API Dexterity Connect asks on TCP 47812 (assignments, mentions, shared spreadsheets), shown once and revocable; optionally the Connect hub and integration token, so mentions and assignments also arrive in Connect with a Sheets pulse card |
 | **App updates** | Fetch new versions of Dexterity Sheets from this GitHub repository automatically, or add an `.msi` by hand; every PC on the network is offered it |
-| **Backup and restore** | One `.zip` with every account, shared workbook, edit history and version; restoring keeps the data it replaces |
+| **Backup and restore** | One `.zip` with everyone's profile and PCs, every shared workbook, edit history and version; restoring keeps the data it replaces |
 | **Installed versions** | Which Dexterity Sheets version each PC runs, its channel and when it was last seen, with a count per version |
 | **Releases** | Each installer's channel (stable or testing), status (OK, known issue, deprecated, blocked) and the note people running it see; which version stable and testing PCs are offered and where a blocked version rolls back to; whether updates are offered, installed on their own or never offered |
 | **Feedback** | Problem reports sent with Help › Report a Problem, grouped by version and feature, each readable in full (with its logs when included); **Open GitHub issue** fills in a new issue without names of people or PCs |
@@ -284,7 +289,9 @@ only by administrators; uninstalling never deletes it. Full guide:
 | **Versions** | *Review › Versions*: keep a labelled version ("Issued for review Rev B"), open any version as a separate copy, or restore one for everyone (the current state is kept first). Ctrl+S keeps a version too. |
 | **Offline** | Edits made while the server can't be reached are kept and sent on reconnect; the status bar shows how many are waiting. |
 | **Conflicts** | Two people changing the same cell at the same moment: the later edit wins, both are told who changed it and which value was kept, and the replaced value stays in Edit History. Different cells never conflict. |
-| **@mentions** | Type **@** in a comment or reply and pick a colleague: they get a Windows notification with the spreadsheet, cell and comment, and clicking it opens that cell. Someone signed out is told at sign-in; if a person you mention can't open the spreadsheet, you are told so you can share it. |
+| **People** | *Review › People*: everyone on the office server, online or offline, and which shared spreadsheet they are in (only spreadsheets you may open). |
+| **Assign To** | *Review › Assign To* gives the selected cells to a colleague with an optional due date; they are notified with Go to cell, see it under *Review › Assigned to Me* and mark it done. The **Connect** button at the left of the status bar shows your recent mentions and assignments and has *Discuss in Connect*. |
+| **@mentions** | Type **@** in a comment, reply, note or a cell's text and pick a colleague: they get a Windows notification with the spreadsheet, cell and text, and **Go to cell** opens that cell. Someone signed out is told at sign-in; if a person you mention can't open the spreadsheet, you are told so you can share it. |
 | **Automation rules** | *Share › Automation rules…*: on a schedule or when a value changes, the office server finds overdue items, runs the Quality Check, writes a report, stamps a completion time or notifies people. Fixed steps only: no macros or scripts. |
 
 What the server keeps on disk, and why nothing acknowledged can be lost, is in
@@ -330,9 +337,9 @@ An engine-first Rust workspace (from GridCraft) with Dexterity's layer on top:
 |---|---|
 | `core`, `numfmt`, `formula`, `functions`, `model`, `calc`, `xlsx`, `chart`, `engine` | the spreadsheet: values, number formats (now with regional settings), parser, 500+ functions, copy-on-write workbook model, dependency-graph recalculation, XLSX/CSV, charts, the command registry |
 | `ui-egui`, `apps/gridcraft` | the Windows desktop app (`DexteritySheets.exe`) |
-| **`collab`** | LAN co-authoring: workbook diff/patch, the wire protocol, client, server, discovery, accounts, audit trail, versions, update distribution |
-| **`apps/gridcraft-server`** | `DexSheetsServer.exe`: the server (as a Windows service), accounts CLI, GitHub release fetcher |
-| **`apps/gridcraft-server-manager`** | `DexSheetsServerManager.exe`: the server's control panel (people, bulk import from a template, service, firewall, updates, backups) |
+| **`collab`** | LAN co-authoring: workbook diff/patch, the wire protocol, client, server, discovery, Windows sign-in with device keys, audit trail, versions, update distribution |
+| **`apps/gridcraft-server`** | `DexSheetsServer.exe`: the server (as a Windows service), `profile` commands (people and their PCs), GitHub release fetcher |
+| **`apps/gridcraft-server-manager`** | `DexSheetsServerManager.exe`: the server's control panel (people and their PCs, service, firewall, updates, backups) |
 | **`ui-egui/src/collab_ui.rs`** | everything sharing looks like in the window |
 
 **How live editing works.** Each window compares its workbook with the last state it

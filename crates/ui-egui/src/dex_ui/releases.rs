@@ -305,7 +305,7 @@ pub(crate) fn request_install(app: &mut SheetApp, version: &str) -> Result<(), S
     };
     if u.url.is_empty() {
         if !app.collab.signed_in() {
-            return Err("Sign in to the office server first (File › Shared): this version comes from it.".into());
+            return Err("Connect to the office server first (File › Shared): this version comes from it.".into());
         }
         app.collab.update_state = Some(format!("Downloading {}...", u.version));
         app.collab.send(ClientMsg::GetUpdate { version: u.version });
@@ -343,7 +343,7 @@ fn send_report(app: &mut SheetApp) -> Result<Json, String> {
         return Err("Describe the problem in a sentence or two.".into());
     }
     if !app.collab.signed_in() {
-        return Err("Sign in to the office server first (File › Shared): reports go to its administrator.".into());
+        return Err("Connect to the office server first (File › Shared): reports go to its administrator.".into());
     }
     let severity = if SEVERITIES.iter().any(|(k, _)| *k == f.severity) { f.severity.clone() } else { "medium".into() };
     let report = Feedback {
@@ -613,7 +613,7 @@ fn whats_new(app: &mut SheetApp, ctx: &egui::Context) {
                 }
                 if ui
                     .add_enabled(!app.collab.releases.older.is_empty(), egui::Button::new("Roll back to an earlier version"))
-                    .on_disabled_hover_text("Sign in to the office server: earlier versions come from it")
+                    .on_disabled_hover_text("Connect to the office server: earlier versions come from it")
                     .clicked()
                 {
                     app.collab.releases.rollback = true;
@@ -678,13 +678,13 @@ fn report(app: &mut SheetApp, ctx: &egui::Context) {
             ui.horizontal(|ui| {
                 if ui
                     .add_enabled(signed_in, egui::Button::new("Send to the administrator"))
-                    .on_disabled_hover_text("Sign in to the office server first (File › Shared)")
+                    .on_disabled_hover_text("Connect to the office server first (File › Shared)")
                     .clicked()
                 {
                     send = true;
                 }
                 if !signed_in {
-                    ui.label(egui::RichText::new("Sign in to the office server to send it.").weak());
+                    ui.label(egui::RichText::new("Connect to the office server to send it.").weak());
                 }
             });
         });
@@ -724,7 +724,7 @@ fn rollback(app: &mut SheetApp, ctx: &egui::Context) {
                         ui.label("Looking for earlier versions...");
                     });
                 } else if !app.collab.signed_in() && !app.collab.releases.prefs.github_updates {
-                    ui.label("Sign in to the office server (File › Shared), or allow the GitHub check in the updates dialog: earlier versions come from there.");
+                    ui.label("Connect to the office server (File › Shared), or allow the GitHub check in the updates dialog: earlier versions come from there.");
                 } else {
                     ui.label("No earlier version to roll back to was found.");
                 }

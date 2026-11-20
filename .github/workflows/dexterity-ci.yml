@@ -38,6 +38,10 @@ jobs:
             base="$BEFORE"
           fi
           python3 packaging/dexterity/docs_check.py $base
+      - name: Every file Dexterity added is protected from upstream syncs (needs full history)
+        run: python3 packaging/dexterity/check_overlay.py
+      - name: The sync's whole-tree ledger reports a dropped Dexterity line
+        run: python3 packaging/dexterity/tests/sync_ledger_test.py
 
   windows:
     runs-on: windows-latest
@@ -58,6 +62,8 @@ jobs:
         run: cargo clippy --release --locked -p gridcraft-collab -p gridcraft-server -p gridcraft-server-manager -p gridcraft-ui-egui -p gridcraft --tests -- -D warnings
       - name: Collaboration and Server Manager tests (patches, convergence, real TCP server, bulk import, backups)
         run: cargo test --release --locked --no-fail-fast -p gridcraft-collab -p gridcraft-server-manager
+      - name: Every Dexterity feature is reachable through the real window (dex_* UI tests)
+        run: cargo test --release --locked --no-fail-fast -p gridcraft-ui-egui --test it dex_
       - name: Engine, formula and file-format tests
         # --no-fail-fast: one run names every failing test in every crate (an upstream merge can
         # change expectations in several at once), instead of stopping at the first crate.

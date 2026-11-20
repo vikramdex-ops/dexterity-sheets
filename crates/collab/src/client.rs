@@ -1,5 +1,6 @@
-//! The client side of a server connection: background threads that log in, keep the connection
-//! alive and reconnect, handing messages to the front end through a channel.
+//! The client side of a server connection: background threads that log in (the Windows account,
+//! proved with this PC's device key), keep the connection alive and reconnect, handing messages
+//! to the front end through a channel.
 
 use std::net::{TcpStream, ToSocketAddrs};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -7,6 +8,7 @@ use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, channel};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use crate::auth::DeviceKey;
 use crate::proto::{self, ClientMsg, ServerMsg, UserInfo};
 use crate::{Error, Result, auth};
 
@@ -16,8 +18,12 @@ pub type Waker = Arc<dyn Fn() + Send + Sync>;
 pub struct Config {
     /// `host` or `host:port`.
     pub server: String,
+    /// The Windows account, `DOMAIN\user` (see [`identity::windows_account`](crate::identity::windows_account)).
     pub user: String,
-    pub password: String,
+    /// The name others see.
+    pub display: String,
+    /// This PC's device key.
+    pub key: Arc<DeviceKey>,
     pub app: String,
     pub machine: String,
 }
@@ -35,13 +41,15 @@ pub enum Event {
     Message(ServerMsg),
     /// The connection dropped; the client keeps trying.
     Disconnected(String),
-    /// Wrong user or password, or an incompatible server: the client stopped.
+    /// This PC waits for an administrator to approve it (`code`: its device code). The client
+    /// tries again quietly every few seconds.
+    Pending {
+        code: String,
+        message: String,
+    },
+    /// Refused (a revoked device, an incompatible server): the client stopped.
     Failed(String),
 }
-
-/// The server's login challenge for the current connection: (salt, iterations, nonce), all hex
-/// but the count. Kept so the person can prove their current password again later (changing it).
-type Challenge = (String, u32, String);
 
 pub struct Client {
     tx: Sender<ClientMsg>,
@@ -50,7 +58,6 @@ pub struct Client {
     pub instance: String,
     pub config: Config,
     online: Arc<AtomicBool>,
-    challenge: Arc<Mutex<Option<Challenge>>>,
 }
 
 impl Client {
@@ -59,15 +66,13 @@ impl Client {
         let (ev_tx, events) = channel::<Event>();
         let stop = Arc::new(AtomicBool::new(false));
         let online = Arc::new(AtomicBool::new(false));
-        let challenge = Arc::new(Mutex::new(None));
         let instance = auth::hex(&auth::random_bytes::<8>());
-        let (cfg, st, inst, on, ch) = (config.clone(), stop.clone(), instance.clone(), online.clone(), challenge.clone());
-        let spawned =
-            std::thread::Builder::new().name("dexsheets-client".into()).spawn(move || supervise(cfg, inst, out_rx, ev_tx, waker, st, on, ch));
+        let (cfg, st, inst, on) = (config.clone(), stop.clone(), instance.clone(), online.clone());
+        let spawned = std::thread::Builder::new().name("dexsheets-client".into()).spawn(move || supervise(cfg, inst, out_rx, ev_tx, waker, st, on));
         if let Err(e) = spawned {
             log::error!("could not start the connection thread: {e}");
         }
-        Client { tx, events, stop, instance, config, online, challenge }
+        Client { tx, events, stop, instance, config, online }
     }
 
     pub fn send(&self, msg: ClientMsg) {
@@ -77,13 +82,6 @@ impl Client {
     pub fn online(&self) -> bool {
         self.online.load(Ordering::Relaxed)
     }
-
-    /// Proves `password` to the server over this connection's login challenge, as `Login` did:
-    /// the `old_proof` of `ChangePassword`. `None` before the first login.
-    pub fn proof(&self, password: &str) -> Option<String> {
-        let (salt, iterations, nonce) = self.challenge.lock().ok()?.clone()?;
-        Some(auth::proof(password, &salt, iterations, &nonce))
-    }
 }
 
 impl Drop for Client {
@@ -92,19 +90,28 @@ impl Drop for Client {
     }
 }
 
+/// Seconds between tries while this PC waits for approval.
+pub const PENDING_RETRY_S: u64 = 15;
+
 fn address(server: &str) -> String {
     if server.contains(':') { server.to_string() } else { format!("{server}:{}", proto::DEFAULT_PORT) }
 }
 
-/// Logged in: the connection, who we are, everyone, the server's name and its challenge.
-type LoggedIn = (TcpStream, UserInfo, Vec<UserInfo>, String, Challenge);
+/// How a login ended.
+enum Outcome {
+    /// The connection, who we are, everyone, the server's name.
+    In(TcpStream, UserInfo, Vec<UserInfo>, String),
+    /// This device waits for approval: its code and the server's words.
+    Pending(String, String),
+}
 
-fn login(cfg: &Config, instance: &str) -> Result<LoggedIn> {
+fn login(cfg: &Config, instance: &str) -> Result<Outcome> {
     let addr = address(&cfg.server);
     let sock = addr.to_socket_addrs()?.next().ok_or_else(|| Error::Protocol(format!("no address for {addr}")))?;
     let mut s = TcpStream::connect_timeout(&sock, Duration::from_secs(4))?;
     s.set_nodelay(true)?;
     s.set_read_timeout(Some(Duration::from_secs(20)))?;
+    let public = cfg.key.public_key();
     proto::write_frame(
         &mut s,
         &ClientMsg::Hello {
@@ -113,19 +120,24 @@ fn login(cfg: &Config, instance: &str) -> Result<LoggedIn> {
             app: cfg.app.clone(),
             machine: cfg.machine.clone(),
             instance: instance.to_string(),
+            display: cfg.display.clone(),
+            key: auth::hex(&public),
         },
     )?;
-    let (salt, iterations, nonce, server) = match proto::read_frame::<_, ServerMsg>(&mut s)? {
-        ServerMsg::Challenge { salt, iterations, nonce, server } => (salt, iterations, nonce, server),
+    let (nonce, server) = match proto::read_frame::<_, ServerMsg>(&mut s)? {
+        ServerMsg::Challenge { nonce, server } => (nonce, server),
         ServerMsg::Error { message, .. } => return Err(Error::Denied(message)),
         other => return Err(Error::Protocol(format!("unexpected {other:?}"))),
     };
-    proto::write_frame(&mut s, &ClientMsg::Login { proof: auth::proof(&cfg.password, &salt, iterations, &nonce) })?;
+    let nonce = auth::unhex(&nonce).ok_or_else(|| Error::Protocol("the server's challenge is not hex".into()))?;
+    let signature = cfg.key.sign(&auth::login_message(&nonce, &cfg.user, &public));
+    proto::write_frame(&mut s, &ClientMsg::Login { signature: auth::hex(&signature) })?;
     match proto::read_frame::<_, ServerMsg>(&mut s)? {
         ServerMsg::Welcome { me, users, .. } => {
             s.set_read_timeout(None)?;
-            Ok((s, me, users, server, (salt, iterations, nonce)))
+            Ok(Outcome::In(s, me, users, server))
         }
+        ServerMsg::Pending { code, message } => Ok(Outcome::Pending(code, message)),
         ServerMsg::Error { message, .. } => Err(Error::Denied(message)),
         other => Err(Error::Protocol(format!("unexpected {other:?}"))),
     }
@@ -140,18 +152,26 @@ fn supervise(
     waker: Waker,
     stop: Arc<AtomicBool>,
     online: Arc<AtomicBool>,
-    challenge: Arc<Mutex<Option<Challenge>>>,
 ) {
     let mut backoff = 1u64;
     let mut ever_connected = false;
     while !stop.load(Ordering::Relaxed) {
         match login(&cfg, &instance) {
-            Ok((stream, me, users, server, ch)) => {
+            Ok(Outcome::Pending(code, message)) => {
+                // Not a failure: ask again quietly until an administrator approves this PC.
+                let _ = ev.send(Event::Pending { code, message });
+                waker();
+                for _ in 0..PENDING_RETRY_S * 10 {
+                    if stop.load(Ordering::Relaxed) {
+                        return;
+                    }
+                    std::thread::sleep(Duration::from_millis(100));
+                }
+                continue;
+            }
+            Ok(Outcome::In(stream, me, users, server)) => {
                 backoff = 1;
                 ever_connected = true;
-                if let Ok(mut g) = challenge.lock() {
-                    *g = Some(ch);
-                }
                 // Anything queued while offline belonged to the old connection: the front end
                 // resends what still matters when it hears `Connected`.
                 while out_rx.try_recv().is_ok() {}

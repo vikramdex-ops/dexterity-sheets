@@ -1,8 +1,11 @@
-//! The Dexterity Sheets server: accounts, shared workbooks, the ordered edit log and the audit
-//! trail.
+//! The Dexterity Sheets server: people and their devices, shared workbooks, the ordered edit log
+//! and the audit trail.
 //!
 //! On disk, under the data folder:
-//! - `users.json`: accounts (salted PBKDF2 keys, never passwords).
+//! - `profiles.json`: the people the server has seen (their Windows account, the name others
+//!   see, role, colour) and each one's devices with their public keys and approval. No passwords:
+//!   a person's first device is trusted on first use, any further one waits for an administrator.
+//!   An older server's `users.json` is carried over once and kept as `users.json.bak`.
 //! - `books/<id>/book.json`: name, creator, dates.
 //! - `books/<id>/snapshot-<seq>.xlsx`: the workbook as of edit `seq` (the newest one counts).
 //! - `books/<id>/log.jsonl`: every edit, in order, flushed to disk before anyone hears of it.
@@ -28,10 +31,22 @@ use serde::{Deserialize, Serialize};
 
 use crate::patch::{self, CellData, WbPatch};
 use crate::proto::{
-    self, Access, BookInfo, Change, ClientMsg, Conflict, FileSource, LastEdit, Logged, Notice, Peer, Role, Rule, ServerMsg, TemplateInfo, UpdateInfo,
-    UserInfo, VersionInfo,
+    self, Access, BookInfo, Change, ClientMsg, Conflict, DeviceInfo, DeviceStatus, FileSource, LastEdit, Logged, Notice, Peer, ProfileInfo, Role,
+    Rule, ServerMsg, TemplateInfo, UpdateInfo, UserInfo, VersionInfo,
 };
-use crate::{Error, Result, auth, mention, now_ms};
+use crate::proto::{Assignment, PersonInfo};
+use crate::tasks::{self, MentionRecord};
+use crate::{Error, Result, auth, connect, identity, mention, now_ms};
+
+/// This PC's network name, as links to its workbooks name it.
+fn host_name() -> String {
+    std::env::var("COMPUTERNAME")
+        .or_else(|_| std::env::var("HOSTNAME"))
+        .ok()
+        .map(|h| h.trim().to_string())
+        .filter(|h| !h.is_empty() && h.chars().all(|c| c.is_ascii_alphanumeric() || "-._".contains(c)))
+        .unwrap_or_else(|| "localhost".into())
+}
 
 /// Write a fresh snapshot after this many edits.
 const SNAPSHOT_EVERY: u64 = 300;
@@ -47,15 +62,16 @@ static NOTICE_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::
 /// Most changes a history query returns.
 const HISTORY_MAX: usize = 5000;
 
+/// A person as the rest of the server sees them. Built from `profiles.json`; also the shape of an
+/// account in an older server's `users.json` (its password fields are ignored), which is how
+/// those accounts are carried over.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct UserRecord {
     pub user: String,
     pub display: String,
     pub role: Role,
     pub color: [u8; 3],
-    pub salt: String,
-    pub key: String,
-    pub iterations: u32,
+    /// No device may sign in for them (every one revoked), or the old account was disabled.
     #[serde(default)]
     pub disabled: bool,
 }
@@ -106,10 +122,9 @@ struct Conn {
     user: String,
     instance: String,
     machine: String,
-    /// The nonce of this connection's login challenge: a `ChangePassword` proves the current
-    /// password over it again.
-    nonce: String,
-    /// The socket, to close the connection from the server's side (the account disabled).
+    /// The device key (hex) it signed in with: revoking that device ends the connection.
+    key: String,
+    /// The socket, to close the connection from the server's side (the device revoked).
     sock: Option<TcpStream>,
     /// The app version and update channel it last asked about.
     version: String,
@@ -122,6 +137,9 @@ struct Conn {
 pub struct State {
     dir: PathBuf,
     name: String,
+    /// Everyone the server has seen, as in `profiles.json`.
+    profiles: Profiles,
+    /// The same people as the rest of the server looks them up (from `profiles`).
     users: Vec<UserRecord>,
     metas: BTreeMap<String, BookMeta>,
     books: HashMap<String, Book>,
@@ -136,6 +154,10 @@ pub struct State {
     statuses: HashMap<String, (String, String, String)>,
     /// sha256 of installers already hashed: (path, size, modified) → hash.
     hashes: HashMap<(PathBuf, u64, std::time::SystemTime), String>,
+    /// `host:port` as links name this server (`dexterity://open/<address>/<book>`).
+    address: String,
+    /// Notices waiting to be posted to Dexterity Connect.
+    outbox: connect::Outbox,
 }
 
 pub struct Server {
@@ -149,21 +171,239 @@ fn lock(m: &Mutex<State>) -> MutexGuard<'_, State> {
     m.lock().unwrap_or_else(|p| p.into_inner())
 }
 
-pub fn users_path(dir: &Path) -> PathBuf {
-    dir.join("users.json")
+/// `profiles.json`: everyone the server has seen and their devices.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Profiles {
+    /// By account in lower case (`dds\vikram`).
+    #[serde(default)]
+    pub profiles: BTreeMap<String, ProfileInfo>,
+    /// Accounts carried over from an older server's `users.json`, not yet matched to anyone: the
+    /// first Windows account with the same user name (any domain, any case) takes over the name,
+    /// role and colour, and the workbooks, access and notices filed under the old name. An old
+    /// administrator account is taken over only once its PC is approved.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub carry_over: Vec<UserRecord>,
 }
 
-pub fn load_users(dir: &Path) -> Result<Vec<UserRecord>> {
-    let p = users_path(dir);
-    if !p.exists() {
-        return Ok(Vec::new());
+/// What became of a device trying to sign in.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Admission {
+    In,
+    /// Waits for an administrator; the device code.
+    Pending(String),
+    Revoked,
+}
+
+impl Profiles {
+    /// Everyone, as the rest of the server looks them up.
+    pub fn users(&self) -> Vec<UserRecord> {
+        self.profiles
+            .values()
+            .map(|p| UserRecord {
+                user: p.user.clone(),
+                display: p.display.clone(),
+                role: p.role,
+                color: p.color,
+                disabled: !p.devices.is_empty() && !p.devices.iter().any(|d| d.status == DeviceStatus::Approved),
+            })
+            .collect()
     }
-    Ok(serde_json::from_slice(&fs::read(p)?)?)
+
+    /// Everyone with their devices, for the administrator's screens.
+    pub fn list(&self) -> Vec<ProfileInfo> {
+        self.profiles.values().cloned().collect()
+    }
+
+    fn admins(&self) -> usize {
+        self.profiles.values().filter(|p| p.role == Role::Admin).count()
+    }
+
+    /// Lets `account` in on the device with `key` (hex), or not. A person never seen gets a
+    /// profile and their first device is approved (trust on first use); a further device waits
+    /// for an administrator; a revoked one is refused. Returns the old `users.json` name it took
+    /// over, if any. `account` has been checked with [`identity::valid_account`].
+    pub fn admit(&mut self, account: &str, display: &str, key: &str, machine: &str, now: i64) -> (Admission, Option<String>) {
+        let user = identity::account_key(account);
+        let code = auth::unhex(key).map(|k| auth::device_code(&k)).unwrap_or_default();
+        let device =
+            |status| DeviceInfo { key: key.to_string(), code: code.clone(), machine: machine.to_string(), first_seen: now, last_seen: now, status };
+        let mut adopted = None;
+        if !self.profiles.contains_key(&user) {
+            let part = identity::user_part(&user).to_string();
+            let carried = self.carry_over.iter().position(|c| c.user.to_lowercase() == part).map(|i| self.carry_over.remove(i));
+            // The first person on a server with no administrator at all becomes one, so a new
+            // server is never left without someone who can approve devices.
+            let no_admin = self.admins() == 0 && !self.carry_over.iter().any(|c| c.role == Role::Admin && !c.disabled);
+            let color = proto::PALETTE.get(self.profiles.len() % proto::PALETTE.len()).copied().unwrap_or([0x1f, 0x77, 0xb4]);
+            let shown = clean_display(display).unwrap_or_else(|| identity::user_part(account).to_string());
+            let p = match &carried {
+                Some(c) => {
+                    adopted = (c.user != user).then(|| c.user.clone());
+                    ProfileInfo {
+                        user: user.clone(),
+                        account: account.to_string(),
+                        display: c.display.clone(),
+                        role: c.role,
+                        color: c.color,
+                        devices: Vec::new(),
+                    }
+                }
+                None => ProfileInfo {
+                    user: user.clone(),
+                    account: account.to_string(),
+                    display: shown,
+                    role: if no_admin { Role::Admin } else { Role::Editor },
+                    color,
+                    devices: Vec::new(),
+                },
+            };
+            self.profiles.insert(user.clone(), p);
+            if carried.as_ref().is_some_and(|c| c.disabled) {
+                // A disabled account stays out: its device is recorded as revoked.
+                if let Some(p) = self.profiles.get_mut(&user) {
+                    p.devices.push(device(DeviceStatus::Revoked));
+                }
+                return (Admission::Revoked, adopted);
+            }
+            if carried.as_ref().is_some_and(|c| c.role == Role::Admin) {
+                // The old name alone proves nothing: any domain's account with the same user name
+                // matches it. An administrator's account is only taken over once someone approves
+                // this PC (another administrator, or the Server Manager on the server itself).
+                if let Some(p) = self.profiles.get_mut(&user) {
+                    p.devices.push(device(DeviceStatus::Pending));
+                }
+                log::warn!("{account} matches the carried-over administrator account; its PC {code} waits for approval");
+                return (Admission::Pending(code), adopted);
+            }
+        }
+        let Some(p) = self.profiles.get_mut(&user) else { return (Admission::Revoked, adopted) };
+        if p.account.is_empty() || p.account.to_lowercase() == user {
+            p.account = account.to_string();
+        }
+        match p.devices.iter_mut().find(|d| d.key == key) {
+            Some(d) => {
+                d.last_seen = now;
+                if !machine.is_empty() {
+                    d.machine = machine.to_string();
+                }
+                match d.status {
+                    DeviceStatus::Approved => (Admission::In, adopted),
+                    DeviceStatus::Pending => (Admission::Pending(d.code.clone()), adopted),
+                    DeviceStatus::Revoked => (Admission::Revoked, adopted),
+                }
+            }
+            None => {
+                // The first device of a person (also one an administrator set up by name before
+                // they ever connected) is approved; any later one waits.
+                let status = if p.devices.is_empty() { DeviceStatus::Approved } else { DeviceStatus::Pending };
+                p.devices.push(device(status));
+                if status == DeviceStatus::Approved { (Admission::In, adopted) } else { (Admission::Pending(code), adopted) }
+            }
+        }
+    }
+
+    /// Approves or revokes every device with `code` (of `user` only, when given). Returns how
+    /// many changed.
+    pub fn set_device(&mut self, code: &str, status: DeviceStatus, user: Option<&str>) -> Result<usize> {
+        let code = auth::normalize_code(code).ok_or_else(|| Error::Denied(format!("\"{code}\" is not a device code (it looks like ABCD-EFGH)")))?;
+        let user = user.map(identity::account_key);
+        let mut n = 0;
+        for p in self.profiles.values_mut().filter(|p| user.as_ref().is_none_or(|u| *u == p.user)) {
+            for d in p.devices.iter_mut().filter(|d| d.code == code) {
+                d.status = status;
+                n += 1;
+            }
+        }
+        if n == 0 {
+            return Err(Error::Denied(format!("no device has the code {code}")));
+        }
+        Ok(n)
+    }
+
+    /// Sets a person's role. Someone not seen yet gets a profile with no device, so their first
+    /// connection arrives with that role. The last administrator stays one.
+    pub fn set_role(&mut self, user: &str, role: Role) -> Result<()> {
+        let account = user.trim();
+        if !identity::valid_account(account) {
+            return Err(Error::Denied(format!("\"{account}\" is not a Windows account name (DOMAIN\\user)")));
+        }
+        let key = identity::account_key(account);
+        if role != Role::Admin && self.profiles.get(&key).is_some_and(|p| p.role == Role::Admin) && self.admins() == 1 {
+            return Err(Error::Denied("this is the only administrator: make someone else an administrator first".into()));
+        }
+        let color = proto::PALETTE.get(self.profiles.len() % proto::PALETTE.len()).copied().unwrap_or([0x1f, 0x77, 0xb4]);
+        let p = self.profiles.entry(key.clone()).or_insert_with(|| ProfileInfo {
+            user: key.clone(),
+            account: account.to_string(),
+            display: identity::user_part(account).to_string(),
+            role,
+            color,
+            devices: Vec::new(),
+        });
+        p.role = role;
+        Ok(())
+    }
+
+    /// Forgets a person and their devices. The last administrator stays.
+    pub fn remove(&mut self, user: &str) -> Result<()> {
+        let key = identity::account_key(user);
+        let p = self.profiles.get(&key).ok_or_else(|| Error::Denied(format!("nobody called {user} has signed in here")))?;
+        if p.role == Role::Admin && self.admins() == 1 {
+            return Err(Error::Denied("this is the only administrator: make someone else an administrator first".into()));
+        }
+        self.profiles.remove(&key);
+        Ok(())
+    }
 }
 
-pub fn save_users(dir: &Path, users: &[UserRecord]) -> Result<()> {
+/// A name to show others: trimmed, one line, at most 80 characters. `None` when empty.
+pub fn clean_display(s: &str) -> Option<String> {
+    let s: String = s.chars().filter(|c| !c.is_control()).take(80).collect();
+    let s = s.trim();
+    (!s.is_empty()).then(|| s.to_string())
+}
+
+pub fn profiles_path(dir: &Path) -> PathBuf {
+    dir.join("profiles.json")
+}
+
+/// `profiles.json`, carrying over an older server's `users.json` the first time (it is kept as
+/// `users.json.bak`). Missing: nobody yet.
+pub fn load_profiles(dir: &Path) -> Result<Profiles> {
+    let p = profiles_path(dir);
+    if p.exists() {
+        return Ok(serde_json::from_slice(&fs::read(p)?)?);
+    }
+    let old = dir.join("users.json");
+    if !old.exists() {
+        return Ok(Profiles::default());
+    }
+    let carry_over: Vec<UserRecord> = serde_json::from_slice(&fs::read(&old)?)?;
+    let profiles = Profiles { profiles: BTreeMap::new(), carry_over };
+    save_profiles(dir, &profiles)?;
+    fs::rename(&old, dir.join("users.json.bak"))?;
+    log::info!(
+        "carried over {} account(s) from users.json (kept as users.json.bak): each is matched to the first Windows account with the same user name",
+        profiles.carry_over.len()
+    );
+    Ok(profiles)
+}
+
+pub fn save_profiles(dir: &Path, profiles: &Profiles) -> Result<()> {
     fs::create_dir_all(dir)?;
-    write_atomic(&users_path(dir), &serde_json::to_vec_pretty(users)?)
+    write_atomic(&profiles_path(dir), &serde_json::to_vec_pretty(profiles)?)
+}
+
+/// Sets up a person by name before they connect (or changes their name and role): their first
+/// device is then approved with this role.
+pub fn set_profile(dir: &Path, user: &str, display: &str, role: Role) -> Result<()> {
+    let mut all = load_profiles(dir)?;
+    all.set_role(user, role)?;
+    if let (Some(shown), Some(p)) = (clean_display(display), all.profiles.get_mut(&identity::account_key(user))) {
+        p.display = shown;
+    }
+    save_profiles(dir, &all)
 }
 
 /// Opens an append-only log (edits, audit). A line cut short by a crash has no newline: it is ended
@@ -219,7 +459,8 @@ fn compact_log(dir: &Path, b: &mut Book, keep_after: u64) -> Result<()> {
     Ok(())
 }
 
-fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
+/// Writes a file whole or not at all (a temporary file renamed over it).
+pub fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
     let tmp = path.with_extension("tmp");
     {
         let mut f = File::create(&tmp)?;
@@ -237,42 +478,13 @@ pub fn is_app_installer(file: &str) -> bool {
     f.ends_with(".msi") && !f.contains("server")
 }
 
-pub fn valid_username(u: &str) -> bool {
-    !u.is_empty() && u.len() <= 64 && u.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
-}
-
-/// Adds an account or replaces its password, display name and role.
-pub fn set_user(dir: &Path, user: &str, display: &str, password: &str, role: Role) -> Result<()> {
-    let user = user.trim().to_ascii_lowercase();
-    if !valid_username(&user) {
-        return Err(Error::Denied("user names use letters, digits, '.', '_' and '-'".into()));
-    }
-    if password.chars().count() < 6 {
-        return Err(Error::Denied("passwords need at least 6 characters".into()));
-    }
-    let mut users = load_users(dir)?;
-    let salt = auth::random_bytes::<16>();
-    let key = auth::pbkdf2(password, &salt, auth::ITERATIONS);
-    let color = proto::PALETTE[users.len() % proto::PALETTE.len()];
-    let rec = UserRecord {
-        user: user.clone(),
-        display: if display.trim().is_empty() { user.clone() } else { display.trim().to_string() },
-        role,
-        color,
-        salt: auth::hex(&salt),
-        key: auth::hex(&key),
-        iterations: auth::ITERATIONS,
-        disabled: false,
-    };
-    match users.iter_mut().find(|u| u.user == user) {
-        Some(u) => {
-            let color = u.color;
-            *u = rec;
-            u.color = color;
-        }
-        None => users.push(rec),
-    }
-    save_users(dir, &users)
+/// A person's name as a file name (their kept notices): letters, digits, `.`, `-` and `_` as
+/// they are, anything else (the `\` of `DOMAIN\user`) as `~<hex>~`, so no name can reach
+/// outside its folder and two names never share a file.
+pub fn user_file(user: &str) -> String {
+    user.chars()
+        .map(|c| if c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_') { c.to_string() } else { format!("~{:x}~", c as u32) })
+        .collect()
 }
 
 /// A fresh id from a name: the name's letters and digits plus a random tail. `taken` says
@@ -299,7 +511,8 @@ fn a1(at: CellRef) -> String {
 impl Server {
     pub fn open(dir: PathBuf, name: String) -> Result<Server> {
         fs::create_dir_all(dir.join("books"))?;
-        let users = load_users(&dir)?;
+        let profiles = load_profiles(&dir)?;
+        let users = profiles.users();
         let mut metas = BTreeMap::new();
         for e in fs::read_dir(dir.join("books"))?.flatten() {
             let p = e.path().join("book.json");
@@ -310,9 +523,13 @@ impl Server {
             }
         }
         fs::create_dir_all(dir.join("updates"))?;
+        let outbox = connect::Outbox::load(&dir);
         let mut state = State {
+            address: format!("{}:{}", host_name(), proto::DEFAULT_PORT),
+            outbox,
             dir,
             name,
+            profiles,
             users,
             metas,
             books: HashMap::new(),
@@ -351,14 +568,19 @@ impl Server {
         let _ = stream.set_nodelay(true);
         let _ = stream.set_read_timeout(Some(Duration::from_secs(30)));
         let Ok(mut reader) = stream.try_clone() else { return };
-        let (user, instance, machine, nonce) = match self.handshake(&mut reader) {
-            Ok(x) => x,
+        let (user, instance, machine, key) = match self.handshake(&mut reader) {
+            Ok(Some(x)) => x,
+            // A device waiting for approval was told so; it asks again later.
+            Ok(None) => {
+                let _ = stream.shutdown(std::net::Shutdown::Both);
+                return;
+            }
             // A connection closed before a full hello is a port check (the Server Manager's
             // "is it running" test, a monitoring tool), not a login: nothing to log or slow down.
             Err(e) if is_probe(&e) => return,
             Err(e) => {
                 log::info!("login refused from {peer_addr}: {e}");
-                // Slow down password guessing.
+                // Slow down anyone trying keys or names.
                 std::thread::sleep(Duration::from_millis(800));
                 let mut w = &stream;
                 let _ = proto::write_frame(&mut w, &ServerMsg::Error { message: e.to_string(), book: None });
@@ -382,7 +604,7 @@ impl Server {
                     user: user.clone(),
                     instance,
                     machine: machine.clone(),
-                    nonce,
+                    key,
                     sock: stream.try_clone().ok(),
                     version: String::new(),
                     channel: String::new(),
@@ -392,6 +614,8 @@ impl Server {
                 },
             );
             send(&tx, &ServerMsg::Welcome { me, conn, users });
+            // Everyone's People list shows this person online now (theirs arrives with it).
+            st.broadcast_people();
             let role = st.users.iter().find(|u| u.user == user).map_or(Role::Viewer, |u| u.role);
             for notice in st.notices_at_sign_in(&user, role) {
                 send(&tx, &ServerMsg::Notice { notice });
@@ -429,53 +653,124 @@ impl Server {
         let _ = stream.shutdown(std::net::Shutdown::Both);
     }
 
-    /// The signed-in account, its app instance and machine, and the nonce it proved its
-    /// password over.
-    fn handshake(&self, s: &mut TcpStream) -> Result<(String, String, String, String)> {
-        let (user, instance, machine) = match proto::read_frame::<_, ClientMsg>(s)? {
-            ClientMsg::Hello { protocol, user, instance, machine, .. } => {
-                if protocol != proto::PROTOCOL {
-                    return Err(Error::Denied(format!(
-                        "this server speaks protocol {}, the app speaks {protocol}: install the same version",
-                        proto::PROTOCOL
-                    )));
+    /// Who signed in: the account (lower case), its app instance and machine, and the device key
+    /// (hex). `None`: the device waits for approval and was told so.
+    fn handshake(&self, s: &mut TcpStream) -> Result<Option<(String, String, String, String)>> {
+        let (account, instance, machine, display, key) = match proto::read_frame::<_, ClientMsg>(s)? {
+            ClientMsg::Hello { protocol, user, instance, machine, display, key, .. } => {
+                if protocol < proto::PROTOCOL {
+                    // An app from before device keys can't sign in here: it is told what to do,
+                    // and may still fetch its update from this server.
+                    self.serve_outdated(s, &user, &machine)?;
+                    return Ok(None);
                 }
-                (user.trim().to_ascii_lowercase(), instance, machine)
+                if protocol > proto::PROTOCOL {
+                    return Err(Error::Denied(
+                        "This office server runs an older Dexterity Sheets than this app: ask IT to update it (Server Manager › Updates).".into(),
+                    ));
+                }
+                (user.trim().to_string(), instance, machine, display, key.trim().to_ascii_lowercase())
             }
             _ => return Err(Error::Protocol("expected Hello".into())),
         };
-        let (rec, server) = {
-            let mut st = lock(&self.state);
-            // Accounts changed with the server's `user` command take effect at the next login
-            // (and a disabled account's open connections end now).
-            st.reload_users();
-            (st.users.iter().find(|u| u.user == user).cloned(), st.name.clone())
-        };
-        let nonce = auth::hex(&auth::random_bytes::<24>());
-        // An unknown user gets a challenge like anyone else, so names can't be probed.
-        let (salt, iterations) = match &rec {
-            Some(r) => (r.salt.clone(), r.iterations),
-            None => (auth::hex(&auth::hmac_sha256(b"no-such-user", user.as_bytes())[..16]), auth::ITERATIONS),
-        };
-        proto::write_frame(s, &ServerMsg::Challenge { salt, iterations, nonce: nonce.clone(), server })?;
-        let proof = match proto::read_frame::<_, ClientMsg>(s)? {
-            ClientMsg::Login { proof } => proof,
+        if !identity::valid_account(&account) {
+            return Err(Error::Denied(format!("\"{account}\" is not a Windows account name this server accepts.")));
+        }
+        let public =
+            auth::unhex(&key).filter(|k| k.len() == auth::PUBLIC_KEY_LEN).ok_or_else(|| Error::Denied("This app sent no device key.".into()))?;
+        let server = lock(&self.state).name.clone();
+        let nonce = auth::random_bytes::<24>();
+        proto::write_frame(s, &ServerMsg::Challenge { nonce: auth::hex(&nonce), server })?;
+        let signature = match proto::read_frame::<_, ClientMsg>(s)? {
+            ClientMsg::Login { signature } => auth::unhex(&signature).unwrap_or_default(),
             _ => return Err(Error::Protocol("expected Login".into())),
         };
-        let Some(rec) = rec else { return Err(Error::Denied("Wrong user name or password.".into())) };
-        let key = auth::unhex(&rec.key).unwrap_or_default();
-        let expect = auth::hmac_sha256(&key, &auth::unhex(&nonce).unwrap_or_default());
-        if !auth::same(&expect, &auth::unhex(&proof).unwrap_or_default()) {
-            return Err(Error::Denied("Wrong user name or password.".into()));
+        if !auth::verify(&public, &auth::login_message(&nonce, &account, &public), &signature) {
+            return Err(Error::Denied("The sign-in could not be verified: this PC's device key does not match what it sent.".into()));
         }
-        if rec.disabled {
-            return Err(Error::Denied(DISABLED.into()));
+        let admission = {
+            let mut st = lock(&self.state);
+            // Changes made with the Server Manager or the `profile` command count from this
+            // sign-in on (and a revoked device's open connections end now).
+            st.reload_profiles();
+            let (admission, adopted) = st.profiles.admit(&account, &display, &key, &machine, now_ms());
+            save_profiles(&st.dir, &st.profiles)?;
+            st.users = st.profiles.users();
+            if let Some(old) = adopted {
+                st.adopt(&old, &identity::account_key(&account));
+            }
+            admission
+        };
+        let user = identity::account_key(&account);
+        match admission {
+            Admission::In => Ok(Some((user, instance, machine, key))),
+            Admission::Pending(code) => {
+                log::info!("{user}: a new device {code} on {machine} waits for an administrator's approval");
+                proto::write_frame(
+                    s,
+                    &ServerMsg::Pending { message: format!("Waiting for an administrator to approve this PC — device code {code}."), code },
+                )?;
+                Ok(None)
+            }
+            Admission::Revoked => Err(Error::Denied(DISABLED.into())),
         }
-        Ok((user, instance, machine, nonce))
     }
 }
 
-const DISABLED: &str = "This account is disabled. Ask an administrator.";
+/// What an app too old for this server is told.
+pub fn too_old() -> String {
+    format!("This server needs Dexterity Sheets {} or newer — update from Help › Updates.", crate::APP_VERSION.trim())
+}
+
+impl Server {
+    /// An app of protocol 1 (user names and passwords): it gets the login it expects, with no
+    /// password checked and no access to anything but updates, so that Help › Updates still
+    /// brings it the new version from this server. Right after it is in, and for every other
+    /// request, it is told [`too_old`]. Returns when the app hangs up.
+    fn serve_outdated(&self, s: &mut TcpStream, user: &str, machine: &str) -> Result<()> {
+        log::info!("{user} on {machine}: an app from before Windows sign-in; offered updates only");
+        let server = lock(&self.state).name.clone();
+        // Protocol 1's challenge and welcome, as such an app reads them.
+        let challenge = serde_json::json!({"t": "Challenge", "salt": auth::hex(&auth::random_bytes::<16>()), "iterations": 1, "nonce": auth::hex(&auth::random_bytes::<24>()), "server": server});
+        proto::write_frame(s, &challenge)?;
+        let _login: serde_json::Value = proto::read_frame(s)?;
+        let me = UserInfo { user: user.trim().to_lowercase(), display: user.trim().to_string(), role: Role::Viewer, color: [0x7f, 0x7f, 0x7f] };
+        proto::write_frame(s, &ServerMsg::Welcome { me, conn: 0, users: Vec::new() })?;
+        proto::write_frame(s, &ServerMsg::Error { message: too_old(), book: None })?;
+        let _ = s.set_read_timeout(Some(Duration::from_secs(45)));
+        loop {
+            let Ok(v) = proto::read_frame::<_, serde_json::Value>(s) else { return Ok(()) };
+            let reply = match serde_json::from_value::<ClientMsg>(v) {
+                Ok(ClientMsg::Ping) => Some(ServerMsg::Pong),
+                Ok(ClientMsg::CheckUpdate { version, channel }) => {
+                    let st = lock(&self.state);
+                    let channel = channel.filter(|c| c == "stable" || c == "testing").unwrap_or_else(|| st.default_channel());
+                    Some(st.offer(&version, &channel))
+                }
+                Ok(ClientMsg::GetUpdate { version }) => {
+                    let found = lock(&self.state).available.iter().find(|(u, _)| u.version == version && u.status != "blocked").cloned();
+                    Some(match found.map(|(info, path)| fs::read(path).map(|data| (info, data))) {
+                        Some(Ok((info, data))) => {
+                            log::info!("{user} on {machine} (an older app) downloads update {}", info.version);
+                            ServerMsg::UpdateFile { info, data: proto::b64(&data) }
+                        }
+                        Some(Err(e)) => ServerMsg::Error { message: e.to_string(), book: None },
+                        None => ServerMsg::Error { message: format!("version {version} is not available on this server"), book: None },
+                    })
+                }
+                // Reports from an app that is not signed in are not kept.
+                Ok(ClientMsg::Health { .. } | ClientMsg::Usage { .. } | ClientMsg::Feedback { .. }) => None,
+                _ => Some(ServerMsg::Error { message: too_old(), book: None }),
+            };
+            if let Some(m) = reply {
+                proto::write_frame(s, &m)?;
+            }
+        }
+    }
+}
+
+const REMOVED: &str = "An administrator removed you from this office server. Connect again to be added back as someone new.";
+const DISABLED: &str = "This PC may no longer sign in to the office server: an administrator revoked it. Ask your administrator.";
 
 fn write_loop(mut w: TcpStream, rx: Receiver<Arc<Vec<u8>>>) {
     while let Ok(frame) = rx.recv() {
@@ -507,7 +802,9 @@ fn book_of(m: &ClientMsg) -> Option<String> {
         | ClientMsg::Versions { book }
         | ClientMsg::SaveVersion { book, .. }
         | ClientMsg::GetVersion { book, .. }
-        | ClientMsg::RestoreVersion { book, .. } => Some(book.clone()),
+        | ClientMsg::RestoreVersion { book, .. }
+        | ClientMsg::Assign { book, .. }
+        | ClientMsg::SetAssignment { book, .. } => Some(book.clone()),
         _ => None,
     }
 }
@@ -527,26 +824,42 @@ fn send(tx: &Sender<Arc<Vec<u8>>>, msg: &ServerMsg) {
 impl State {
     fn user(&self, conn: u64) -> Result<(&Conn, &UserRecord)> {
         let c = self.conns.get(&conn).ok_or_else(|| Error::Protocol("unknown connection".into()))?;
-        let u = self.users.iter().find(|u| u.user == c.user).ok_or_else(|| Error::Denied("account removed".into()))?;
+        let u = self.users.iter().find(|u| u.user == c.user).ok_or_else(|| Error::Denied(REMOVED.into()))?;
         if u.disabled {
             return Err(Error::Denied(DISABLED.into()));
         }
         Ok((c, u))
     }
 
-    /// Reads `users.json` again (the administrator's tools edit it) and ends the connections of
-    /// accounts that are now disabled or gone: a disabled person is out at once, not at their
-    /// next sign-in.
-    fn reload_users(&mut self) {
-        if let Ok(users) = load_users(&self.dir) {
-            self.users = users;
+    /// Reads `profiles.json` again (the Server Manager and the server's `profile` command edit
+    /// it) and ends the connections of devices that are now revoked or people removed: a revoked
+    /// PC is out at once, not at its next sign-in.
+    fn reload_profiles(&mut self) {
+        match load_profiles(&self.dir) {
+            Ok(p) => {
+                self.profiles = p;
+                self.users = self.profiles.users();
+            }
+            Err(e) => log::warn!("profiles.json: {e}"),
         }
-        let out: Vec<u64> =
-            self.conns.iter().filter(|(_, c)| self.users.iter().find(|u| u.user == c.user).is_none_or(|u| u.disabled)).map(|(id, _)| *id).collect();
-        for id in out {
+        self.drop_unapproved();
+    }
+
+    /// Ends the connections whose device is no longer approved or whose person is gone.
+    fn drop_unapproved(&mut self) {
+        let out: Vec<(u64, &'static str)> = self
+            .conns
+            .iter()
+            .filter_map(|(id, c)| match self.profiles.profiles.get(&c.user) {
+                None => Some((*id, REMOVED)),
+                Some(p) if !p.devices.iter().any(|d| d.key == c.key && d.status == DeviceStatus::Approved) => Some((*id, DISABLED)),
+                Some(_) => None,
+            })
+            .collect();
+        for (id, why) in out {
             let Some(c) = self.conns.remove(&id) else { continue };
-            log::info!("{}: disconnected (account disabled or removed)", c.user);
-            send(&c.tx, &ServerMsg::Error { message: DISABLED.into(), book: None });
+            log::info!("{}: disconnected (device revoked or person removed)", c.user);
+            send(&c.tx, &ServerMsg::Error { message: why.into(), book: None });
             // Said, then the socket is closed: the client sees the connection end and its
             // sign-in attempt afterwards is refused.
             if let Some(s) = &c.sock {
@@ -559,6 +872,67 @@ impl State {
                 self.broadcast(&b, &ServerMsg::PeerLeft { book: b.clone(), conn: id }, None);
             }
         }
+    }
+
+    /// Files everything kept under an old `users.json` name under the Windows account that took
+    /// it over: workbooks created or last changed, access lists, "last seen" marks, shared-from
+    /// records, automation notices and notices kept for them. The edit history keeps the old name.
+    fn adopt(&mut self, old: &str, new: &str) {
+        let swap = |s: &mut String| {
+            if s == old {
+                *s = new.to_string();
+            }
+        };
+        let fix = |m: &mut BookMeta| {
+            swap(&mut m.created_by);
+            swap(&mut m.modified_by);
+            if let Some(p) = m.access.people.remove(old) {
+                m.access.people.insert(new.to_string(), p);
+            }
+            if let Some(v) = m.seen.remove(old) {
+                m.seen.insert(new.to_string(), v);
+            }
+            if let Some(src) = m.source.as_mut() {
+                swap(&mut src.user);
+            }
+        };
+        let ids: Vec<String> = self.metas.keys().cloned().collect();
+        for id in ids {
+            if let Some(b) = self.books.get_mut(&id) {
+                fix(&mut b.meta);
+            }
+            let Some(m) = self.metas.get_mut(&id) else { continue };
+            let before = serde_json::to_string(&*m).unwrap_or_default();
+            fix(m);
+            let m = m.clone();
+            if serde_json::to_string(&m).unwrap_or_default() != before
+                && let Err(e) = self.save_meta(&m)
+            {
+                log::warn!("{id}: {e}");
+            }
+            let dir = self.book_dir(&id);
+            let mut rules = load_rules(&dir);
+            let mut changed = false;
+            for r in &mut rules {
+                for a in &mut r.actions {
+                    if let proto::Action::Notify { people } = a {
+                        for p in people.iter_mut().filter(|p| *p == old) {
+                            *p = new.to_string();
+                            changed = true;
+                        }
+                    }
+                }
+            }
+            if changed && let Err(e) = save_rules(&dir, &rules) {
+                log::warn!("{id}: automation: {e}");
+            }
+        }
+        let notices = self.dir.join("notices");
+        let (from, to) = (notices.join(format!("{}.jsonl", user_file(old))), notices.join(format!("{}.jsonl", user_file(new))));
+        if from.exists() && !to.exists() {
+            let _ = fs::rename(from, to);
+        }
+        log::info!("{new} took over the account {old} carried over from users.json");
     }
 
     /// Remembers that `user` has seen the workbook up to its current edit (they closed it, or
@@ -604,6 +978,106 @@ impl State {
                 let _ = c.tx.send(frame);
             }
         }
+        // Who has what open changed with it.
+        self.broadcast_people();
+    }
+
+    /// Everyone's People list (each sees only the workbooks they may open themselves).
+    fn broadcast_people(&self) {
+        for c in self.conns.values() {
+            let Some(u) = self.users.iter().find(|u| u.user == c.user) else { continue };
+            if let Some(frame) = encode(&ServerMsg::People { people: self.people_for(&u.user, u.role) }) {
+                let _ = c.tx.send(frame);
+            }
+        }
+    }
+
+    /// The account as Windows spells it (`DDS\Vikram`), else the key itself.
+    fn account_of(&self, user: &str) -> String {
+        self.profiles
+            .profiles
+            .get(user)
+            .map(|p| if p.account.is_empty() { p.user.clone() } else { p.account.clone() })
+            .unwrap_or_else(|| user.to_string())
+    }
+
+    /// Everyone on the server as `viewer` may see them: no devices or keys, and of the workbooks
+    /// each has open only those `viewer` may open. People whose every PC is revoked are left out.
+    fn people_for(&self, viewer: &str, role: Role) -> Vec<PersonInfo> {
+        let now = now_ms();
+        let mut out: Vec<PersonInfo> = self
+            .users
+            .iter()
+            .filter(|u| !u.disabled)
+            .map(|u| {
+                let mut books: Vec<(String, String)> = self
+                    .conns
+                    .values()
+                    .filter(|c| c.user == u.user)
+                    .flat_map(|c| c.open.iter())
+                    .filter_map(|id| self.metas.get(id))
+                    .filter(|m| permission(m, viewer, role, now).is_some())
+                    .map(|m| (m.id.clone(), m.name.clone()))
+                    .collect();
+                books.sort();
+                books.dedup();
+                PersonInfo {
+                    user: u.user.clone(),
+                    account: self.account_of(&u.user),
+                    display: u.display.clone(),
+                    color: u.color,
+                    role: format!("{:?}", u.role).to_lowercase(),
+                    online: self.conns.values().any(|c| c.user == u.user),
+                    books,
+                }
+            })
+            .collect();
+        out.sort_by(|a, b| b.online.cmp(&a.online).then_with(|| a.display.to_lowercase().cmp(&b.display.to_lowercase())));
+        out
+    }
+
+    /// Queues a Direct message to `user` on Dexterity Connect, when a hub is set up.
+    fn tell_connect(&mut self, user: &str, text: String, title: String, lines: Vec<String>) {
+        if !connect::load_config(&self.dir).ready() {
+            return;
+        }
+        let now = now_ms();
+        let id = format!("c-{now}-{}", NOTICE_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
+        let to = vec![self.account_of(user)];
+        self.outbox.push(connect::Outgoing { id, to, text, title, lines, created: now, tries: 0, next: now });
+    }
+
+    /// A workbook's assignments with its name filled in.
+    fn assignments(&self, book: &str) -> Vec<Assignment> {
+        let name = self.metas.get(book).map(|m| m.name.clone()).unwrap_or_default();
+        tasks::load_assignments(&self.book_dir(book))
+            .into_iter()
+            .map(|mut a| {
+                a.book = book.to_string();
+                a.book_name = name.clone();
+                a
+            })
+            .collect()
+    }
+
+    /// `user`'s assignments in every workbook they may still open: open ones first, by due date.
+    fn assigned_to(&self, user: &str, role: Role) -> Vec<Assignment> {
+        let now = now_ms();
+        let mut out: Vec<Assignment> = self
+            .metas
+            .values()
+            .filter(|m| permission(m, user, role, now).is_some())
+            .flat_map(|m| self.assignments(&m.id))
+            .filter(|a| a.user == user)
+            .collect();
+        out.sort_by(|a, b| {
+            (a.status == "done")
+                .cmp(&(b.status == "done"))
+                .then_with(|| (a.due.is_empty()).cmp(&b.due.is_empty()))
+                .then_with(|| a.due.cmp(&b.due))
+                .then_with(|| b.created.cmp(&a.created))
+        });
+        out
     }
 
     fn books_for(&self, user: &str, role: Role) -> Vec<BookInfo> {
@@ -635,20 +1109,20 @@ impl State {
     /// Tells each person mentioned in a comment, with the cell, once they can open the workbook.
     /// The person who wrote it hears about anyone mentioned who can't open it (they were not
     /// told), so they can share it with them.
-    fn tell_mentioned(&self, book: &str, user: &str, display: &str, mentions: &[mention::Mention]) {
-        let Some(m) = self.metas.get(book) else { return };
+    fn tell_mentioned(&mut self, book: &str, user: &str, display: &str, mentions: &[mention::Mention]) {
+        let Some(m) = self.metas.get(book).cloned() else { return };
         let now = now_ms();
         let mut no_access: Vec<String> = Vec::new();
         for men in mentions {
             for who in men.users.iter().filter(|w| *w != user) {
-                let Some(rec) = self.users.iter().find(|u| u.user == *who && !u.disabled) else { continue };
-                if permission(m, who, rec.role, now).is_none() {
+                let Some(rec) = self.users.iter().find(|u| u.user == *who && !u.disabled).cloned() else { continue };
+                if permission(&m, who, rec.role, now).is_none() {
                     if !no_access.contains(&rec.display) {
                         no_access.push(rec.display.clone());
                     }
                     continue;
                 }
-                log::info!("{book}: {user} mentioned {who} in a comment on {}!{}", men.sheet, men.cell);
+                log::info!("{book}: {user} mentioned {who} in a {} on {}!{}", men.source, men.sheet, men.cell);
                 self.notify(
                     who,
                     Notice {
@@ -659,8 +1133,34 @@ impl State {
                         text: men.quote.clone(),
                         sheet: men.sheet.clone(),
                         cell: men.cell.clone(),
+                        source: men.source.to_string(),
                         ..Notice::default()
                     },
+                );
+                let record = MentionRecord {
+                    book: book.to_string(),
+                    name: m.name.clone(),
+                    sheet: men.sheet.clone(),
+                    cell: men.cell.clone(),
+                    by: user.to_string(),
+                    from: display.to_string(),
+                    text: men.quote.clone(),
+                    source: men.source.to_string(),
+                    at: now,
+                };
+                if let Err(e) = tasks::log_mention(&self.dir, who, &record) {
+                    log::warn!("mention log of {who}: {e}");
+                }
+                let link = proto::link_at(&self.address, book, &men.sheet, &men.cell);
+                let place = format!("{}!{}", men.sheet, men.cell);
+                self.tell_connect(
+                    who,
+                    format!(
+                        "{display} mentioned you in a {} in **{}** ({place}): \u{201c}{}\u{201d}\n\n[Open at {place}]({link})",
+                        men.source, m.name, men.quote
+                    ),
+                    m.name.clone(),
+                    vec![format!("{place} · {}", men.source)],
                 );
             }
         }
@@ -689,7 +1189,7 @@ impl State {
         n.id = format!("n-{}-{}-{}", n.time, n.kind, NOTICE_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
         let online: Vec<&Conn> = self.conns.values().filter(|c| c.user == user).collect();
         if online.is_empty() {
-            let path = self.dir.join("notices").join(format!("{user}.jsonl"));
+            let path = self.dir.join("notices").join(format!("{}.jsonl", user_file(user)));
             match serde_json::to_value(&n) {
                 Ok(v) => {
                     if let Err(e) = append_line(&path, &v) {
@@ -711,7 +1211,7 @@ impl State {
     /// shared workbooks others changed since they last had them open (one notice per workbook,
     /// never one per edit).
     fn notices_at_sign_in(&mut self, user: &str, role: Role) -> Vec<Notice> {
-        let path = self.dir.join("notices").join(format!("{user}.jsonl"));
+        let path = self.dir.join("notices").join(format!("{}.jsonl", user_file(user)));
         let mut out: Vec<Notice> = fs::read_to_string(&path).unwrap_or_default().lines().filter_map(|l| serde_json::from_str(l).ok()).collect();
         let _ = fs::remove_file(&path);
         for m in self.metas.values() {
@@ -1184,20 +1684,45 @@ impl State {
                 self.reply(conn, &ServerMsg::UpdateFile { info, data: proto::b64(&data) });
             }
             ClientMsg::Hello { .. } | ClientMsg::Login { .. } => {}
-            ClientMsg::ChangePassword { old_proof, new_password } => {
-                // The current password is proved again over this connection's login nonce, so
-                // nobody at an unlocked PC changes it without knowing it.
-                let (nonce, key) = {
-                    let (c, u) = self.user(conn)?;
-                    (c.nonce.clone(), u.key.clone())
-                };
-                let expect = auth::hmac_sha256(&auth::unhex(&key).unwrap_or_default(), &auth::unhex(&nonce).unwrap_or_default());
-                if !auth::same(&expect, &auth::unhex(&old_proof).unwrap_or_default()) {
-                    return Err(Error::Denied("The current password is wrong; the password was not changed.".into()));
+            ClientMsg::SetDisplay { display: shown } => {
+                let shown = clean_display(&shown).ok_or_else(|| Error::Denied("Type the name others should see (up to 80 characters).".into()))?;
+                self.reload_profiles();
+                if let Some(p) = self.profiles.profiles.get_mut(&user) {
+                    p.display = shown.clone();
                 }
-                set_user(&self.dir, &user, &display, &new_password, role)?;
-                self.users = load_users(&self.dir)?;
-                self.reply(conn, &ServerMsg::Ok { what: "Password changed.".into() });
+                save_profiles(&self.dir, &self.profiles)?;
+                self.users = self.profiles.users();
+                log::info!("{user} is now shown as \"{shown}\"");
+                self.reply(conn, &ServerMsg::Ok { what: format!("Others now see you as {shown}.") });
+            }
+            ClientMsg::ListProfiles | ClientMsg::SetDevice { .. } | ClientMsg::SetRole { .. } | ClientMsg::RemoveProfile { .. } => {
+                if role != Role::Admin {
+                    return Err(Error::Denied("only an administrator manages people and their devices".into()));
+                }
+                self.reload_profiles();
+                let done = match msg {
+                    ClientMsg::SetDevice { code, status, user: who } => {
+                        let n = self.profiles.set_device(&code, status, who.as_deref())?;
+                        Some(format!("{user} set {n} device(s) with code {code} to {status:?}"))
+                    }
+                    ClientMsg::SetRole { user: who, role: r } => {
+                        self.profiles.set_role(&who, r)?;
+                        Some(format!("{user} made {who} {r:?}"))
+                    }
+                    ClientMsg::RemoveProfile { user: who } => {
+                        self.profiles.remove(&who)?;
+                        Some(format!("{user} removed {who} and their devices"))
+                    }
+                    _ => None,
+                };
+                if let Some(what) = done {
+                    save_profiles(&self.dir, &self.profiles)?;
+                    self.users = self.profiles.users();
+                    log::info!("{what}");
+                    self.drop_unapproved();
+                }
+                let profiles = self.profiles.list();
+                self.reply(conn, &ServerMsg::Profiles { profiles });
             }
             ClientMsg::Feedback { report } => {
                 let machine = self.conns.get(&conn).map(|c| c.machine.clone()).unwrap_or_default();
@@ -1410,6 +1935,153 @@ impl State {
                 self.reply(conn, &ServerMsg::Version { book, version, xlsx: proto::b64(&bytes) });
             }
             ClientMsg::RestoreVersion { book, version } => return self.on_restore_version(Caller { user, role, display }, book, version),
+            ClientMsg::ListPeople => {
+                let people = self.people_for(&user, role);
+                self.reply(conn, &ServerMsg::People { people });
+            }
+            ClientMsg::Assign { book, sheet, cell, user: who, title, due, status } => {
+                let what = self.on_assign(&Caller { user: user.clone(), role, display }, &book, &sheet, &cell, &who, &title, due, status)?;
+                self.reply(conn, &ServerMsg::Ok { what });
+            }
+            ClientMsg::SetAssignment { book, id, status } => {
+                self.on_set_assignment(&Caller { user: user.clone(), role, display }, &book, &id, &status)?;
+                let items = self.assigned_to(&user, role);
+                self.reply(conn, &ServerMsg::Assigned { items });
+            }
+            ClientMsg::ListAssigned => {
+                let items = self.assigned_to(&user, role);
+                self.reply(conn, &ServerMsg::Assigned { items });
+            }
+        }
+        Ok(())
+    }
+
+    /// Assigns `cell` of `sheet` to `who`; returns what to tell the person who did it.
+    #[allow(clippy::too_many_arguments)]
+    fn on_assign(
+        &mut self,
+        by: &Caller,
+        book: &str,
+        sheet: &str,
+        cell: &str,
+        who: &str,
+        title: &str,
+        due: Option<String>,
+        status: Option<String>,
+    ) -> Result<String> {
+        self.require(&by.user, by.role, book, true)?;
+        let m = self.metas.get(book).cloned().ok_or_else(|| Error::Denied("no such workbook".into()))?;
+        let sheet = sheet.trim();
+        if sheet.is_empty() || sheet.chars().count() > 31 {
+            return Err(Error::Denied("name the sheet the cell is on".into()));
+        }
+        let cell = tasks::clean_range(cell).ok_or_else(|| Error::Denied(format!("\"{cell}\" is not a cell or range (B4, B4:D9)")))?;
+        let who_key = identity::account_key(who);
+        let rec = self
+            .users
+            .iter()
+            .find(|u| !u.disabled && (u.user == who_key || u.display.eq_ignore_ascii_case(who.trim())))
+            .cloned()
+            .ok_or_else(|| Error::Denied(format!("nobody called \"{}\" has signed in to this server", who.trim())))?;
+        if permission(&m, &rec.user, rec.role, now_ms()).is_none() {
+            return Err(Error::Denied(format!("{} can't open \"{}\": share it with them first", rec.display, m.name)));
+        }
+        let due = tasks::clean_due(due.as_deref().unwrap_or("")).ok_or_else(|| Error::Denied("type the due date as YYYY-MM-DD".into()))?;
+        let status = tasks::clean_status(status.as_deref().unwrap_or("")).ok_or_else(|| Error::Denied("the status is open or done".into()))?;
+        let title: String = title.chars().filter(|c| !c.is_control()).take(tasks::TITLE_MAX).collect::<String>().trim().to_string();
+        let dir = self.book_dir(book);
+        let mut all = tasks::load_assignments(&dir);
+        if all.len() >= tasks::ASSIGNMENTS_MAX {
+            return Err(Error::Denied("this workbook already holds the most assignments it can: mark some done and remove them".into()));
+        }
+        let now = now_ms();
+        let a = Assignment {
+            id: format!("a{now}-{}", auth::hex(&auth::random_bytes::<3>())),
+            book: book.to_string(),
+            book_name: String::new(),
+            sheet: sheet.to_string(),
+            cell: cell.clone(),
+            user: rec.user.clone(),
+            by: by.user.clone(),
+            by_display: by.display.clone(),
+            title: title.clone(),
+            due: due.clone(),
+            status: status.to_string(),
+            created: now,
+            updated: now,
+        };
+        all.push(a);
+        tasks::save_assignments(&dir, &all)?;
+        log::info!("{book}: {} assigned {sheet}!{cell} to {}", by.user, rec.user);
+        if rec.user != by.user {
+            let when = if due.is_empty() { String::new() } else { format!(" (due {due})") };
+            self.notify(
+                &rec.user,
+                Notice {
+                    kind: "assigned".into(),
+                    book: book.to_string(),
+                    name: m.name.clone(),
+                    by: by.display.clone(),
+                    text: format!("{}{when}", if title.is_empty() { "Please take a look" } else { &title }),
+                    sheet: sheet.to_string(),
+                    cell: first_cell(&cell),
+                    ..Notice::default()
+                },
+            );
+            let link = proto::link_at(&self.address, book, sheet, &first_cell(&cell));
+            let place = format!("{sheet}!{cell}");
+            let mut lines = vec![place.clone()];
+            if !due.is_empty() {
+                lines.push(format!("Due {due}"));
+            }
+            self.tell_connect(
+                &rec.user,
+                format!(
+                    "{} assigned you {place} in **{}**{when}{}\n\n[Open at {place}]({link})",
+                    by.display,
+                    m.name,
+                    if title.is_empty() { String::new() } else { format!(": {title}") }
+                ),
+                m.name.clone(),
+                lines,
+            );
+        }
+        Ok(format!("{sheet}!{cell} is assigned to {}.", rec.display))
+    }
+
+    /// Marks an assignment open or done.
+    fn on_set_assignment(&mut self, who: &Caller, book: &str, id: &str, status: &str) -> Result<()> {
+        let m = self.metas.get(book).cloned().ok_or_else(|| Error::Denied("no such workbook".into()))?;
+        let status = tasks::clean_status(status).ok_or_else(|| Error::Denied("the status is open or done".into()))?;
+        let dir = self.book_dir(book);
+        let mut all = tasks::load_assignments(&dir);
+        let a = all.iter_mut().find(|a| a.id == id).ok_or_else(|| Error::Denied("no such assignment (it may have been removed)".into()))?;
+        if !(a.user == who.user || a.by == who.user || m.created_by == who.user || who.role == Role::Admin) {
+            return Err(Error::Denied("only the person it is assigned to, who assigned it, or the workbook's owner can change it".into()));
+        }
+        let changed = a.status != status;
+        a.status = status.to_string();
+        a.updated = now_ms();
+        let a = a.clone();
+        tasks::save_assignments(&dir, &all)?;
+        if changed && status == "done" && a.by != who.user {
+            self.notify(
+                &a.by,
+                Notice {
+                    kind: "assignmentDone".into(),
+                    book: book.to_string(),
+                    name: m.name.clone(),
+                    by: who.display.clone(),
+                    text: if a.title.is_empty() {
+                        format!("{}!{} is done", a.sheet, a.cell)
+                    } else {
+                        format!("{} ({}!{}) is done", a.title, a.sheet, a.cell)
+                    },
+                    sheet: a.sheet.clone(),
+                    cell: first_cell(&a.cell),
+                    ..Notice::default()
+                },
+            );
         }
         Ok(())
     }
@@ -1550,7 +2222,7 @@ impl State {
             people: access
                 .people
                 .iter()
-                .map(|(u, p)| (u.trim().to_ascii_lowercase(), clean(p)))
+                .map(|(u, p)| (u.trim().to_lowercase(), clean(p)))
                 .filter(|(u, _)| self.users.iter().any(|r| r.user == *u))
                 .take(1000)
                 .collect(),
@@ -1929,11 +2601,11 @@ impl Server {
         lock(&self.state).flush_all();
     }
 
-    /// Housekeeping, every half minute: workbooks nobody has open leave memory, and accounts the
-    /// administrator disabled meanwhile are disconnected.
+    /// Housekeeping, every half minute: workbooks nobody has open leave memory, and devices an
+    /// administrator revoked meanwhile are disconnected.
     pub fn unload_idle(&self) {
         let mut st = lock(&self.state);
-        st.reload_users();
+        st.reload_profiles();
         st.run_due_rules();
         st.unload_idle();
     }
@@ -2018,6 +2690,121 @@ impl Server {
     pub fn updates_dir(&self) -> PathBuf {
         lock(&self.state).dir.join("updates")
     }
+
+    /// The data folder.
+    pub fn data_dir(&self) -> PathBuf {
+        lock(&self.state).dir.clone()
+    }
+
+    /// The name teammates see.
+    pub fn name(&self) -> String {
+        lock(&self.state).name.clone()
+    }
+
+    /// `host:port` as links name this server.
+    pub fn address(&self) -> String {
+        lock(&self.state).address.clone()
+    }
+
+    /// Read API: every shared workbook, who shared it and who has it open.
+    pub fn api_books(&self) -> Vec<serde_json::Value> {
+        let st = lock(&self.state);
+        st.metas
+            .values()
+            .map(|m| {
+                let mut online: Vec<String> = st.conns.values().filter(|c| c.open.contains(&m.id)).map(|c| st.account_of(&c.user)).collect();
+                online.sort();
+                online.dedup();
+                let sharer = m.source.as_ref().map_or(m.created_by.as_str(), |s| s.user.as_str());
+                serde_json::json!({"id": m.id, "name": m.name, "sharer": st.account_of(sharer), "online": online, "link": proto::link(&st.address, &m.id)})
+            })
+            .collect()
+    }
+
+    /// Read API: what is assigned to `user` (lower case), open ones first.
+    pub fn api_assigned(&self, user: &str) -> Vec<serde_json::Value> {
+        let st = lock(&self.state);
+        let role = st.users.iter().find(|u| u.user == user).map_or(Role::Viewer, |u| u.role);
+        st.assigned_to(user, role)
+            .into_iter()
+            .map(|a| {
+                let at = first_cell(&a.cell);
+                serde_json::json!({
+                    "book": a.book_name, "sheet": a.sheet, "cell": a.cell, "title": a.title, "status": a.status,
+                    "due": if a.due.is_empty() { serde_json::Value::Null } else { serde_json::json!(a.due) },
+                    "link": proto::link_at(&st.address, &a.book, &a.sheet, &at),
+                })
+            })
+            .collect()
+    }
+
+    /// Read API: where `user` (lower case) was mentioned after `since` (ms since 1970), oldest first.
+    pub fn api_mentions(&self, user: &str, since: i64) -> Vec<serde_json::Value> {
+        let (dir, address) = {
+            let st = lock(&self.state);
+            (st.dir.clone(), st.address.clone())
+        };
+        tasks::mentions_of(&dir, user, since)
+            .into_iter()
+            .map(|m| {
+                let at =
+                    chrono::DateTime::from_timestamp_millis(m.at).map(|t| t.to_rfc3339_opts(chrono::SecondsFormat::Secs, true)).unwrap_or_default();
+                serde_json::json!({
+                    "book": m.name, "sheet": m.sheet, "cell": m.cell, "from": m.from, "text": m.text, "at": at,
+                    "link": proto::link_at(&address, &m.book, &m.sheet, &m.cell),
+                })
+            })
+            .collect()
+    }
+
+    /// Notices due to be posted to Dexterity Connect now.
+    pub fn connect_due(&self) -> Vec<connect::Outgoing> {
+        lock(&self.state).outbox.due(now_ms())
+    }
+
+    /// A notice reached Connect (or was refused for good): off the queue.
+    pub fn connect_done(&self, id: &str) {
+        lock(&self.state).outbox.done(id);
+    }
+
+    /// A notice did not reach Connect: tried again later.
+    pub fn connect_retry(&self, id: &str) {
+        lock(&self.state).outbox.retry(id, now_ms());
+    }
+
+    /// The "Sheets pulse" card: workbooks, who is working, open and overdue assignments.
+    pub fn pulse_lines(&self) -> Vec<String> {
+        let st = lock(&self.state);
+        let online: HashSet<&String> = st.conns.values().map(|c| &c.user).collect();
+        let mut lines = vec![format!("{} shared workbook(s) · {} people connected", st.metas.len(), online.len())];
+        let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+        let (mut open, mut overdue) = (0usize, 0usize);
+        for m in st.metas.values() {
+            for a in tasks::load_assignments(&st.book_dir(&m.id)).into_iter().filter(|a| a.status != "done") {
+                open += 1;
+                if !a.due.is_empty() && a.due < today {
+                    overdue += 1;
+                }
+            }
+        }
+        lines.push(format!("{open} open assignment(s), {overdue} overdue"));
+        let mut busy: Vec<(usize, &str)> = st
+            .metas
+            .values()
+            .map(|m| (st.conns.values().filter(|c| c.open.contains(&m.id)).map(|c| &c.user).collect::<HashSet<_>>().len(), m.name.as_str()))
+            .filter(|(n, _)| *n > 0)
+            .collect();
+        busy.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(b.1)));
+        for (n, name) in busy.into_iter().take(5) {
+            lines.push(format!("{name}: {n} working in it now"));
+        }
+        lines
+    }
+}
+
+/// The first cell of `B4:D9` (a link goes to one cell).
+fn first_cell(range: &str) -> String {
+    range.split(':').next().unwrap_or(range).to_string()
 }
 
 /// The audit lines for a patch: one per cell whose content a person changed (values that were
@@ -2128,6 +2915,7 @@ pub fn start_on(dir: PathBuf, name: String, port: u16) -> Result<(Arc<Server>, u
     let server = Arc::new(Server::open(dir, name.clone())?);
     let listener = TcpListener::bind(("0.0.0.0", port))?;
     let port = listener.local_addr()?.port();
+    lock(&server.state).address = format!("{}:{port}", host_name());
     let s = server.clone();
     std::thread::Builder::new().name("dexsheets-accept".into()).spawn(move || s.serve(listener))?;
     let version = env!("CARGO_PKG_VERSION").to_string();
@@ -2337,17 +3125,17 @@ mod housekeeping_tests {
             let e = proto::read_frame::<_, ClientMsg>(&mut &sent[..]).expect_err("no hello");
             assert!(is_probe(&e), "{e}");
         }
-        // Junk and wrong passwords are still logged and slowed down.
+        // Junk and refused keys are still logged and slowed down.
         let mut junk = 4u32.to_be_bytes().to_vec();
         junk.extend_from_slice(b"\x00nope");
         let e = proto::read_frame::<_, ClientMsg>(&mut junk.as_slice()).expect_err("junk");
         assert!(!is_probe(&e), "{e}");
-        assert!(!is_probe(&Error::Denied("wrong password".into())));
+        assert!(!is_probe(&Error::Denied("revoked".into())));
     }
 
     fn dir(name: &str) -> PathBuf {
         let d = std::env::temp_dir().join(format!("dexsheets-house-{name}-{}", now_ms()));
-        set_user(&d, "vikram", "Vikram", "pipe-123", Role::Admin).expect("user");
+        set_profile(&d, "vikram", "Vikram", Role::Admin).expect("user");
         d
     }
 
@@ -2383,7 +3171,7 @@ mod housekeeping_tests {
 
     /// Notices kept for `user` (nobody is connected in these tests).
     fn kept(d: &Path, user: &str) -> Vec<Notice> {
-        fs::read_to_string(d.join("notices").join(format!("{user}.jsonl")))
+        fs::read_to_string(d.join("notices").join(format!("{}.jsonl", user_file(user))))
             .unwrap_or_default()
             .lines()
             .map(|l| serde_json::from_str(l).expect("notice"))
@@ -2393,8 +3181,8 @@ mod housekeeping_tests {
     #[test]
     fn a_mention_in_a_comment_tells_that_person_and_only_once() {
         let d = dir("mention");
-        set_user(&d, "anita", "Anita Rao", "pipe-456", Role::Editor).expect("user");
-        set_user(&d, "rahul", "Rahul", "pipe-789", Role::Editor).expect("user");
+        set_profile(&d, "anita", "Anita Rao", Role::Editor).expect("user");
+        set_profile(&d, "rahul", "Rahul", Role::Editor).expect("user");
         let (mut st, id, wb) = fresh(&d);
         // Shared with Anita only: Rahul can't open it.
         st.metas.get_mut(&id).expect("meta").access =

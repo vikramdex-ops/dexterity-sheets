@@ -396,6 +396,7 @@ pub fn status_bar(app: &mut SheetApp, ui: &mut Ui) {
                 ui.add(egui::Label::new(rich).selectable(false));
             };
             ui.horizontal_centered(|ui| {
+                crate::dex_ui::people::status_button(app, ui);
                 let mode = match app.session.mode {
                     gridcraft_engine::Mode::Ready => "Ready",
                     gridcraft_engine::Mode::Enter => "Enter",
@@ -435,6 +436,7 @@ pub fn status_bar(app: &mut SheetApp, ui: &mut Ui) {
                 crate::collab_ui::status(app, ui, &t);
                 crate::collab_ui::update_badge(app, ui, &t);
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    crate::dex_ui::suite::notes_button(app, ui, &t);
                     // Zoom percentage and slider.
                     let zoom = app.session.active().and_then(|d| d.wb.active().map(|s| s.zoom)).unwrap_or(100);
                     let zl = ui.add(
@@ -461,6 +463,7 @@ pub fn status_bar(app: &mut SheetApp, ui: &mut Ui) {
                         app.run_or_alert("view.zoom", json!({"percent": z}));
                     }
                     ui.add_space(10.0);
+                    crate::dex_ui::highlight::status_button(app, ui, &t);
                     for (icon, tip, mode, cmd) in [
                         (Icon::PageBreak, "Page Break Preview", "pageBreakPreview", "view.pageBreakPreview"),
                         (Icon::PageLayout, "Page Layout", "pageLayout", "view.pageLayout"),

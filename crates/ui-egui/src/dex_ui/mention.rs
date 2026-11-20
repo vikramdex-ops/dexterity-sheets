@@ -1,9 +1,10 @@
-//! @mentions while writing a comment (Dexterity Sheets).
+//! @mentions while writing a comment, a note or a cell (Dexterity Sheets).
 //!
-//! Typing `@` in a comment or reply lists the people on the office server; ↑/↓ and Enter or Tab
-//! (or a click) put `@Display Name` in the text, Esc closes the list. When the comment reaches
+//! Typing `@` in a comment, reply, note, or in a cell (text, not a formula: in the cell itself or
+//! the formula bar) lists the people on the office server (the People list); ↑/↓ and Enter or
+//! Tab (or a click) put `@Display Name` in the text, Esc closes the list. When the text reaches
 //! the office server, each person mentioned gets a notification that opens the workbook at the
-//! comment (`gridcraft_collab::mention`). The list says why nobody would be told: not signed in,
+//! comment (`gridcraft_collab::mention`). The list says why nobody would be told: not connected,
 //! or the spreadsheet isn't shared.
 
 use egui::text::{CCursor, CCursorRange};
@@ -53,12 +54,9 @@ pub fn publish(app: &SheetApp, ctx: &egui::Context) {
     ctx.data_mut(|d| d.insert_temp(egui::Id::unique(DIRECTORY), dir));
 }
 
-/// A comment text field with @mention suggestions. `add` draws the field itself; `enabled` is
-/// false for notes, which can't mention anyone (as in Excel).
-pub fn field(ui: &mut Ui, text: &mut String, enabled: bool, add: impl FnOnce(&mut Ui, &mut String) -> Response) -> Response {
-    if !enabled {
-        return add(ui, text);
-    }
+/// A comment or note text field with @mention suggestions. `add` draws the field itself.
+/// `_threaded` (a comment rather than a note) no longer matters: notes mention people too.
+pub fn field(ui: &mut Ui, text: &mut String, _threaded: bool, add: impl FnOnce(&mut Ui, &mut String) -> Response) -> Response {
     let ctx = ui.ctx().clone();
     let (sid, did) = (egui::Id::unique(STATE), egui::Id::unique((STATE, "dismissed")));
     let open: Option<Open> = ctx.data(|d| d.get_temp(sid));
@@ -128,7 +126,7 @@ pub fn field(ui: &mut Ui, text: &mut String, enabled: bool, add: impl FnOnce(&mu
             egui::Frame::popup(ui.style()).show(ui, |ui| {
                 ui.set_min_width(r.rect.width().clamp(200.0, 320.0));
                 if !dir.signed_in {
-                    ui.label(RichText::new("Sign in to the office server (File › Shared) to mention people.").weak());
+                    ui.label(RichText::new("Connect to the office server (File › Shared) to mention people.").weak());
                     return;
                 }
                 for (i, p) in picks.iter().enumerate() {
@@ -153,6 +151,103 @@ pub fn field(ui: &mut Ui, text: &mut String, enabled: bool, add: impl FnOnce(&mu
         ctx.data_mut(|d| d.insert_temp(sid, o));
     }
     r
+}
+
+/// The cell editor (in the cell or the formula bar, field `id`), before it handles its own keys:
+/// while the list is open, ↑/↓ move in it, Enter or Tab put the name in (instead of ending the
+/// edit) and Esc closes it. Returns the caret after a name was put in.
+pub fn editor_keys(ui: &mut Ui, id: egui::Id, text: &mut String, caret: usize) -> Option<usize> {
+    let ctx = ui.ctx().clone();
+    let (sid, did) = (egui::Id::unique(STATE), egui::Id::unique((STATE, "dismissed")));
+    let mut o: Open = ctx.data(|d| d.get_temp(sid)).filter(|o: &Open| o.edit == id && !o.picks.is_empty())?;
+    if !ctx.memory(|m| m.has_focus(id)) {
+        return None;
+    }
+    let n = o.picks.len();
+    let (mut accept, mut close) = (false, false);
+    ui.input_mut(|i| {
+        if i.consume_key(Modifiers::NONE, Key::ArrowDown) {
+            o.sel = (o.sel + 1) % n;
+        }
+        if i.consume_key(Modifiers::NONE, Key::ArrowUp) {
+            o.sel = (o.sel + n - 1) % n;
+        }
+        accept = i.consume_key(Modifiers::NONE, Key::Enter) || i.consume_key(Modifiers::NONE, Key::Tab);
+        close = i.consume_key(Modifiers::NONE, Key::Escape);
+    });
+    if close {
+        ctx.data_mut(|d| {
+            d.insert_temp(did, Dismissed(id, o.at));
+            d.remove::<Open>(sid);
+        });
+        return None;
+    }
+    if accept && let Some(p) = o.picks.get(o.sel).cloned() {
+        let (next, end) = mention::insert(text, o.at, caret.max(o.at), &p.1);
+        *text = next;
+        ctx.data_mut(|d| d.remove::<Open>(sid));
+        return Some(end);
+    }
+    ctx.data_mut(|d| d.insert_temp(sid, o));
+    None
+}
+
+/// The cell editor, after it is drawn (`rect`): the list of people while `@name` is typed in a
+/// cell's text. Returns the caret after a name was clicked in.
+pub fn editor_list(ui: &mut Ui, id: egui::Id, rect: egui::Rect, text: &mut String, caret: usize) -> Option<usize> {
+    let ctx = ui.ctx().clone();
+    let (sid, did) = (egui::Id::unique(STATE), egui::Id::unique((STATE, "dismissed")));
+    let open: Option<Open> = ctx.data(|d| d.get_temp(sid));
+    let over_list = open.as_ref().is_some_and(|o| o.edit == id && ctx.pointer_latest_pos().is_some_and(|p| o.rect.contains(p)));
+    let close = |ctx: &egui::Context| {
+        if open.as_ref().is_some_and(|o| o.edit == id) {
+            ctx.data_mut(|d| d.remove::<Open>(sid));
+        }
+    };
+    if !ctx.memory(|m| m.has_focus(id)) && !over_list {
+        close(&ctx);
+        return None;
+    }
+    let dismissed: Option<Dismissed> = ctx.data(|d| d.get_temp(did));
+    let Some((at, query)) = mention::typing(text, caret).filter(|(at, _)| dismissed != Some(Dismissed(id, *at))) else {
+        close(&ctx);
+        return None;
+    };
+    let dir: Directory = ctx.data(|d| d.get_temp(egui::Id::unique(DIRECTORY))).unwrap_or_default();
+    // Only once signed in: an `@` in a cell is often just text (an address, "@ 5 m").
+    let picks = if dir.signed_in { mention::suggestions(&query, &dir.people, LIST) } else { Vec::new() };
+    if picks.is_empty() {
+        close(&ctx);
+        return None;
+    }
+    let sel = open.as_ref().filter(|o| o.edit == id && o.at == at).map_or(0, |o| o.sel.min(picks.len().saturating_sub(1)));
+    let mut clicked: Option<Person> = None;
+    let area = egui::Area::new(egui::Id::unique((STATE, id)))
+        .order(egui::Order::Foreground)
+        .fixed_pos(rect.left_bottom() + egui::vec2(0.0, 2.0))
+        .show(&ctx, |ui| {
+            egui::Frame::popup(ui.style()).show(ui, |ui| {
+                ui.set_min_width(220.0);
+                for (i, p) in picks.iter().enumerate() {
+                    let line = if p.1.eq_ignore_ascii_case(&p.0) { p.1.clone() } else { format!("{}  ·  {}", p.1, p.0) };
+                    if ui.selectable_label(i == sel, line).clicked() {
+                        clicked = Some(p.clone());
+                    }
+                }
+                if !dir.shared {
+                    ui.separator();
+                    ui.label(RichText::new("This spreadsheet isn't shared, so the people you mention won't be told. Share it first.").small().weak());
+                }
+            });
+        });
+    if let Some(p) = clicked {
+        let (next, end) = mention::insert(text, at, caret, &p.1);
+        *text = next;
+        ctx.data_mut(|d| d.remove::<Open>(sid));
+        return Some(end);
+    }
+    ctx.data_mut(|d| d.insert_temp(sid, Open { edit: id, at, caret, picks, sel, rect: area.response.rect }));
+    None
 }
 
 /// Replaces the `@query` with the person's name and puts the caret after it.

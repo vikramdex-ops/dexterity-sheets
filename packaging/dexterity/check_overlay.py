@@ -55,6 +55,10 @@ HOOKS = [
     ("crates/engine/tests/it/command_sequence_fuzz.rs", '("edit.repeat", DEX)', "fuzzer keeps Dexterity commands out of its random pool (sequences match upstream)"),
     ("crates/ui-egui/src/lib.rs", "pub mod dex_ui;", "Dexterity UI module"),
     ("crates/ui-egui/tests/it/main.rs", "mod dex_parity;", "UI tests of the Dexterity additions"),
+    ("crates/ui-egui/tests/it/main.rs", "mod dex_suite;", "UI tests of the office-suite links and notes"),
+    ("crates/ui-egui/src/{tabs.rs,tabs/*.rs}", "crate::dex_ui::suite::notes_button(app, ui, &t);", "status bar: Notes (Slate or the notes pane)"),
+    ("crates/ui-egui/src/{grid.rs,grid/*.rs}", "crate::dex_ui::suite::cell_menu(app, ui)", "cell menu: link to the cell, Connect, notes, Sleuth, Project Opener"),
+    ("crates/ui-egui/src/{grid.rs,grid/*.rs}", "crate::dex_ui::suite::follow_link(app, target)", "links in cells to the office apps (allow-listed schemes only)"),
     ("crates/ui-egui/src/{dialogs.rs,dialogs/*.rs}", "crate::dex_ui::new_rule_button(app, ui);", "Rules Manager: New Rule…"),
     ("crates/ui-egui/src/{dialogs.rs,dialogs/*.rs}", "crate::dex_ui::mention::field(ui, &mut s, d.name == \"comment\"", "New Comment: @mention suggestions"),
     ("crates/ui-egui/src/{panes.rs,panes/*.rs}", "crate::dex_ui::mention::field(ui, &mut draft, c.threaded", "Comments pane replies: @mention suggestions"),
@@ -68,6 +72,10 @@ HOOKS = [
     ("crates/ui-egui/src/{ribbon.rs,ribbon/*.rs}", '"data.clearValidationCircles"', "Data Validation menu: Clear Validation Circles"),
     ("crates/ui-egui/src/{ribbon.rs,ribbon/*.rs}", "crate::dex_ui::outline_buttons(app, ui);", "Data: Auto Outline and Clear Outline"),
     ("crates/ui-egui/src/{ribbon.rs,ribbon/*.rs}", "crate::dex_ui::focus_cell_button(app, ui);", "View: Focus Cell"),
+    # Highlight Row/Column (crates/ui-egui/src/dex_ui/highlight.rs): one setting, painted by us.
+    ("crates/ui-egui/src/{grid.rs,grid/*.rs}", "crate::dex_ui::highlight::upstream_row(app, sel.active.row)", "GridCraft's own row band gives way to Highlight Row/Column (no band painted twice)"),
+    ("crates/ui-egui/src/{grid.rs,grid/*.rs}", "crate::dex_ui::highlight::paint_headers(&painter, &geo, sh, app, &quads);", "Highlight Row/Column: the highlighted headers tinted stronger"),
+    ("crates/ui-egui/src/{tabs.rs,tabs/*.rs}", "crate::dex_ui::highlight::status_button(app, ui, &t);", "status bar: Highlight Row/Column button by the zoom controls"),
     ("crates/xlsx/src/fmla.rs", "pub(crate) struct TableNames", "bare table names written as Table[] (Excel reads a bare name as #NAME?)"),
     ("crates/xlsx/src/fmla.rs", "Expr::Name(n) => is_table(n)", "the formula writer's fast path still rewrites bare table names"),
     ("crates/xlsx/src/fmla.rs", "Expr::Name(s.table)", "Table[] reads back as the bare table name it was written from"),
@@ -98,6 +106,9 @@ HOOKS = [
     ("crates/ui-egui/src/{ribbon.rs,ribbon/*.rs}", "crate::dex_ui::tools::review_buttons(app, ui);", "Review: Compare Files and Quality Check"),
     ("crates/ui-egui/src/backstage.rs", "crate::dex_ui::templates::new_page(app, ui, &mut out.close);", "File › New: office and personal templates"),
     ("crates/ui-egui/src/{ribbon.rs,ribbon/*.rs}", "crate::dex_ui::releases::help_buttons(app, ui);", "Automate: What's New, Report a Problem, Roll Back, Recover Unsaved Work"),
+    ("crates/ui-egui/src/{tabs.rs,tabs/*.rs}", "crate::dex_ui::people::status_button(app, ui);", "status bar: the Connect quick panel at the far left"),
+    ("crates/ui-egui/src/formula_bar.rs", "crate::dex_ui::mention::editor_keys(ui, id, &mut ed.text, ed.caret)", "cell editor: keys of the @mention list"),
+    ("crates/ui-egui/src/formula_bar.rs", "crate::dex_ui::mention::editor_list(ui, id, resp.rect, &mut ed.text, ed.caret)", "cell editor: @mention suggestions while typing text"),
 ]
 
 # Strings that must not come back into the shipped app's code from upstream.
@@ -139,6 +150,27 @@ def unruled() -> int:
     return out.returncode
 
 
+def unprotected_files(root):
+    """Files Dexterity added that the sync does not know are ours. Upstream adding a file with the
+    same name later would be merged hunk by hunk, and a deletion upstream would stop nothing, so
+    every new file must match `OURS` in sync_upstream.py. Skipped (with a note) when git or the
+    recorded GridCraft commit is not available, e.g. a shallow CI checkout."""
+    import subprocess
+
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import sync_upstream  # noqa: E402
+
+    try:
+        base = open(os.path.join(root, "packaging/dexterity/GRIDCRAFT_COMMIT"), encoding="utf-8").read().strip()
+        r = subprocess.run(["git", "diff", "--name-only", "--diff-filter=A", base, "HEAD"], cwd=root, capture_output=True, text=True, encoding="utf-8")
+    except OSError:
+        r = None
+    if r is None or r.returncode != 0:
+        print("NOTE: new-file protection not checked (no git history for the recorded GridCraft commit)")
+        return []
+    return [f"{p}: added by Dexterity but not in OURS (sync_upstream.py); add it or a pattern that covers it" for p in r.stdout.split() if not sync_upstream.matches(p, sync_upstream.OURS)]
+
+
 def main() -> int:
     if "--unruled" in sys.argv:
         return unruled()
@@ -173,6 +205,7 @@ def main() -> int:
                 print(f"NOTE: upstream GridCraft now registers {i}; its version is used. Remove the Dexterity copy from cmd/dex.rs and dex_ui.rs.")
     except OSError:
         pass
+    missing += unprotected_files(root)
     for m in missing:
         print("OVERLAY:", m)
     if missing:

@@ -10,12 +10,14 @@
   "C:\Program Files\Dexterity Sheets Server":
     - DexSheetsServer.exe as the Windows service "Dexterity Sheets Server": starts at boot, runs
       as LocalSystem, restarts itself if it ever stops, stopped and removed on uninstall;
-    - Windows Firewall rules for TCP 47810 (workbooks) and UDP 47811 (discovery), for the Domain
-      and Private (office) network profiles only;
+    - Windows Firewall rules for TCP 47810 (workbooks), TCP 47812 (the read API Dexterity
+      Connect asks, with a token made in the Server Manager) and UDP 47811 (discovery), for the
+      Domain and Private (office) network profiles only;
     - DexSheetsServerManager.exe, the control panel (Start menu), offered at the end of setup to
-      create the first administrator and add the team;
+      see who has connected and approve new PCs (there are no accounts or passwords to create:
+      people sign in with their Windows account, and the first one becomes the administrator);
     - the data folder "C:\ProgramData\Dexterity Sheets\Server", readable only by SYSTEM and
-      Administrators (it holds the accounts). Uninstalling never deletes it.
+      Administrators (it holds the people and their device keys). Uninstalling never deletes it.
   An earlier script-based install (Install-Server.ps1: a scheduled task of the same name) is
   stopped and removed first, so the two never fight over the port.
 
@@ -68,9 +70,9 @@
       <Dialog Id="ServerWelcomeDlg" Width="370" Height="220" Title="Dexterity Sheets Server Setup" NoMinimize="yes">
         <Control Id="Heading" Type="Text" X="15" Y="12" Width="340" Height="22" Text="{\ServerTitleFont}Install Dexterity Sheets Server" />
         <Control Id="Description" Type="Text" X="15" Y="40" Width="340" Height="96"
-            Text="Install this on the one office PC that stays on. It keeps the team's shared workbooks, accounts and edit history, and hands new versions of Dexterity Sheets to every PC.&#xD;&#xA;&#xD;&#xA;Setup installs it as a Windows service that starts with Windows, and opens the firewall for the office network only. Your data is kept in C:\ProgramData\Dexterity Sheets\Server." />
+            Text="Install this on the one office PC that stays on. It keeps the team's shared workbooks and edit history, knows who uses it from which PC, and hands new versions of Dexterity Sheets to every PC.&#xD;&#xA;&#xD;&#xA;Setup installs it as a Windows service that starts with Windows, and opens the firewall for the office network only. Your data is kept in C:\ProgramData\Dexterity Sheets\Server.&#xD;&#xA;&#xD;&#xA;No accounts to create: everyone signs in with their Windows account, and the first person to connect becomes the administrator." />
         <Control Id="OpenManager" Type="CheckBox" X="15" Y="142" Width="340" Height="18"
-            Property="OPENMANAGER" CheckBoxValue="1" Text="&amp;Open the Server Manager when setup finishes, to add the team" />
+            Property="OPENMANAGER" CheckBoxValue="1" Text="&amp;Open the Server Manager when setup finishes" />
         <Control Id="Install" Type="PushButton" X="215" Y="188" Width="70" Height="20" Default="yes" ElevationShield="yes" Text="&amp;Install">
           <Publish Event="EndDialog" Value="Return" />
         </Control>
@@ -148,11 +150,13 @@
           <!-- The office network only (Domain and Private profiles), never Public. -->
           <fw:FirewallException Id="FwTcpDomain" Name="Dexterity Sheets Server (TCP)" Port="47810" Protocol="tcp" Profile="domain" Scope="any" />
           <fw:FirewallException Id="FwTcpPrivate" Name="Dexterity Sheets Server (TCP)" Port="47810" Protocol="tcp" Profile="private" Scope="any" />
+          <fw:FirewallException Id="FwApiDomain" Name="Dexterity Sheets Read API (TCP)" Port="47812" Protocol="tcp" Profile="domain" Scope="any" />
+          <fw:FirewallException Id="FwApiPrivate" Name="Dexterity Sheets Read API (TCP)" Port="47812" Protocol="tcp" Profile="private" Scope="any" />
           <fw:FirewallException Id="FwUdpDomain" Name="Dexterity Sheets Discovery (UDP)" Port="47811" Protocol="udp" Profile="domain" Scope="any" />
           <fw:FirewallException Id="FwUdpPrivate" Name="Dexterity Sheets Discovery (UDP)" Port="47811" Protocol="udp" Profile="private" Scope="any" />
         </File>
         <ServiceInstall Id="ServerServiceInstall" Name="DexSheetsServer" DisplayName="Dexterity Sheets Server"
-            Description="Shared workbooks, accounts, edit history and app updates for Dexterity Sheets on the office network."
+            Description="Shared workbooks, people and their PCs, edit history and app updates for Dexterity Sheets on the office network."
             Type="ownProcess" Start="auto" ErrorControl="normal" Account="LocalSystem" Arguments="service" Vital="yes">
           <util:ServiceConfig FirstFailureActionType="restart" SecondFailureActionType="restart" ThirdFailureActionType="restart"
               RestartServiceDelayInSeconds="30" ResetPeriodInDays="1" />
@@ -176,7 +180,7 @@
         <File Id="ServerLicenceApache" Source="$(var.DocsDir)\LICENSE-APACHE" />
       </Component>
 
-      <!-- The data folder: SYSTEM and Administrators only (it holds the accounts). Left in place
+      <!-- The data folder: SYSTEM and Administrators only (it holds the people and their device keys). Left in place
            on uninstall, with everything in it. -->
       <Component Id="ServerData" Directory="DATAFOLDER" Guid="7F21B075-BE7C-4E82-8E38-1A479AD8400D" Permanent="yes">
         <CreateFolder>

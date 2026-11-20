@@ -3,7 +3,7 @@ name = "gridcraft-server"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Dexterity Sheets server: shared workbooks, accounts and edit history on the office LAN"
+description = "Dexterity Sheets server: shared workbooks, people and their devices, and edit history on the office LAN"
 publish = false
 
 [lints]
@@ -16,7 +16,6 @@ path = "src/main.rs"
 [dependencies]
 gridcraft-collab = { workspace = true }
 log = { workspace = true, features = ["std"] }
-rpassword = "7"
 reqwest = { version = "0.13", features = ["blocking"] }
 serde = { workspace = true }
 serde_json = { workspace = true }

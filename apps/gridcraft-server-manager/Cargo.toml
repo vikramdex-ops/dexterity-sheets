@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 publish = false
-description = "Dexterity Sheets Server Manager: the office server's control panel for IT (people, bulk import, service, updates, backups)"
+description = "Dexterity Sheets Server Manager: the office server's control panel for IT (people and their devices, service, updates, backups)"
 
 [lints]
 workspace = true

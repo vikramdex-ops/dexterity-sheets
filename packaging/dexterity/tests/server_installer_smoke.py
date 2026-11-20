@@ -95,10 +95,13 @@ def main():
     check("Setup.exe installs", r.returncode in (0, 3010), f"exit {r.returncode}")
     installed_checks("Setup.exe")
 
-    # An account made with the server's own command, kept across reinstall and uninstall.
+    # Setup asked for no account: the server starts with nobody, and the first person to connect
+    # becomes its administrator. A role set by Windows account with the server's own command is
+    # kept across reinstall and uninstall.
+    check("setup creates no account", not os.path.isfile(os.path.join(DATA, "users.json")))
     exe = os.path.join(PROGRAM, "DexSheetsServer.exe")
-    r = run([exe, "user", "add", "tester", "--display", "Test Person", "--password", "smoke-test-123", "--role", "admin"])
-    check("an administrator can be added", r.returncode == 0, (r.stdout + r.stderr).strip())
+    r = run([exe, "profile", "role", r"SMOKE\tester", "admin"])
+    check("an administrator can be set by Windows account", r.returncode == 0, (r.stdout + r.stderr).strip())
 
     # The Server Manager opens and sees the running server.
     shot = os.path.join(OUT, "server-manager.png")
@@ -113,14 +116,14 @@ def main():
     check("uninstall (after Setup.exe)", r.returncode in (0, 3010), f"exit {r.returncode}")
     check("uninstall removes the service", wait(lambda: service_state() == "MISSING"), service_state())
     check("uninstall stops the server", wait(lambda: not answers(), 20))
-    check("uninstall keeps the data (accounts)", os.path.isfile(os.path.join(DATA, "users.json")))
+    check("uninstall keeps the data (people)", os.path.isfile(os.path.join(DATA, "profiles.json")))
 
     # 2. The .msi, silently, over the kept data.
     r = run(["msiexec", "/i", msi, "/qn", "/l*v", os.path.join(OUT, "msi-install.log")], timeout=600)
     check(".msi installs", r.returncode in (0, 3010), f"exit {r.returncode}")
     installed_checks(".msi")
-    r = run([exe, "user", "list"])
-    check("the kept account is still there", "tester" in r.stdout, r.stdout.strip())
+    r = run([exe, "profile", "list"])
+    check("the kept person is still there", "tester" in r.stdout.lower(), r.stdout.strip())
     r = run(["msiexec", "/x", msi, "/qn", "/l*v", os.path.join(OUT, "msi-uninstall.log")], timeout=600)
     check("uninstall (after .msi)", r.returncode in (0, 3010) and wait(lambda: service_state() == "MISSING"), f"exit {r.returncode}")
 

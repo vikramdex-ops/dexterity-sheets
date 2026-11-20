@@ -125,7 +125,7 @@ insert(
     '"collab.history"',
     "fn review(app: &mut SheetApp, ui: &mut Ui) {\n",
     '    // Shared workbooks (Dexterity Sheets LAN co-authoring).\n'
-    '    if big_button(ui, Icon::Share, "Shared\\nWorkbooks", "Sign in and open shared workbooks (File > Shared)", false).clicked() {\n'
+    '    if big_button(ui, Icon::Share, "Shared\\nWorkbooks", "Connect and open shared workbooks (File > Shared)", false).clicked() {\n'
     '        act(app, "collab.shared", json!({}));\n'
     "    }\n"
     '    if big_button(ui, Icon::Clock, "Edit\\nHistory", "Who changed what, and when", false).clicked() {\n'
@@ -231,6 +231,7 @@ if '("edit.repeat", DEX)' not in s:
         write(FUZZ, s2)
 insert(f"{UI}/lib.rs", "pub mod dex_ui;", "pub mod collab_ui;\n", "pub mod dex_ui;\n")
 insert("crates/ui-egui/tests/it/main.rs", "mod dex_parity;", "mod control_timeout;\n", "mod dex_parity;\n")
+insert("crates/ui-egui/tests/it/main.rs", "mod dex_suite;", "mod dex_parity;\n", "mod dex_suite;\n")
 # @mentions in comments: suggestions in the New Comment field and in replies.
 replace(
     f"{UI}/dialogs/show.rs",
@@ -289,11 +290,54 @@ insert(
     '        app.open_dialog("accessibility", json!({}));\n    }\n',
     "    crate::dex_ui::tools::review_buttons(app, ui);\n",
 )
+# The Connect quick panel: its button at the far left of the status bar (dex_ui/people.rs).
+insert(
+    f"{UI}/tabs.rs",
+    "dex_ui::people::status_button(",
+    "                let mode = match app.session.mode {\n",
+    "                crate::dex_ui::people::status_button(app, ui);\n",
+    after=False,
+)
+# @mentions typed in a cell's text: the cell editor's keys first, then the list under it.
+insert(
+    f"{UI}/formula_bar.rs",
+    "dex_ui::mention::editor_keys(",
+    "    let EditorKeyOutcome { action, arrow, cancel, to_python } = editor_shortcuts(",
+    "    if !ed.is_formula()\n        && let Some(c) = crate::dex_ui::mention::editor_keys(ui, id, &mut ed.text, ed.caret)\n    {\n        (ed.caret, ed.anchor, ed.sync_caret, ed.completion) = (c, c, true, None);\n    }\n",
+    after=False,
+)
+insert(
+    f"{UI}/formula_bar.rs",
+    "dex_ui::mention::editor_list(",
+    "    show_editor_suggestions(ui, EditorSuggestion { app, id, resp: &resp, ed: &mut ed, galley: &output.galley, tokens: &t, mine });\n",
+    "    if !ed.is_formula()\n        && let Some(c) = crate::dex_ui::mention::editor_list(ui, id, resp.rect, &mut ed.text, ed.caret)\n    {\n        (ed.caret, ed.anchor, ed.sync_caret, ed.request_focus, ed.completion) = (c, c, true, true, None);\n    }\n",
+)
 insert(
     f"{UI}/app/files.rs",
     "dex_ui::share::open_link(",
     "    pub fn open_path(&mut self, path: &str) {\n",
     "        // Dexterity Sheets: a dexterity:// link to a shared spreadsheet, not a file.\n        if crate::dex_ui::share::open_link(self, path) {\n            return;\n        }\n",
+)
+# Office suite (dex_ui::suite): Notes at the bottom right, the cell menu's office items, links in
+# cells to the office apps.
+insert(
+    f"{UI}/tabs.rs",
+    "dex_ui::suite::notes_button(",
+    "                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {\n",
+    "                    crate::dex_ui::suite::notes_button(app, ui, &t);\n",
+)
+insert(
+    f"{UI}/grid/menus.rs",
+    "dex_ui::suite::cell_menu(",
+    # The first such block in the file is the cell menu's (the header menu's comes later).
+    '                        "edit.paste" => app.paste_from_clipboard(),\n                        other => app.run_or_alert(other, json!({})),\n                    }\n                }\n            }\n',
+    "            close |= crate::dex_ui::suite::cell_menu(app, ui);\n",
+)
+insert(
+    f"{UI}/grid/interact.rs",
+    "dex_ui::suite::follow_link(",
+    "pub fn follow_link(app: &mut SheetApp, target: &str) {\n",
+    "    if crate::dex_ui::suite::follow_link(app, target) {\n        return;\n    }\n",
 )
 insert(
     f"{UI}/dialogs/about.rs",
@@ -380,6 +424,26 @@ insert(
     "crate::dex_ui::focus_cell_button(app, ui);",
     '            act(app, "view.headings", json!({"on": h}));\n        }\n    });\n',
     "    ui.add_space(6.0);\n    crate::dex_ui::focus_cell_button(app, ui);\n",
+)
+
+# ---- Highlight Row/Column (dex_ui/highlight.rs) ------------------------------------------------
+replace(
+    f"{UI}/grid/show.rs",
+    "        let active_row = app.ui.highlight_active_row.then_some(sel.active.row);\n        paint_quadrant(QuadrantPaint {\n",
+    "        let active_row = crate::dex_ui::highlight::upstream_row(app, sel.active.row);\n        paint_quadrant(QuadrantPaint {\n",
+)
+insert(
+    f"{UI}/grid/show.rs",
+    "crate::dex_ui::highlight::paint_headers(",
+    "        paint_headers(&painter, &geo, sh, &sel, &t, &quads, &headings);\n",
+    "        crate::dex_ui::highlight::paint_headers(&painter, &geo, sh, app, &quads);\n",
+)
+insert(
+    f"{UI}/tabs.rs",
+    "crate::dex_ui::highlight::status_button(",
+    "                    for (icon, tip, mode, cmd) in [\n",
+    "                    crate::dex_ui::highlight::status_button(app, ui, &t);\n",
+    after=False,
 )
 
 # ---- UI test: File › Account shows Dexterity Sheets' own version -------------------------------

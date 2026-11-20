@@ -226,6 +226,7 @@ pub fn show(app: &mut SheetApp, ui: &mut egui::Ui) {
     if sh.show_headings {
         let headings = table_headings(&geo, sh, sel.active);
         paint_headers(&painter, &geo, sh, &sel, &t, &quads, &headings);
+        crate::dex_ui::highlight::paint_headers(&painter, &geo, sh, app, &quads);
         paint_freeze_handles(&painter, &geo, sh, &app.grid.drag, &t);
     }
     crate::outline::paint(&painter, &geo, sh, &t);
@@ -442,7 +443,7 @@ fn paint_panes(input: PanesInput<'_>, cf: &mut CfCache) -> Vec<PaneQuad> {
             continue;
         }
         let p = painter.with_clip_rect(*clip);
-        let active_row = app.ui.highlight_active_row.then_some(sel.active.row);
+        let active_row = crate::dex_ui::highlight::upstream_row(app, sel.active.row);
         paint_quadrant(QuadrantPaint {
             painter: &p,
             geo,

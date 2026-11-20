@@ -1,16 +1,17 @@
 //! Dexterity Sheets Server Manager: the office server's control panel for IT, with no commands to
-//! type. Start and stop the server, see how teammates reach it, add people one by one or in bulk
-//! (typed, pasted from Excel, or from the template file), reset passwords and roles, hand new app
-//! versions to every PC, and back up or restore everything.
+//! type. Start and stop the server, see how teammates reach it, see who has connected and from
+//! which PCs (approve or revoke a PC by its device code, set roles), hand new app versions to
+//! every PC, and back up or restore everything. People sign in with their Windows account: there
+//! are no accounts or passwords to create.
 //!
 //! ```text
-//! DexSheetsServerManager [--data DIR] [--no-elevate] [--import PEOPLE.xlsx|.csv]
-//!                        [--shot overview|people|add-many|updates|backup|versions|releases|feedback|health|adoption OUT.png]
+//! DexSheetsServerManager [--data DIR] [--no-elevate]
+//!                        [--shot overview|people|updates|backup|connect|versions|releases|feedback|health|adoption OUT.png]
 //! ```
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod admin;
-mod roster;
+mod connect_page;
 mod system;
 
 use std::path::{Path, PathBuf};
@@ -18,9 +19,8 @@ use std::sync::mpsc::{Receiver, channel};
 use std::sync::{Arc, Mutex};
 
 use egui::{Color32, RichText, Ui, vec2};
-use gridcraft_collab::proto::Role;
+use gridcraft_collab::proto::{DeviceInfo, DeviceStatus, ProfileInfo, Role};
 use gridcraft_collab::server::{self, UserRecord};
-use roster::{Checked, Row};
 use system::ServiceState;
 
 const ACCENT: Color32 = Color32::from_rgb(0x1f, 0x4e, 0x9a);
@@ -33,9 +33,9 @@ const DIM: Color32 = Color32::from_rgb(0x60, 0x66, 0x70);
 enum Page {
     Overview,
     People,
-    AddMany,
     Updates,
     Backup,
+    Connect,
     // The dashboard (admin.rs).
     Versions,
     Releases,
@@ -48,9 +48,9 @@ impl Page {
     const ALL: [Page; 10] = [
         Page::Overview,
         Page::People,
-        Page::AddMany,
         Page::Updates,
         Page::Backup,
+        Page::Connect,
         Page::Versions,
         Page::Releases,
         Page::Feedback,
@@ -62,10 +62,10 @@ impl Page {
     fn label(self) -> &'static str {
         match self {
             Page::Overview => "Server",
-            Page::People => "People",
-            Page::AddMany => "Add many people",
+            Page::People => "People and devices",
             Page::Updates => "App updates",
             Page::Backup => "Backup and restore",
+            Page::Connect => "Dexterity Connect",
             Page::Versions => "Installed versions",
             Page::Releases => "Releases",
             Page::Feedback => "Feedback",
@@ -77,9 +77,9 @@ impl Page {
         match self {
             Page::Overview => "overview",
             Page::People => "people",
-            Page::AddMany => "add-many",
             Page::Updates => "updates",
             Page::Backup => "backup",
+            Page::Connect => "connect",
             Page::Versions => "versions",
             Page::Releases => "releases",
             Page::Feedback => "feedback",
@@ -89,26 +89,16 @@ impl Page {
     }
 }
 
-/// Work that takes a while (creating accounts hashes each password, backups, the service), run
-/// off the window's thread so it never freezes.
+/// Work that takes a while (backups, the service), run off the window's thread so it never
+/// freezes.
 enum Done {
     Message(Result<String, String>),
-    Created { ok: Vec<Checked>, failed: Vec<(String, String)> },
 }
 
 struct Job {
     label: String,
     progress: Arc<Mutex<(usize, usize)>>,
     rx: Receiver<Done>,
-}
-
-#[derive(Default)]
-struct PersonForm {
-    user: String,
-    display: String,
-    role: Option<Role>,
-    password: String,
-    show: bool,
 }
 
 /// Facts about the PC that take a moment to find (firewall, addresses): looked up in the
@@ -125,6 +115,9 @@ struct App {
     dir: PathBuf,
     page: Page,
     admin: bool,
+    /// `profiles.json`: everyone seen and their devices.
+    profiles: server::Profiles,
+    /// The same people as the dashboard looks them up.
     users: Vec<UserRecord>,
     users_error: Option<String>,
     service: ServiceState,
@@ -136,19 +129,10 @@ struct App {
     log: String,
     name: String,
     message: Option<(String, bool)>,
-    first: PersonForm,
-    first_repeat: String,
     // People
     search: String,
-    add: PersonForm,
+    /// What waits for a yes: ("remove", user) or ("restore", backup file).
     confirm: Option<(String, String)>,
-    /// A password just set, shown once: (user, password).
-    shown: Option<(String, String)>,
-    // Add many
-    rows: Vec<Row>,
-    pasted: String,
-    created: Vec<Checked>,
-    failed: Vec<(String, String)>,
     // Updates
     installers: Vec<system::Installer>,
     notes: String,
@@ -158,12 +142,29 @@ struct App {
     with_installers: bool,
     job: Option<Job>,
     shot: Option<(Page, PathBuf, u32)>,
+    // Dexterity Connect
+    connect: connect_page::ConnectPage,
     // Installed versions, Releases, Feedback, System health, Feature adoption
     dash: admin::Dashboard,
 }
 
 fn role_label(r: Role) -> &'static str {
-    roster::role_name(r)
+    match r {
+        Role::Admin => "Administrator",
+        Role::Editor => "Editor",
+        Role::Viewer => "Viewer",
+    }
+}
+
+/// The Windows account as Windows spells it.
+fn shown_account(p: &ProfileInfo) -> String {
+    if p.account.is_empty() { p.user.clone() } else { p.account.clone() }
+}
+
+/// A date and time from ms since 1970, in this PC's time zone.
+fn when(ms: i64) -> String {
+    use chrono::TimeZone;
+    chrono::Local.timestamp_millis_opt(ms).single().map(|t| t.format("%d %b %Y %H:%M").to_string()).unwrap_or_else(|| "—".into())
 }
 
 impl App {
@@ -174,6 +175,7 @@ impl App {
             page: shot.as_ref().map_or(Page::Overview, |s| s.0),
             dir,
             admin,
+            profiles: server::Profiles::default(),
             users: Vec::new(),
             users_error: None,
             service: ServiceState::Unknown("checking".into()),
@@ -185,16 +187,8 @@ impl App {
             log: String::new(),
             name,
             message: None,
-            first: PersonForm { role: Some(Role::Admin), ..PersonForm::default() },
-            first_repeat: String::new(),
             search: String::new(),
-            add: PersonForm { role: Some(Role::Editor), ..PersonForm::default() },
             confirm: None,
-            shown: None,
-            rows: Vec::new(),
-            pasted: String::new(),
-            created: Vec::new(),
-            failed: Vec::new(),
             installers: Vec::new(),
             notes: String::new(),
             repo,
@@ -203,19 +197,22 @@ impl App {
             job: None,
             shot: shot.map(|(p, path)| (p, path, 0)),
             dash: admin::Dashboard::default(),
+            connect: connect_page::ConnectPage::default(),
         };
+        app.connect.load(&app.dir);
         app.reload();
         app.check_network();
         app
     }
 
     fn reload(&mut self) {
-        match server::load_users(&self.dir) {
-            Ok(u) => {
-                self.users = u;
+        match server::load_profiles(&self.dir) {
+            Ok(p) => {
+                self.users = p.users();
+                self.profiles = p;
                 self.users_error = None;
             }
-            Err(e) => self.users_error = Some(format!("The accounts file can't be read: {e}")),
+            Err(e) => self.users_error = Some(format!("The people file (profiles.json) can't be read: {e}")),
         }
         self.installers = system::installers(&self.dir);
         self.log = system::log_tail(&self.dir, 200);
@@ -245,8 +242,10 @@ impl App {
         });
     }
 
-    fn active_admins(&self) -> usize {
-        self.users.iter().filter(|u| u.role == Role::Admin && !u.disabled).count()
+    /// Administrators, counting old accounts still waiting to be taken over.
+    fn admins(&self) -> usize {
+        self.profiles.profiles.values().filter(|p| p.role == Role::Admin).count()
+            + self.profiles.carry_over.iter().filter(|c| c.role == Role::Admin && !c.disabled).count()
     }
 
     fn run(&mut self, label: &str, ctx: &egui::Context, work: impl FnOnce(&Arc<Mutex<(usize, usize)>>) -> Done + Send + 'static) {
@@ -283,17 +282,6 @@ impl App {
             self.job = None;
             match done {
                 Done::Message(r) => self.say(r),
-                Done::Created { ok, failed } => {
-                    let n = ok.len();
-                    self.created = ok;
-                    self.failed = failed;
-                    self.rows.clear();
-                    self.say(if self.failed.is_empty() {
-                        Ok(format!("{n} account(s) created. Save the sign-in sheet to hand out the passwords."))
-                    } else {
-                        Err(format!("{n} created, {} failed (see the list).", self.failed.len()))
-                    });
-                }
             }
             self.polled_at = f64::MIN;
             self.reload();
@@ -332,25 +320,38 @@ fn role_combo(ui: &mut Ui, id: impl std::hash::Hash + std::fmt::Debug, role: &mu
     *role != before
 }
 
-fn password_field(ui: &mut Ui, text: &mut String, show: &mut bool, hint: &str) {
-    ui.horizontal(|ui| {
-        ui.add(egui::TextEdit::singleline(text).password(!*show).hint_text(hint.to_string()).desired_width(170.0));
-        if ui.small_button(if *show { "Hide" } else { "Show" }).clicked() {
-            *show = !*show;
-        }
-        if ui.small_button("Make one").on_hover_text("A readable 10-character password").clicked() {
-            *text = roster::new_password();
-            *show = true;
-        }
-    });
-}
-
 impl App {
     fn overview(&mut self, ui: &mut Ui) {
         ui.heading("Server");
         ui.add_space(8.0);
-        if self.users_error.is_none() && self.active_admins() == 0 {
-            self.first_admin(ui);
+        if self.users_error.is_none() && self.admins() == 0 {
+            card(ui, |ui| {
+                ui.label(RichText::new("No administrator yet").size(17.0).strong().color(ACCENT));
+                ui.label("The first person to connect from Dexterity Sheets becomes the administrator: open it on your own PC first. Nobody needs an account or a password; everyone signs in with their Windows account.");
+            });
+        }
+        // An administrator carried over from the old accounts list waits for approval here: with
+        // no other administrator signed in, this window is the only place to approve them.
+        let admin_in =
+            |p: &&ProfileInfo| p.role == Role::Admin && (p.devices.is_empty() || p.devices.iter().any(|d| d.status == DeviceStatus::Approved));
+        let waiting: Vec<String> = self
+            .profiles
+            .profiles
+            .values()
+            .filter(|p| p.role == Role::Admin && p.devices.iter().any(|d| d.status == DeviceStatus::Pending))
+            .map(|p| format!("{} ({})", p.display, shown_account(p)))
+            .collect();
+        if self.users_error.is_none() && !waiting.is_empty() && !self.profiles.profiles.values().any(|p| admin_in(&p)) {
+            card(ui, |ui| {
+                ui.label(RichText::new("An administrator waits for approval").size(17.0).strong().color(WARN));
+                ui.label(format!(
+                    "{} took over an administrator account from the old accounts list. Check the device code with them, then approve their PC on People and devices: until then nobody is the administrator.",
+                    waiting.join(", ")
+                ));
+                if ui.button("Open People and devices").clicked() {
+                    self.page = Page::People;
+                }
+            });
         }
         let ctx = ui.ctx().clone();
         card(ui, |ui| {
@@ -377,7 +378,10 @@ impl App {
                     );
                 }
                 ServiceState::Running => {
-                    ui.label(RichText::new("Teammates can sign in from Dexterity Sheets: File › Shared.").color(DIM));
+                    ui.label(
+                        RichText::new("Dexterity Sheets on each office PC finds this server and signs in with the person's Windows account.")
+                            .color(DIM),
+                    );
                 }
                 ServiceState::NotInstalled => {
                     ui.label(RichText::new("Install the server with DexSheetsServer-Setup.exe; this manager then controls it.").color(DIM));
@@ -458,7 +462,13 @@ impl App {
             ui.add_space(4.0);
             egui::Grid::new("holds").num_columns(2).spacing(vec2(16.0, 6.0)).show(ui, |ui| {
                 ui.label("People");
-                ui.label(format!("{} ({} active)", self.users.len(), self.users.iter().filter(|u| !u.disabled).count()));
+                let waiting = self.profiles.profiles.values().flat_map(|p| &p.devices).filter(|d| d.status == DeviceStatus::Pending).count();
+                ui.label(if waiting > 0 {
+                    RichText::new(format!("{} ({waiting} PC(s) waiting for approval on People and devices)", self.profiles.profiles.len()))
+                        .color(WARN)
+                } else {
+                    RichText::new(self.profiles.profiles.len().to_string())
+                });
                 ui.end_row();
                 ui.label("Shared workbooks");
                 ui.label(self.books.to_string());
@@ -494,234 +504,217 @@ impl App {
         });
     }
 
-    fn first_admin(&mut self, ui: &mut Ui) {
-        card(ui, |ui| {
-            ui.label(RichText::new("First, create the administrator account").size(17.0).strong().color(ACCENT));
-            ui.label("This account signs in from Dexterity Sheets like everyone else, and can manage the shared workbooks.");
-            ui.add_space(6.0);
-            egui::Grid::new("first").num_columns(2).spacing(vec2(14.0, 8.0)).show(ui, |ui| {
-                ui.label("Full name");
-                ui.add(egui::TextEdit::singleline(&mut self.first.display).hint_text("Vikram Kumar").desired_width(240.0));
-                ui.end_row();
-                ui.label("User name");
-                let hint = roster::user_from_name(&self.first.display);
-                ui.add(
-                    egui::TextEdit::singleline(&mut self.first.user)
-                        .hint_text(if hint.is_empty() { "vikram".to_string() } else { hint })
-                        .desired_width(240.0),
-                );
-                ui.end_row();
-                ui.label("Password");
-                password_field(ui, &mut self.first.password, &mut self.first.show, "6 characters or more");
-                ui.end_row();
-                if !self.first.show {
-                    ui.label("Repeat password");
-                    ui.add(egui::TextEdit::singleline(&mut self.first_repeat).password(true).desired_width(170.0));
-                    ui.end_row();
-                }
-            });
-            ui.add_space(6.0);
-            if ui.add_enabled(self.admin, primary("Create administrator")).clicked() {
-                let user = if self.first.user.trim().is_empty() {
-                    roster::user_from_name(&self.first.display)
-                } else {
-                    self.first.user.trim().to_ascii_lowercase()
-                };
-                let r = if !self.first.show && self.first.password != self.first_repeat {
-                    Err("The two passwords differ.".to_string())
-                } else {
-                    server::set_user(&self.dir, &user, &self.first.display, &self.first.password, Role::Admin)
-                        .map(|()| format!("Administrator {user} created. Add your team on the People page."))
-                        .map_err(|e| e.to_string())
-                };
-                if r.is_ok() {
-                    self.first = PersonForm { role: Some(Role::Admin), ..PersonForm::default() };
-                    self.first_repeat.clear();
-                }
-                self.say(r);
-                self.reload();
-            }
-        });
+    /// Changes `profiles.json` (read fresh, so nothing the server wrote meanwhile is lost) and
+    /// says how it went. The running server applies it within half a minute.
+    fn change(&mut self, f: impl FnOnce(&mut server::Profiles) -> Result<String, String>) {
+        let r = server::load_profiles(&self.dir)
+            .map_err(|e| e.to_string())
+            .and_then(|mut all| f(&mut all).and_then(|said| server::save_profiles(&self.dir, &all).map(|()| said).map_err(|e| e.to_string())));
+        self.say(r);
+        self.reload();
     }
 
     fn people(&mut self, ui: &mut Ui) {
-        ui.heading("People");
-        ui.label(RichText::new("Everyone who can sign in to shared workbooks. Changes apply the next time the person signs in.").color(DIM));
+        ui.heading("People and devices");
+        ui.label(
+            RichText::new(
+                "Everyone who has connected from Dexterity Sheets, with the PCs they use. People sign in with their Windows account: nobody has a password to create or reset. A person's first PC is trusted automatically; another PC waits here until you approve it. Changes reach the running server within half a minute.",
+            )
+            .color(DIM),
+        );
         ui.add_space(8.0);
-        card(ui, |ui| {
-            ui.label(RichText::new("Add a person").strong());
-            ui.add_space(4.0);
-            ui.horizontal_wrapped(|ui| {
-                ui.add(egui::TextEdit::singleline(&mut self.add.display).hint_text("Full name").desired_width(180.0));
-                let hint = roster::user_from_name(&self.add.display);
-                ui.add(
-                    egui::TextEdit::singleline(&mut self.add.user)
-                        .hint_text(if hint.is_empty() { "user name".to_string() } else { hint })
-                        .desired_width(140.0),
-                );
-                let mut role = self.add.role.unwrap_or(Role::Editor);
-                role_combo(ui, "add-role", &mut role);
-                self.add.role = Some(role);
-                password_field(ui, &mut self.add.password, &mut self.add.show, "password (or Make one)");
-                if ui.add_enabled(self.admin, primary("Add")).clicked() {
-                    let row = Row {
-                        line: 1,
-                        user: self.add.user.clone(),
-                        display: self.add.display.clone(),
-                        role: role_label(role).into(),
-                        password: self.add.password.clone(),
-                    };
-                    let c = roster::check(&[row], &self.users).remove(0);
-                    let r = if let Some(p) = c.problems.first() {
-                        Err(p.clone())
-                    } else {
-                        server::set_user(&self.dir, &c.user, &c.display, &c.password, c.role).map_err(|e| e.to_string()).map(|()| {
-                            self.shown = Some((c.user.clone(), c.password.clone()));
-                            format!("{} can now sign in as {}.", c.display, c.user)
-                        })
-                    };
-                    if r.is_ok() {
-                        self.add = PersonForm { role: Some(Role::Editor), ..PersonForm::default() };
-                    }
-                    self.say(r);
-                    self.reload();
-                }
-            });
-            ui.label(
-                RichText::new("Many at once? Use \"Add many people\": type them in a list, paste from Excel, or import the template.")
-                    .color(DIM)
-                    .small(),
-            );
-        });
-        self.shown_password(ui);
+        let mut todo: Option<(String, String, DeviceStatus)> = None;
+        let pending: Vec<(ProfileInfo, DeviceInfo)> = self
+            .profiles
+            .profiles
+            .values()
+            .flat_map(|p| p.devices.iter().filter(|d| d.status == DeviceStatus::Pending).map(move |d| (p.clone(), d.clone())))
+            .collect();
+        if !pending.is_empty() {
+            egui::Frame::new()
+                .fill(Color32::from_rgb(0xff, 0xf4, 0xdc))
+                .stroke(egui::Stroke::new(1.0, WARN))
+                .corner_radius(8.0)
+                .inner_margin(14.0)
+                .show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    ui.label(RichText::new(format!("{} PC(s) waiting for approval", pending.len())).strong().color(WARN));
+                    ui.label(
+                        RichText::new("Approve a PC only if the person tells you the same device code: Dexterity Sheets shows it in File › Shared.")
+                            .color(DIM)
+                            .small(),
+                    );
+                    ui.add_space(4.0);
+                    egui::Grid::new("pending").num_columns(5).spacing(vec2(16.0, 6.0)).show(ui, |ui| {
+                        for (p, d) in &pending {
+                            ui.label(RichText::new(&p.display).strong());
+                            ui.label(shown_account(p));
+                            ui.label(RichText::new(&d.code).monospace().strong());
+                            ui.label(format!("{} · first seen {}", if d.machine.is_empty() { "unknown PC" } else { &d.machine }, when(d.first_seen)));
+                            ui.horizontal(|ui| {
+                                ui.add_enabled_ui(self.admin, |ui| {
+                                    if ui.add(primary("Approve")).clicked() {
+                                        todo = Some((p.user.clone(), d.code.clone(), DeviceStatus::Approved));
+                                    }
+                                    if ui.button("Refuse").on_hover_text("Revokes this PC: it can't sign in until approved").clicked() {
+                                        todo = Some((p.user.clone(), d.code.clone(), DeviceStatus::Revoked));
+                                    }
+                                })
+                                .response
+                                .on_disabled_hover_text("Needs administrator rights.");
+                            });
+                            ui.end_row();
+                        }
+                    });
+                });
+            ui.add_space(12.0);
+        }
         ui.horizontal(|ui| {
-            ui.add(egui::TextEdit::singleline(&mut self.search).hint_text("Search by name, user name or role").desired_width(300.0));
-            ui.label(RichText::new(format!("{} people", self.users.len())).color(DIM));
+            ui.add(egui::TextEdit::singleline(&mut self.search).hint_text("Search by name, account, PC or device code").desired_width(320.0));
+            ui.label(RichText::new(format!("{} people", self.profiles.profiles.len())).color(DIM));
         });
         ui.add_space(6.0);
-        let admins = self.active_admins();
-        let q = self.search.trim().to_ascii_lowercase();
-        let mut changed: Option<UserRecord> = None;
-        let mut reset: Option<String> = None;
-        egui::ScrollArea::vertical().show(ui, |ui| {
-            egui::Grid::new("people").num_columns(5).striped(true).spacing(vec2(18.0, 8.0)).show(ui, |ui| {
-                for h in ["Full name", "User name", "Role", "Status", ""] {
+        let admins = self.profiles.profiles.values().filter(|p| p.role == Role::Admin).count();
+        let q = self.search.trim().to_lowercase();
+        let mut role_change: Option<(String, Role)> = None;
+        if self.profiles.profiles.is_empty() {
+            card(ui, |ui| {
+                ui.label("Nobody has connected yet.");
+                ui.label(
+                    RichText::new("Each person opens Dexterity Sheets on their PC; it finds this server and signs them in with their Windows account. The first person becomes the administrator.")
+                        .color(DIM),
+                );
+            });
+        }
+        egui::Grid::new("people").num_columns(5).striped(true).spacing(vec2(18.0, 8.0)).show(ui, |ui| {
+            if !self.profiles.profiles.is_empty() {
+                for h in ["Name", "Windows account", "Role", "Devices", ""] {
                     ui.label(RichText::new(h).strong());
                 }
                 ui.end_row();
-                for u in &self.users {
-                    if !q.is_empty()
-                        && ![&u.display, &u.user, &role_label(u.role).to_ascii_lowercase()].iter().any(|s| s.to_ascii_lowercase().contains(&q))
-                    {
-                        continue;
+            }
+            for p in self.profiles.profiles.values() {
+                let hay = format!(
+                    "{} {} {} {}",
+                    p.display,
+                    p.account,
+                    role_label(p.role),
+                    p.devices.iter().map(|d| format!("{} {}", d.code, d.machine)).collect::<Vec<_>>().join(" ")
+                )
+                .to_lowercase();
+                if !q.is_empty() && !hay.contains(&q) {
+                    continue;
+                }
+                let last_admin = p.role == Role::Admin && admins <= 1;
+                ui.label(RichText::new(&p.display).strong());
+                ui.label(shown_account(p));
+                let mut role = p.role;
+                ui.add_enabled_ui(self.admin && !last_admin, |ui| {
+                    if role_combo(ui, ("role", &p.user), &mut role) {
+                        role_change = Some((p.user.clone(), role));
                     }
-                    let last_admin = u.role == Role::Admin && !u.disabled && admins <= 1;
-                    ui.label(RichText::new(&u.display).strong());
-                    ui.label(&u.user);
-                    let mut role = u.role;
-                    ui.add_enabled_ui(self.admin && !last_admin, |ui| {
-                        if role_combo(ui, ("role", &u.user), &mut role) {
-                            changed = Some(UserRecord { role, ..u.clone() });
-                        }
-                    })
-                    .response
-                    .on_disabled_hover_text(if last_admin {
-                        "The last administrator stays an administrator."
-                    } else {
-                        "Needs administrator rights."
-                    });
-                    ui.label(if u.disabled { RichText::new("Disabled").color(BAD) } else { RichText::new("Active").color(OK) });
-                    ui.horizontal(|ui| {
-                        ui.add_enabled_ui(self.admin, |ui| {
-                            if ui.small_button("Reset password…").clicked() {
-                                reset = Some(u.user.clone());
-                            }
-                            let toggle = if u.disabled { "Enable" } else { "Disable" };
-                            if ui.add_enabled(!last_admin, egui::Button::new(toggle).small()).clicked() {
-                                changed = Some(UserRecord { disabled: !u.disabled, ..u.clone() });
-                            }
-                            if ui.add_enabled(!last_admin, egui::Button::new("Remove…").small()).clicked() {
-                                self.confirm = Some(("remove".into(), u.user.clone()));
-                            }
+                })
+                .response
+                .on_disabled_hover_text(if last_admin {
+                    "The last administrator stays an administrator."
+                } else {
+                    "Needs administrator rights."
+                });
+                ui.vertical(|ui| {
+                    if p.devices.is_empty() {
+                        ui.label(RichText::new("No PC yet: their first one is approved when they connect").color(DIM));
+                    }
+                    for d in &p.devices {
+                        ui.horizontal(|ui| {
+                            let (color, word) = match d.status {
+                                DeviceStatus::Approved => (OK, "Approved"),
+                                DeviceStatus::Pending => (WARN, "Waiting for approval"),
+                                DeviceStatus::Revoked => (BAD, "Revoked"),
+                            };
+                            ui.label(RichText::new(&d.code).monospace());
+                            ui.label(if d.machine.is_empty() { "unknown PC".to_string() } else { d.machine.clone() });
+                            ui.label(RichText::new(word).color(color));
+                            ui.label(RichText::new(format!("last seen {}", when(d.last_seen))).color(DIM).small());
+                            ui.add_enabled_ui(self.admin, |ui| {
+                                if d.status != DeviceStatus::Approved && ui.small_button("Approve").clicked() {
+                                    todo = Some((p.user.clone(), d.code.clone(), DeviceStatus::Approved));
+                                }
+                                if d.status != DeviceStatus::Revoked
+                                    && ui
+                                        .small_button("Revoke")
+                                        .on_hover_text("This PC can't sign in any more; if it is connected, it is disconnected")
+                                        .clicked()
+                                {
+                                    todo = Some((p.user.clone(), d.code.clone(), DeviceStatus::Revoked));
+                                }
+                            });
                         });
-                    });
-                    ui.end_row();
+                    }
+                });
+                ui.add_enabled_ui(self.admin && !last_admin, |ui| {
+                    if ui.small_button("Remove…").clicked() {
+                        self.confirm = Some(("remove".into(), p.user.clone()));
+                    }
+                })
+                .response
+                .on_disabled_hover_text(if last_admin { "The last administrator stays." } else { "Needs administrator rights." });
+                ui.end_row();
+            }
+        });
+        if !self.profiles.carry_over.is_empty() {
+            ui.add_space(10.0);
+            card(ui, |ui| {
+                ui.label(RichText::new("Carried over from the old accounts list").strong());
+                ui.label(
+                    RichText::new("These accounts were made when people signed in with passwords. Each one passes, with its name, role and workbooks, to the first Windows account with the same user name that connects. An administrator's account passes only once you approve that person's PC here.")
+                        .color(DIM)
+                        .small(),
+                );
+                for c in &self.profiles.carry_over {
+                    ui.label(format!("{} ({}, {}){}", c.display, c.user, role_label(c.role), if c.disabled { " · was disabled" } else { "" }));
                 }
             });
-        });
-        if let Some(u) = changed {
-            let mut all = self.users.clone();
-            if let Some(slot) = all.iter_mut().find(|x| x.user == u.user) {
-                *slot = u.clone();
-            }
-            let r = server::save_users(&self.dir, &all).map(|()| format!("{} updated.", u.display)).map_err(|e| e.to_string());
-            self.say(r);
-            self.reload();
         }
-        if let Some(user) = reset {
-            self.confirm = Some(("reset".into(), user));
+        if let Some((user, code, status)) = todo {
+            self.change(move |all| {
+                all.set_device(&code, status, Some(&user)).map_err(|e| e.to_string())?;
+                Ok(format!("{code} {}.", if status == DeviceStatus::Approved { "approved: it signs in at its next try" } else { "revoked" }))
+            });
+        }
+        if let Some((user, role)) = role_change {
+            self.change(move |all| {
+                all.set_role(&user, role).map_err(|e| e.to_string())?;
+                Ok(format!("{user} is now {}.", role_label(role).to_lowercase()))
+            });
         }
         self.confirm_dialog(ui);
     }
 
-    fn shown_password(&mut self, ui: &mut Ui) {
-        let Some((user, pw)) = self.shown.clone() else { return };
-        card(ui, |ui| {
-            ui.label(RichText::new(format!("Password for {user}")).strong());
-            ui.horizontal(|ui| {
-                ui.label(RichText::new(&pw).monospace().size(18.0).color(ACCENT));
-                if ui.button("Copy").clicked() {
-                    ui.ctx().copy_text(format!("User name: {user}\nPassword: {pw}"));
-                }
-                if ui.button("Done").clicked() {
-                    self.shown = None;
-                }
-            });
-            ui.label(
-                RichText::new("Shown only now. Give it to them in person; they can change it in File › Shared › Change my password.")
-                    .color(DIM)
-                    .small(),
-            );
-        });
-    }
-
     fn confirm_dialog(&mut self, ui: &mut Ui) {
         let Some((what, user)) = self.confirm.clone() else { return };
-        let display = self.users.iter().find(|u| u.user == user).map(|u| u.display.clone()).unwrap_or_else(|| user.clone());
+        if what != "remove" {
+            return;
+        }
+        let display = self.profiles.profiles.get(&user).map(|p| p.display.clone()).unwrap_or_else(|| user.clone());
         let mut open = true;
         let mut close = false;
-        egui::Window::new(if what == "remove" { "Remove this person?" } else { "Reset the password?" })
+        egui::Window::new("Remove this person?")
             .collapsible(false)
             .resizable(false)
             .open(&mut open)
             .anchor(egui::Align2::CENTER_CENTER, vec2(0.0, 0.0))
             .show(ui.ctx(), |ui| {
-                if what == "remove" {
-                    ui.label(format!("{display} ({user}) will no longer be able to sign in. Their past edits keep their name in Edit History."));
-                    ui.label(RichText::new("To stop someone only for a while, use Disable instead.").color(DIM));
-                } else {
-                    ui.label(format!("{display} ({user}) gets a new password. The old one stops working at their next sign-in."));
-                }
+                ui.label(format!("{display} ({user}) and their PCs are forgotten. Their past edits keep their name in Edit History."));
+                ui.label(
+                    RichText::new("If they connect again they start as someone new, with the Editor role. To keep a PC out, revoke it instead.")
+                        .color(DIM),
+                );
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
-                    let go = if what == "remove" { "Remove" } else { "Make a new password" };
-                    if ui.add(primary(go)).clicked() {
-                        let r = if what == "remove" {
-                            let all: Vec<UserRecord> = self.users.iter().filter(|u| u.user != user).cloned().collect();
-                            server::save_users(&self.dir, &all).map(|()| format!("{display} removed.")).map_err(|e| e.to_string())
-                        } else {
-                            let pw = roster::new_password();
-                            let rec = self.users.iter().find(|u| u.user == user).cloned();
-                            match rec {
-                                Some(u) => server::set_user(&self.dir, &u.user, &u.display, &pw, u.role).map_err(|e| e.to_string()).map(|()| {
-                                    self.shown = Some((u.user.clone(), pw));
-                                    format!("New password made for {display}.")
-                                }),
-                                None => Err(format!("{user} no longer exists.")),
-                            }
-                        };
-                        self.say(r);
-                        self.reload();
+                    if ui.add(primary("Remove")).clicked() {
+                        let who = user.clone();
+                        let shown = display.clone();
+                        self.change(move |all| all.remove(&who).map(|()| format!("{shown} removed.")).map_err(|e| e.to_string()));
                         close = true;
                     }
                     if ui.button("Cancel").clicked() {
@@ -731,174 +724,6 @@ impl App {
             });
         if close || !open {
             self.confirm = None;
-        }
-    }
-
-    fn add_many(&mut self, ui: &mut Ui) {
-        ui.heading("Add many people");
-        ui.label(
-            RichText::new(
-                "Type them in, paste rows copied from Excel, or fill in the template and import it. Nothing is created until every row is right.",
-            )
-            .color(DIM),
-        );
-        ui.add_space(8.0);
-        card(ui, |ui| {
-            ui.horizontal_wrapped(|ui| {
-                if ui.button("Download template…").on_hover_text("An Excel file with the columns to fill in").clicked() {
-                    let r = roster::template_xlsx().and_then(|bytes| {
-                        match rfd::FileDialog::new()
-                            .add_filter("Excel workbook", &["xlsx"])
-                            .set_file_name("Dexterity Sheets people template.xlsx")
-                            .save_file()
-                        {
-                            Some(p) => std::fs::write(&p, bytes)
-                                .map(|()| format!("Template saved to {}. Fill in one person per row, then import it.", p.display()))
-                                .map_err(|e| e.to_string()),
-                            None => Ok(String::new()),
-                        }
-                    });
-                    if !matches!(&r, Ok(m) if m.is_empty()) {
-                        self.say(r);
-                    }
-                }
-                if ui.button("Import from file…").on_hover_text(".xlsx, .xls, .ods, .csv or .tsv").clicked()
-                    && let Some(p) =
-                        rfd::FileDialog::new().add_filter("People list", &["xlsx", "xlsm", "xls", "ods", "csv", "tsv", "txt"]).pick_file()
-                {
-                    let name = p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-                    let r = std::fs::read(&p).map_err(|e| e.to_string()).and_then(|b| roster::from_file(&name, &b));
-                    match r {
-                        Ok(rows) => {
-                            let n = rows.len();
-                            self.rows.extend(rows);
-                            self.say(Ok(format!("{n} row(s) read from {name}. Check them below, then click Create.")));
-                        }
-                        Err(e) => self.say(Err(e)),
-                    }
-                }
-                if ui.button("Add a row").clicked() {
-                    self.rows.push(Row { line: self.rows.len() + 1, ..Row::default() });
-                }
-                if !self.rows.is_empty() && ui.button("Clear the list").clicked() {
-                    self.rows.clear();
-                }
-            });
-            ui.add_space(6.0);
-            ui.label(RichText::new("Or paste rows copied from Excel (User name, Full name, Role, Password):").color(DIM).small());
-            let r = ui.add(egui::TextEdit::multiline(&mut self.pasted).desired_rows(2).desired_width(f32::INFINITY).hint_text("paste here"));
-            if r.changed() && !self.pasted.trim().is_empty() {
-                match roster::from_pasted(&self.pasted) {
-                    Ok(rows) => {
-                        let n = rows.len();
-                        self.rows.extend(rows);
-                        self.pasted.clear();
-                        self.say(Ok(format!("{n} pasted row(s) added.")));
-                    }
-                    Err(e) => self.say(Err(e)),
-                }
-            }
-        });
-        let checked = roster::check(&self.rows, &self.users);
-        let bad = checked.iter().filter(|c| !c.problems.is_empty()).count();
-        if !self.rows.is_empty() {
-            let mut remove = None;
-            egui::ScrollArea::vertical().max_height(ui.available_height() - 120.0).show(ui, |ui| {
-                egui::Grid::new("many").num_columns(6).striped(true).spacing(vec2(12.0, 6.0)).max_col_width(420.0).show(ui, |ui| {
-                    for h in ["User name", "Full name", "Role", "Password", "", "Check"] {
-                        ui.label(RichText::new(h).strong());
-                    }
-                    ui.end_row();
-                    for (i, (row, c)) in self.rows.iter_mut().zip(&checked).enumerate() {
-                        ui.add_sized([140.0, 24.0], egui::TextEdit::singleline(&mut row.user).hint_text(c.user.clone()));
-                        ui.add_sized([180.0, 24.0], egui::TextEdit::singleline(&mut row.display));
-                        let mut role = roster::role_of(&row.role).unwrap_or(Role::Editor);
-                        if role_combo(ui, ("many-role", i), &mut role) || roster::role_of(&row.role).is_none() && row.role.is_empty() {
-                            row.role = role_label(role).to_string();
-                        }
-                        ui.add_sized([130.0, 24.0], egui::TextEdit::singleline(&mut row.password).hint_text("made for them"));
-                        if ui.small_button("Remove").on_hover_text("Take this row out of the list").clicked() {
-                            remove = Some(i);
-                        }
-                        if c.problems.is_empty() {
-                            ui.label(RichText::new("Ready").color(OK));
-                        } else {
-                            ui.add(egui::Label::new(RichText::new(c.problems.join("; ")).color(BAD)).wrap_mode(egui::TextWrapMode::Wrap));
-                        }
-                        ui.end_row();
-                    }
-                });
-            });
-            if let Some(i) = remove {
-                self.rows.remove(i);
-            }
-            ui.add_space(8.0);
-            ui.horizontal(|ui| {
-                let ready = checked.len() - bad;
-                let ctx = ui.ctx().clone();
-                if ui.add_enabled(bad == 0 && ready > 0 && self.admin && self.job.is_none(), primary(&format!("Create {ready} account(s)"))).clicked()
-                {
-                    let dir = self.dir.clone();
-                    let list = checked.clone();
-                    self.run("Creating accounts…", &ctx, move |progress| {
-                        let mut ok = Vec::new();
-                        let mut failed = Vec::new();
-                        let total = list.len();
-                        for (i, c) in list.into_iter().enumerate() {
-                            if let Ok(mut p) = progress.lock() {
-                                *p = (i, total);
-                            }
-                            match server::set_user(&dir, &c.user, &c.display, &c.password, c.role) {
-                                Ok(()) => ok.push(c),
-                                Err(e) => failed.push((c.user.clone(), e.to_string())),
-                            }
-                        }
-                        Done::Created { ok, failed }
-                    });
-                }
-                if bad > 0 {
-                    ui.label(RichText::new(format!("{bad} row(s) need fixing first.")).color(BAD));
-                }
-            });
-        }
-        if !self.created.is_empty() || !self.failed.is_empty() {
-            card(ui, |ui| {
-                ui.label(RichText::new(format!("{} account(s) created", self.created.len())).strong().color(OK));
-                for (u, e) in &self.failed {
-                    ui.label(RichText::new(format!("{u}: {e}")).color(BAD));
-                }
-                ui.horizontal(|ui| {
-                    if !self.created.is_empty() && ui.add(primary("Save the sign-in sheet…")).clicked() {
-                        let server = std::env::var("COMPUTERNAME").unwrap_or_default();
-                        let r = roster::sign_in_sheet_xlsx(&self.created, &server).and_then(|bytes| {
-                            match rfd::FileDialog::new()
-                                .add_filter("Excel workbook", &["xlsx"])
-                                .set_file_name("Dexterity Sheets sign-in details.xlsx")
-                                .save_file()
-                            {
-                                Some(p) => std::fs::write(&p, bytes)
-                                    .map(|()| format!("Saved to {}. Delete it once everyone has signed in.", p.display()))
-                                    .map_err(|e| e.to_string()),
-                                None => Ok(String::new()),
-                            }
-                        });
-                        if !matches!(&r, Ok(m) if m.is_empty()) {
-                            self.say(r);
-                        }
-                    }
-                    if ui.button("Copy as text").clicked() {
-                        let text: String =
-                            self.created.iter().map(|c| format!("{}\t{}\t{}\t{}\n", c.display, c.user, role_label(c.role), c.password)).collect();
-                        ui.ctx().copy_text(text);
-                        self.say(Ok("Copied: name, user name, role and password per line.".into()));
-                    }
-                    if ui.button("Done").clicked() {
-                        self.created.clear();
-                        self.failed.clear();
-                    }
-                });
-                ui.label(RichText::new("Passwords are shown only now: save or copy them before you leave this page.").color(DIM).small());
-            });
         }
     }
 
@@ -985,7 +810,10 @@ impl App {
 
     fn backup(&mut self, ui: &mut Ui) {
         ui.heading("Backup and restore");
-        ui.label(RichText::new("A backup is one .zip with every account, shared workbook, edit history, version and setting.").color(DIM));
+        ui.label(
+            RichText::new("A backup is one .zip with everyone's profile and devices, every shared workbook, edit history, version and setting.")
+                .color(DIM),
+        );
         ui.add_space(8.0);
         let ctx = ui.ctx().clone();
         card(ui, |ui| {
@@ -1104,9 +932,9 @@ impl eframe::App for App {
             egui::ScrollArea::vertical().id_salt(self.page.id()).show(ui, |ui| match self.page {
                 Page::Overview => self.overview(ui),
                 Page::People => self.people(ui),
-                Page::AddMany => self.add_many(ui),
                 Page::Updates => self.updates(ui),
                 Page::Backup => self.backup(ui),
+                Page::Connect => self.connect_page(ui),
                 Page::Versions => self.versions_page(ui),
                 Page::Releases => self.releases_page(ui),
                 Page::Feedback => self.feedback_page(ui),
@@ -1119,22 +947,6 @@ impl eframe::App for App {
 }
 
 impl App {
-    /// `--import FILE`: opens on Add many people with that list read in and checked.
-    fn with_import(mut self, file: Option<&str>) -> App {
-        let Some(file) = file else { return self };
-        let name = Path::new(file).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-        match std::fs::read(file).map_err(|e| format!("{file}: {e}")).and_then(|b| roster::from_file(&name, &b)) {
-            Ok(rows) => {
-                let n = rows.len();
-                self.rows = rows;
-                self.say(Ok(format!("{n} row(s) read from {name}. Check them below, then click Create.")));
-            }
-            Err(e) => self.say(Err(e)),
-        }
-        self.page = Page::AddMany;
-        self
-    }
-
     /// `--shot`: once the page has settled, saves the window as a PNG and closes.
     fn take_shot(&mut self, ctx: &egui::Context) {
         let Some((_, path, frames)) = &mut self.shot else { return };
@@ -1167,7 +979,6 @@ fn main() -> eframe::Result {
     let mut args: Vec<String> = std::env::args().skip(1).collect();
     let original = args.clone();
     let dir = arg_value(&mut args, "--data").map(PathBuf::from).unwrap_or_else(system::default_data_dir);
-    let import = arg_value(&mut args, "--import");
     let no_elevate = args.iter().any(|a| a == "--no-elevate");
     let shot = args.iter().position(|a| a == "--shot").and_then(|i| {
         let page = Page::ALL.into_iter().find(|p| Some(p.id()) == args.get(i + 1).map(String::as_str))?;
@@ -1211,7 +1022,7 @@ fn main() -> eframe::Result {
                 s.spacing.button_padding = vec2(10.0, 5.0);
                 s.spacing.item_spacing = vec2(8.0, 7.0);
             });
-            Ok(Box::new(App::new(dir, admin, shot).with_import(import.as_deref())))
+            Ok(Box::new(App::new(dir, admin, shot)))
         }),
     )
 }

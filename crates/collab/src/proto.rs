@@ -9,7 +9,8 @@ use serde::{Deserialize, Serialize};
 use crate::patch::WbPatch;
 use crate::{Error, Result};
 
-pub const PROTOCOL: u32 = 1;
+/// 2: Windows identity and device keys (no passwords). 1: user accounts with passwords.
+pub const PROTOCOL: u32 = 2;
 pub const DEFAULT_PORT: u16 = 47810;
 pub const DISCOVERY_PORT: u16 = 47811;
 /// Frames past this size are refused (a corrupt length must not allocate gigabytes).
@@ -42,19 +43,48 @@ impl Role {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "t")]
 pub enum ClientMsg {
+    /// The first message. `user`: the Windows account (`DOMAIN\user`); `display`: the name to
+    /// show others; `key`: the device's Ed25519 public key (hex). Clients of protocol 1 send no
+    /// `display` or `key` (they default to empty) and are told to update.
     Hello {
         protocol: u32,
         user: String,
         app: String,
         machine: String,
         instance: String,
+        #[serde(default)]
+        display: String,
+        #[serde(default)]
+        key: String,
     },
+    /// The answer to `Challenge`: an Ed25519 signature (hex) over
+    /// [`auth::login_message`](crate::auth::login_message)`(nonce, user, key)`.
     Login {
-        proof: String,
+        signature: String,
     },
-    ChangePassword {
-        old_proof: String,
-        new_password: String,
+    /// Changes the name others see for the signed-in person.
+    SetDisplay {
+        display: String,
+    },
+    /// Administrators: everyone the server has seen, with their devices.
+    ListProfiles,
+    /// Administrators: approve or revoke a device by its code (`ABCD-EFGH`). `user` narrows it
+    /// to one person's device when given.
+    SetDevice {
+        code: String,
+        status: DeviceStatus,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        user: Option<String>,
+    },
+    /// Administrators: a person's role.
+    SetRole {
+        user: String,
+        role: Role,
+    },
+    /// Administrators: forget a person and their devices (their next connection starts them
+    /// again as someone new).
+    RemoveProfile {
+        user: String,
     },
     ListBooks,
     /// A new shared workbook, from an .xlsx (base64) or empty. `source`: the file on someone's
@@ -199,7 +229,77 @@ pub enum ClientMsg {
     GetUpdate {
         version: String,
     },
+    /// Everyone on the server: name, account, colour, whether they are connected and which of
+    /// the asker's shared workbooks they have open. Answered with `People` (also sent unasked
+    /// whenever someone comes, goes, opens or closes a workbook).
+    ListPeople,
+    /// Assigns a cell or range of a shared workbook to a person (anyone who may edit it). `due`:
+    /// `YYYY-MM-DD`; `status`: `open` (the default) or `done`.
+    Assign {
+        book: String,
+        sheet: String,
+        cell: String,
+        user: String,
+        #[serde(default)]
+        title: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        due: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        status: Option<String>,
+    },
+    /// Marks an assignment `open` or `done` (its assignee, who assigned it, the workbook's creator
+    /// or an administrator). Answered with `Assigned`.
+    SetAssignment {
+        book: String,
+        id: String,
+        status: String,
+    },
+    /// The asker's own assignments across every shared workbook they may open (`Assigned`).
+    ListAssigned,
     Ping,
+}
+
+/// A person on the server as everyone may see them: no devices or keys (administrators get
+/// those from `ListProfiles`).
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct PersonInfo {
+    /// The account in lower case (`dds\vikram`).
+    pub user: String,
+    /// The account as Windows spells it (`DDS\Vikram`).
+    pub account: String,
+    pub display: String,
+    pub color: [u8; 3],
+    pub role: String,
+    /// Connected now (from any PC).
+    pub online: bool,
+    /// The shared workbooks they have open, among those the asker may open: (id, name).
+    pub books: Vec<(String, String)>,
+}
+
+/// A cell or range of a shared workbook assigned to a person.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct Assignment {
+    pub id: String,
+    pub book: String,
+    /// The workbook's name (filled in when listed).
+    pub book_name: String,
+    pub sheet: String,
+    /// `B4` or `B4:D9`.
+    pub cell: String,
+    /// The assignee's account in lower case.
+    pub user: String,
+    /// Who assigned it (account in lower case) and their name.
+    pub by: String,
+    pub by_display: String,
+    pub title: String,
+    /// `YYYY-MM-DD`, or empty.
+    pub due: String,
+    /// `open` or `done`.
+    pub status: String,
+    pub created: i64,
+    pub updated: i64,
 }
 
 /// A newer app version the server can hand out.
@@ -399,8 +499,8 @@ pub struct TemplateInfo {
 pub struct Notice {
     pub id: String,
     pub time: i64,
-    /// `shared`, `permission`, `revoked`, `mention`, `mentionNoAccess`, `changed`, `update`,
-    /// `recovery`.
+    /// `shared`, `permission`, `revoked`, `mention`, `mentionNoAccess`, `assigned`,
+    /// `assignmentDone`, `changed`, `update`, `recovery`.
     pub kind: String,
     #[serde(skip_serializing_if = "String::is_empty")]
     pub book: String,
@@ -417,6 +517,9 @@ pub struct Notice {
     pub sheet: String,
     #[serde(skip_serializing_if = "String::is_empty")]
     pub cell: String,
+    /// A mention: where it was written, `comment`, `note` or `cell` (empty: a comment).
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub source: String,
 }
 
 /// A `dexterity://` link to a shared workbook on `server` (`host:port`), which opens it in the
@@ -558,6 +661,46 @@ pub struct VersionInfo {
     pub size: u64,
 }
 
+/// Whether a device may sign in for its person.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DeviceStatus {
+    Approved,
+    /// Waiting for an administrator (another PC for someone the server already knows).
+    Pending,
+    Revoked,
+}
+
+/// One PC a person signs in from.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeviceInfo {
+    /// The Ed25519 public key, hex.
+    pub key: String,
+    /// `ABCD-EFGH`, see [`auth::device_code`](crate::auth::device_code).
+    pub code: String,
+    pub machine: String,
+    pub first_seen: i64,
+    pub last_seen: i64,
+    pub status: DeviceStatus,
+}
+
+/// A person the server knows: their Windows account, the name others see, role and devices.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProfileInfo {
+    /// The account in lower case (`dds\vikram`): the key everything else refers to.
+    pub user: String,
+    /// The account as Windows spells it (`DDS\Vikram`).
+    #[serde(default)]
+    pub account: String,
+    pub display: String,
+    pub role: Role,
+    pub color: [u8; 3],
+    #[serde(default)]
+    pub devices: Vec<DeviceInfo>,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct UserInfo {
     pub user: String,
@@ -569,11 +712,20 @@ pub struct UserInfo {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "t")]
 pub enum ServerMsg {
+    /// `nonce`: hex, to be signed with the client's device key.
     Challenge {
-        salt: String,
-        iterations: u32,
         nonce: String,
         server: String,
+    },
+    /// This device is known but waits for an administrator's approval; the connection ends and
+    /// the client tries again later.
+    Pending {
+        code: String,
+        message: String,
+    },
+    /// Administrators: everyone the server has seen (after `ListProfiles` and each change).
+    Profiles {
+        profiles: Vec<ProfileInfo>,
     },
     Welcome {
         me: UserInfo,
@@ -654,6 +806,14 @@ pub enum ServerMsg {
     },
     Templates {
         templates: Vec<TemplateInfo>,
+    },
+    /// Everyone on the server (after `ListPeople`, and whenever who is here changes).
+    People {
+        people: Vec<PersonInfo>,
+    },
+    /// The person's own assignments, open ones first.
+    Assigned {
+        items: Vec<Assignment>,
     },
     Rules {
         book: String,

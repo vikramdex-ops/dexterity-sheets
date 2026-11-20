@@ -79,7 +79,7 @@ fn focus_cell_validation_circles_and_show_changes_render() {
     let mut s = book();
     s.execute("data.validation", json!({"range": "A1:A3", "type": "whole", "operator": "lessOrEqual", "formula1": "3"})).unwrap();
     let mut h = harness(s);
-    h.state_mut().run("view.focusCell", json!({"color": "#3BA55C"})).unwrap();
+    h.state_mut().run("view.focusCell", json!({"color": "#2F80ED"})).unwrap();
     let r = h.state_mut().run("data.circleInvalid", json!({})).unwrap();
     assert_eq!(r["invalid"], json!(["A3"]));
     assert_eq!(h.state().session.dex.circles.len(), 1);
@@ -281,4 +281,173 @@ fn watch_window_and_show_comments_open_their_panes_from_any_entry_point() {
     h.run_steps(2);
     assert!(h.state().session.comments_pane, "Comments stays open in place of the Watch Window");
     assert_eq!(h.state().grid.pane, None);
+}
+
+// ---- Highlight Row/Column (dex_ui/highlight.rs) -----------------------------------------------
+
+mod highlight {
+    use super::*;
+    use egui::{Rect, Shape};
+    use gridcraft_engine::cmd::dex::FocusMode;
+    use gridcraft_engine::core::RangeRef;
+    use gridcraft_ui_egui::dex_ui::highlight::{self as hl, Band, DEFAULT_COLOR, SWATCHES};
+    use gridcraft_ui_egui::grid::Geo;
+
+    const CTRL_ALT: Modifiers = Modifiers { alt: true, ctrl: true, shift: false, mac_cmd: false, command: true };
+
+    fn r(a1: &str) -> RangeRef {
+        RangeRef::parse(a1).unwrap()
+    }
+
+    fn geo(h: &Harness) -> Geo {
+        let app = h.state();
+        let sheet = app.session.active().unwrap().wb.active().unwrap();
+        Geo::new(sheet, app.grid.rect.unwrap(), app.view().scroll)
+    }
+
+    fn cell(h: &Harness, a1: &str) -> Rect {
+        let app = h.state();
+        let sheet = app.session.active().unwrap().wb.active().unwrap();
+        geo(h).cell_rect(sheet, CellRef::parse(a1).unwrap())
+    }
+
+    fn bands(h: &Harness, ranges: &[RangeRef], mode: FocusMode, rows: (u32, u32), cols: (u32, u32)) -> Vec<Band> {
+        let app = h.state();
+        let sheet = app.session.active().unwrap().wb.active().unwrap();
+        hl::bands(&geo(h), sheet, ranges, mode, rows, cols)
+    }
+
+    /// The rectangles painted with the band's colour (light theme, the default colour).
+    fn painted(h: &Harness) -> Vec<Rect> {
+        let tint = hl::tint(DEFAULT_COLOR, false);
+        h.output()
+            .shapes
+            .iter()
+            .filter_map(|c| match &c.shape {
+                Shape::Rect(r) if r.fill == tint => Some(r.rect),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn spans_merge_areas_and_skip_whole_lines() {
+        let (rows, cols) = hl::spans(&[r("A1:A3"), r("A3:B5"), r("C7")], FocusMode::Both);
+        assert_eq!(rows, vec![(0, 4), (6, 6)]);
+        assert_eq!(cols, vec![(0, 2)], "A, A:B and C touch: one span");
+        let (rows, cols) = hl::spans(&[r("C:C")], FocusMode::Both);
+        assert!(rows.is_empty(), "a whole column highlights no row band: {rows:?}");
+        assert_eq!(cols, vec![(2, 2)]);
+        let (rows, cols) = hl::spans(&[r("4:4")], FocusMode::Row);
+        assert_eq!((rows, cols), (vec![(3, 3)], vec![]));
+        let (rows, cols) = hl::spans(&[r("B2:D4")], FocusMode::Column);
+        assert_eq!((rows, cols), (vec![], vec![(1, 3)]));
+    }
+
+    #[test]
+    fn a_single_cell_gets_its_row_and_its_column_without_a_double_crossing() {
+        let h = harness(book());
+        let b = bands(&h, &[r("C5")], FocusMode::Both, (0, 30), (0, 15));
+        let c5 = cell(&h, "C5");
+        let across: Vec<_> = b.iter().filter(|b| b.across).collect();
+        let down: Vec<_> = b.iter().filter(|b| !b.across).collect();
+        assert_eq!(across.len(), 1, "{b:?}");
+        assert_eq!((across[0].rect.top(), across[0].rect.bottom()), (c5.top(), c5.bottom()));
+        assert_eq!(across[0].rect.left(), cell(&h, "A5").left());
+        assert_eq!(down.len(), 2, "above and below the row band: {b:?}");
+        assert!(down.iter().all(|d| d.rect.left() == c5.left() && d.rect.right() == c5.right()));
+        assert_eq!(down[0].rect.bottom(), c5.top(), "the column stops where the row band starts");
+        assert_eq!(down[1].rect.top(), c5.bottom());
+        assert_eq!(bands(&h, &[r("C5")], FocusMode::Row, (0, 30), (0, 15)).len(), 1);
+        let col = bands(&h, &[r("C5")], FocusMode::Column, (0, 30), (0, 15));
+        assert_eq!(col.len(), 1, "a whole column, crossing nothing: {col:?}");
+        assert_eq!(bands(&h, &[r("C5")], FocusMode::Both, (10, 30), (5, 15)), vec![], "outside the pane");
+    }
+
+    #[test]
+    fn a_selection_covers_its_rows_and_columns() {
+        let h = harness(book());
+        let b = bands(&h, &[r("B2:D4")], FocusMode::Both, (0, 30), (0, 15));
+        let row = b.iter().find(|b| b.across).unwrap();
+        assert_eq!((row.rect.top(), row.rect.bottom()), (cell(&h, "B2").top(), cell(&h, "B4").bottom()));
+        let down: Vec<_> = b.iter().filter(|b| !b.across).collect();
+        assert_eq!(down.len(), 2);
+        assert!(down.iter().all(|d| d.rect.left() == cell(&h, "B1").left() && d.rect.right() == cell(&h, "D1").right()));
+    }
+
+    #[test]
+    fn with_frozen_panes_every_pane_paints_its_part() {
+        let mut s = book();
+        s.execute("selection.set", json!({"range": "C3"})).unwrap();
+        s.execute("view.freezePanes", json!({})).unwrap();
+        s.execute("selection.set", json!({"range": "E7"})).unwrap();
+        let mut h = harness(s);
+        h.state_mut().run("view.focusCell", json!({"on": true, "mode": "both"})).unwrap();
+        h.run_steps(2);
+        let shown = painted(&h);
+        let e7 = cell(&h, "E7");
+        let rows: Vec<_> = shown.iter().filter(|b| b.top() == e7.top() && b.bottom() == e7.bottom()).collect();
+        let cols: Vec<_> = shown.iter().filter(|b| b.left() == e7.left() && b.right() == e7.right()).collect();
+        // Row 7 crosses the frozen columns' pane and the scrolling one; column E runs through the
+        // frozen rows' pane and, above and below the row band, through the scrolling one.
+        assert_eq!(rows.len(), 2, "{shown:?}");
+        assert_eq!(cols.len(), 3, "{shown:?}");
+        assert_eq!(shown.len(), 5, "nothing painted twice: {shown:?}");
+    }
+
+    #[test]
+    fn colours_are_translucent_in_both_themes() {
+        for (name, hex) in SWATCHES {
+            for dark in [false, true] {
+                let a = hl::tint(hex, dark).a();
+                assert!(a > 0 && a <= 0x60, "{name} dark={dark}: alpha {a:#x} would hide cell fills");
+            }
+        }
+        assert_ne!(hl::tint("#2F80ED", false), hl::tint("#2F80ED", true));
+    }
+
+    #[test]
+    fn the_row_option_in_file_options_is_the_same_setting() {
+        let mut h = harness(book());
+        assert!(!h.state().session.dex.focus_cell, "off by default");
+        assert_eq!(h.state_mut().run("options.highlightActiveRow", json!({"on": true})), Ok(json!({"on": true})));
+        h.run_steps(2);
+        let dex = &h.state().session.dex;
+        assert!(dex.focus_cell && dex.focus_mode == FocusMode::Row);
+        assert!(h.state().ui.highlight_active_row);
+        h.state_mut().run("view.focusCell", json!({"mode": "column"})).unwrap();
+        h.run_steps(2);
+        assert!(!h.state().ui.highlight_active_row, "no row band: the option shows unticked");
+        h.state_mut().run("options.highlightActiveRow", json!({"on": true})).unwrap();
+        assert_eq!(h.state().session.dex.focus_mode, FocusMode::Both, "ticking it adds the row");
+        h.state_mut().run("options.highlightActiveRow", json!({"on": false})).unwrap();
+        assert_eq!(h.state().session.dex.focus_mode, FocusMode::Column, "unticking it keeps the column");
+        assert!(h.state().session.dex.focus_cell);
+    }
+
+    #[test]
+    fn ctrl_alt_h_toggles_it_also_while_editing_a_cell() {
+        let mut h = harness(book());
+        key(&mut h, Key::H, CTRL_ALT);
+        assert!(h.state().session.dex.focus_cell);
+        h.state_mut().begin_edit(Some("12".into()), false);
+        h.run_steps(2);
+        assert!(h.state().editor.is_some());
+        key(&mut h, Key::H, CTRL_ALT);
+        assert!(!h.state().session.dex.focus_cell);
+        assert!(h.state().editor.is_some(), "the edit goes on");
+    }
+
+    #[test]
+    fn the_status_bar_button_toggles_it() {
+        let mut h = harness(book());
+        h.get_by_label("Highlight Row/Column").click();
+        h.run_steps(2);
+        assert!(h.state().session.dex.focus_cell);
+        assert!(!painted(&h).is_empty());
+        h.get_by_label("Highlight Row/Column").click();
+        h.run_steps(2);
+        assert!(!h.state().session.dex.focus_cell);
+        assert!(painted(&h).is_empty());
+    }
 }

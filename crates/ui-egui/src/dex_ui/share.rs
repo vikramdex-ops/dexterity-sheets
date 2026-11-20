@@ -29,7 +29,9 @@ pub const KINDS: &[(&str, &str)] = &[
     ("shared", "A spreadsheet is shared with me"),
     ("permission", "My access to a spreadsheet changes"),
     ("revoked", "My access is removed"),
-    ("mention", "I am mentioned in a comment"),
+    ("mention", "I am mentioned in a comment, a note or a cell"),
+    ("assigned", "A cell is assigned to me"),
+    ("assignmentDone", "Something I assigned is done"),
     ("changed", "Others changed a shared spreadsheet while I was away"),
     ("template", "A template I used has a new approved version"),
     ("automation", "An automation rule reports something"),
@@ -125,7 +127,8 @@ pub fn open_link(app: &mut SheetApp, s: &str) -> bool {
         app.collab.share.panel = true;
         return true;
     }
-    match proto::parse_link_at(s) {
+    // `?at=` may name a range and an Excel-quoted sheet (`dex_ui::suite::parse_link`).
+    match crate::dex_ui::suite::parse_link(s) {
         Some((server, book, at)) => {
             if let Some((sheet, cell)) = at {
                 app.collab.share.goto = Some((book.clone(), sheet, cell, crate::clock::monotonic_ms()));
@@ -134,7 +137,7 @@ pub fn open_link(app: &mut SheetApp, s: &str) -> bool {
             if !app.collab.signed_in() {
                 app.collab.set_form_server(&server);
                 app.open_backstage(crate::backstage::Page::Shared);
-                app.toast = Some(("Sign in to the office server to open the shared spreadsheet.".into(), crate::now_ms()));
+                app.toast = Some(("Connect to the office server to open the shared spreadsheet.".into(), crate::now_ms()));
             }
         }
         None => app.message = Some(("Dexterity Sheets".into(), "That link is not a Dexterity Sheets link to a shared spreadsheet.".into())),
@@ -221,6 +224,7 @@ pub fn tick(app: &mut SheetApp) {
 /// A notice from the server (or the app): kept in the history, shown as a Windows notification
 /// if the person wants this kind and has not muted the workbook.
 pub fn notice(app: &mut SheetApp, n: Notice) {
+    crate::dex_ui::people::on_notice(app, &n);
     let p = &mut app.collab.share.prefs;
     p.history.insert(0, n.clone());
     p.history.truncate(HISTORY);
@@ -245,7 +249,8 @@ pub fn notice(app: &mut SheetApp, n: Notice) {
         lines.push(format!("Permission: {}", if n.permission == "editor" { "Editor" } else { "Viewer" }));
     }
     match n.kind.as_str() {
-        "mention" => lines.push(format!("{}: {}", place(&n), n.text)),
+        "mention" | "assigned" => lines.push(format!("{}: {}", place(&n), n.text)),
+        "assignmentDone" => lines.push(n.text.clone()),
         "mentionNoAccess" => lines.push(n.text.clone()),
         _ => {}
     }
@@ -271,7 +276,13 @@ fn title_of(n: &Notice) -> String {
         "permission" => format!("Your access to {} changed", n.name),
         "revoked" => "Your access to a shared spreadsheet has changed".into(),
         "changed" if !n.by.is_empty() => format!("{} updated a shared spreadsheet", n.by),
-        "mention" => format!("{} mentioned you in a comment", if n.by.is_empty() { "Someone" } else { &n.by }),
+        "mention" => format!(
+            "{} mentioned you in a {}",
+            if n.by.is_empty() { "Someone" } else { &n.by },
+            if n.source.is_empty() { "comment" } else { n.source.as_str() }
+        ),
+        "assigned" => format!("{} assigned you a cell to look at", if n.by.is_empty() { "Someone" } else { &n.by }),
+        "assignmentDone" => format!("{} finished what you assigned", if n.by.is_empty() { "Someone" } else { &n.by }),
         "mentionNoAccess" => "Someone you mentioned can't open the spreadsheet".into(),
         _ => n.text.clone(),
     }
@@ -282,6 +293,8 @@ fn notice_line(n: &Notice) -> String {
     let line = if n.name.is_empty() || t.contains(&n.name) { t } else { format!("{t}: {}", n.name) };
     match n.kind.as_str() {
         "mention" if !n.cell.is_empty() => format!("{line} ({}): \u{201c}{}\u{201d}", place(n), n.text),
+        "assigned" if !n.cell.is_empty() => format!("{line} ({}): {}", place(n), n.text),
+        "assignmentDone" => format!("{line}: {}", n.text),
         "mentionNoAccess" => n.text.clone(),
         _ => line,
     }
@@ -301,7 +314,7 @@ fn activate(app: &mut SheetApp, uid: u64) {
 
 /// Opens a shared workbook at a cell (a mention): now if it is open here, otherwise once the
 /// server has sent it.
-fn go_to(app: &mut SheetApp, book: &str, sheet: &str, cell: &str) {
+pub(crate) fn go_to(app: &mut SheetApp, book: &str, sheet: &str, cell: &str) {
     if !cell.is_empty() {
         app.collab.share.goto = Some((book.into(), sheet.into(), cell.into(), crate::clock::monotonic_ms()));
     }
@@ -330,9 +343,15 @@ fn go_to_pending(app: &mut SheetApp) {
         app.toast = Some((format!("The sheet \"{sheet}\" is no longer in this spreadsheet."), crate::now_ms()));
         return;
     }
-    if app.run("selection.set", json!({"cell": cell})).is_ok() {
+    let sel = if cell.contains(':') { json!({"range": cell}) } else { json!({"cell": cell}) };
+    if app.run("selection.set", sel).is_ok() {
         app.grid.ensure_visible = true;
-        let _ = app.run("review.showComments", json!({"on": true}));
+        // A mention's cell has its comment: show it. A plain link to a cell just goes there.
+        let first = cell.split(':').next().map(|c| c.replace('$', "")).and_then(|c| gridcraft_engine::core::CellRef::parse(&c));
+        let commented = app.session.active().and_then(|d| d.wb.active()).zip(first).is_some_and(|(sh, c)| sh.comments.contains_key(&c));
+        if commented {
+            let _ = app.run("review.showComments", json!({"on": true}));
+        }
     }
 }
 
@@ -347,7 +366,13 @@ fn native(title: &str, lines: &[String], launch: &str) {
         for l in lines.iter().take(2) {
             texts.push_str(&format!("<text>{}</text>", esc(l)));
         }
-        let open = if launch.contains("/open/") { "Open Spreadsheet" } else { "Open" };
+        let open = if launch.contains("?at=") {
+            "Go to cell"
+        } else if launch.contains("/open/") {
+            "Open Spreadsheet"
+        } else {
+            "Open"
+        };
         let xml = format!(
             "<toast activationType=\"protocol\" launch=\"{l}\"><visual><binding template=\"ToastGeneric\">{texts}</binding></visual><actions><action content=\"{open}\" activationType=\"protocol\" arguments=\"{l}\"/><action content=\"View Details\" activationType=\"protocol\" arguments=\"dexterity://notifications\"/></actions></toast>",
             l = esc(launch)
@@ -527,7 +552,7 @@ fn date_ms(s: &str) -> Option<i64> {
 /// Sets who has access: now for a shared workbook, or right after sharing for one that isn't.
 fn apply_access(app: &mut SheetApp, a: Access) -> Result<Json, String> {
     if !app.collab.signed_in() {
-        return Err("Sign in to the office server first (File › Shared).".into());
+        return Err("Connect to the office server first (File › Shared).".into());
     }
     match shared_doc_book(app) {
         Some(b) => {
@@ -641,7 +666,7 @@ fn share_dialog(app: &mut SheetApp, ctx: &egui::Context) {
                 ui.label("People (the creator and administrators always have access):");
                 egui::ScrollArea::vertical().max_height(180.0).show(ui, |ui| {
                     if users.is_empty() {
-                        ui.label(RichText::new("Sign in to the office server to see your colleagues.").weak());
+                        ui.label(RichText::new("Connect to the office server to see your colleagues.").weak());
                     }
                     for (u, display) in &users {
                         ui.horizontal(|ui| {
@@ -666,7 +691,7 @@ fn share_dialog(app: &mut SheetApp, ctx: &egui::Context) {
                 let label = if book.is_some() { "Save sharing" } else { "Share" };
                 if ui
                     .add_enabled(signed_in, egui::Button::new(label))
-                    .on_disabled_hover_text("Sign in to the office server first (File › Shared)")
+                    .on_disabled_hover_text("Connect to the office server first (File › Shared)")
                     .clicked()
                 {
                     apply = true;

@@ -1,9 +1,10 @@
 """Screenshots of the Server Manager for the README and the landing page, from the released build.
 
-Makes a throw-away server data folder with a few accounts and an update installer, then opens the
-Server Manager on it (no administrator rights needed for a folder of its own) once per page:
-  server-people.png      People: the accounts, roles, Reset password / Disable / Remove
-  server-add-many.png    Add many people: a filled-in template imported and checked row by row
+Makes a throw-away server data folder with a few people (profiles.json: Windows accounts and their
+PCs, one PC waiting for approval) and an update installer, then opens the Server Manager on it (no
+administrator rights needed for a folder of its own) once per page:
+  server-people.png      People and devices: roles, each person's PCs with their device codes,
+                         a PC waiting for approval, Approve / Revoke / Remove
   server-updates.png     App updates: the installers offered to the office PCs
   server-versions.png    Installed versions: which version each PC runs (clients.json)
   server-releases.png    Releases: channel, status and note per version, the update policy
@@ -16,7 +17,9 @@ The overview of a really installed, running server comes from the server install
 
 Run:  python packaging/dexterity/tests/server_manager_shots.py <target/release> <out folder>
 """
+import base64
 import datetime
+import hashlib
 import json
 import os
 import shutil
@@ -30,20 +33,36 @@ OUT = os.path.abspath(sys.argv[2] if len(sys.argv) > 2 else "media")
 SERVER = os.path.join(REL, "DexSheetsServer.exe")
 MANAGER = os.path.join(REL, "DexSheetsServerManager.exe")
 PEOPLE = [
-    ("vikram", "Vikram Kumar", "admin"),
-    ("anita.rao", "Anita Rao", "editor"),
-    ("rahul.mehta", "Rahul Mehta", "editor"),
-    ("priya.nair", "Priya Nair", "editor"),
-    ("site.office", "Site Office", "viewer"),
+    # (Windows account, name shown, role, [(PC, status, days since last seen)])
+    (r"DDS\vikram", "Vikram Kumar", "admin", [("DDS-SERVER", "approved", 0)]),
+    (r"DDS\anita.rao", "Anita Rao", "editor", [("PC-ENG-07", "approved", 0), ("ANITA-LAPTOP", "pending", 0)]),
+    (r"DDS\rahul.mehta", "Rahul Mehta", "editor", [("PC-ENG-02", "approved", 1), ("PC-DRAFT-04", "approved", 6)]),
+    (r"DDS\priya.nair", "Priya Nair", "editor", [("PC-QA-01", "revoked", 30)]),
+    (r"DDS\site.office", "Site Office", "viewer", [("SITE-LAPTOP", "approved", 3)]),
 ]
-IMPORT = [
-    ("User name", "Full name", "Role", "Password"),
-    ("", "Suresh Iyer", "Editor", ""),
-    ("meera.k", "Meera Krishnan", "Viewer", ""),
-    ("", "Arjun Das", "", ""),
-    ("anita.rao", "Anita Rao", "Editor", ""),
-    ("deepak s", "Deepak Sharma", "Editor", "123"),
-]
+PALETTE = [[0x1F, 0x77, 0xB4], [0xD6, 0x27, 0x28], [0x2C, 0xA0, 0x2C], [0x94, 0x67, 0xBD], [0xFF, 0x7F, 0x0E]]
+
+
+def device_code(key_hex):
+    """As the server makes it: the first 8 base32 characters of SHA-256(public key), ABCD-EFGH."""
+    c = base64.b32encode(hashlib.sha256(bytes.fromhex(key_hex)).digest()).decode()[:8]
+    return f"{c[:4]}-{c[4:]}"
+
+
+def profiles(data):
+    """profiles.json as the server writes it, with made-up device keys."""
+    now = int(time.time() * 1000)
+    day = 86_400_000
+    out = {}
+    for i, (account, display, role, devices) in enumerate(PEOPLE):
+        devs = []
+        for j, (pc, status, ago) in enumerate(devices):
+            key = hashlib.sha256(f"{account}|{pc}".encode()).hexdigest()
+            devs.append({"key": key, "code": device_code(key), "machine": pc, "firstSeen": now - (40 + j) * day,
+                         "lastSeen": now - ago * day, "status": status})
+        out[account.lower()] = {"user": account.lower(), "account": account, "display": display, "role": role,
+                                "color": PALETTE[i % len(PALETTE)], "devices": devs}
+    write_json(os.path.join(data, "profiles.json"), {"profiles": out})
 
 
 def write_json(path, value):
@@ -147,9 +166,9 @@ def main():
     os.makedirs(OUT, exist_ok=True)
     data = tempfile.mkdtemp(prefix="dexsheets-manager-shots-")
     try:
-        for user, display, role in PEOPLE:
-            subprocess.run([SERVER, "--data", data, "user", "add", user, "--display", display, "--password", "shots-pass-1", "--role", role], check=True, capture_output=True)
-        subprocess.run([SERVER, "--data", data, "user", "disable", "priya.nair"], check=True, capture_output=True)
+        profiles(data)
+        # The server's own command reads it back (a malformed file fails here, not in a picture).
+        subprocess.run([SERVER, "--data", data, "profile", "list"], check=True, capture_output=True)
         os.makedirs(os.path.join(data, "updates"), exist_ok=True)
         with open(os.path.join(data, "updates", "dexterity-sheets-1.2.0-windows-x64.msi"), "wb") as f:
             f.write(b"\0" * 16_240_640)
@@ -157,11 +176,7 @@ def main():
             f.write("- Share any file from where it is saved\n- Server Manager for IT")
         with open(os.path.join(data, "server.json"), "w", encoding="utf-8") as f:
             f.write('{"name": "Dexterity Sheets on DDS-SERVER"}')
-        people = os.path.join(data, "new-people.csv")
-        with open(people, "w", encoding="utf-8", newline="") as f:
-            f.write("\n".join(",".join(r) for r in IMPORT) + "\n")
         shot(data, "people", "server-people.png")
-        shot(data, "add-many", "server-add-many.png", ["--import", people])
         shot(data, "updates", "server-updates.png")
         dashboard_data(data)
         for page in ("versions", "releases", "feedback", "health", "adoption"):
