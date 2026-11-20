@@ -2,8 +2,10 @@
 //!
 //! When an administrator sets a Connect hub and an integration token in the Server Manager
 //! (`connect.json` in the data folder), each mention and assignment notice is also queued here
-//! as a Direct message for the person (`POST /api/bot/message` on the hub), and the server keeps
-//! a "Sheets pulse" card up to date (`POST /api/bot/widget`). The queue lives in
+//! for the person. It reaches them through Nib, Connect's companion, under the name of this
+//! integration (`POST /api/bot/notify` on the hub; a hub from before that request gets the same
+//! words as a Direct message, `POST /api/bot/message`), and the server keeps a "Sheets pulse"
+//! card up to date (`POST /api/bot/widget`). The queue lives in
 //! `connect-outbox.json`, so nothing is lost when the hub is down or the server restarts: the
 //! server program posts it in the background and tries again later, never holding anything up.
 //! The token is never logged and never sent anywhere but the hub.
@@ -94,6 +96,9 @@ pub struct Outgoing {
     /// The card under the text.
     pub title: String,
     pub lines: Vec<String>,
+    /// What it is, shown after the integration's name: `mention` or `task` (empty in an outbox
+    /// written by 1.7.1 or earlier).
+    pub kind: String,
     pub created: i64,
     pub tries: u32,
     /// Not before this (ms since 1970).
@@ -160,7 +165,44 @@ impl Outbox {
     }
 }
 
-/// The body of `POST /api/bot/message`.
+/// The body of `POST /api/bot/notify`: the notice Nib passes on. The key is the queued
+/// message's own id, so the hub delivers it once however often it is sent again (after a timeout,
+/// a restart, or an answer that was lost on the way back).
+pub fn notice_body(m: &Outgoing) -> serde_json::Value {
+    let mut body = serde_json::json!({"to": m.to, "key": format!("sheets:{}", m.id), "title": m.title, "text": m.text, "lines": m.lines});
+    if !m.kind.is_empty() {
+        body["kind"] = serde_json::Value::String(m.kind.clone());
+    }
+    body
+}
+
+/// What the hub's answer to a notice means.
+#[derive(Debug, PartialEq)]
+pub enum NoticeAnswer {
+    /// Delivered, or already delivered under this key.
+    Delivered,
+    /// Connect knows nobody with that Windows account: not tried again.
+    Unknown,
+    /// The hub could not write it this time: the same notice again later.
+    Failed,
+    /// Not an answer to a notice: a hub from before `POST /api/bot/notify`.
+    Older,
+}
+
+/// Reads the body of a `200` (or `404`) answer to `POST /api/bot/notify`.
+pub fn notice_answer(body: &serde_json::Value) -> NoticeAnswer {
+    let Some(results) = body.get("results").and_then(serde_json::Value::as_array) else { return NoticeAnswer::Older };
+    let has = |status: &str| results.iter().any(|r| r.get("status").and_then(serde_json::Value::as_str) == Some(status));
+    if has("failed") {
+        NoticeAnswer::Failed
+    } else if has("delivered") || has("duplicate") {
+        NoticeAnswer::Delivered
+    } else {
+        NoticeAnswer::Unknown
+    }
+}
+
+/// The body of `POST /api/bot/message` (a hub from before notices).
 pub fn message_body(m: &Outgoing) -> serde_json::Value {
     serde_json::json!({"text": m.text, "to": m.to, "card": {"title": m.title, "lines": m.lines}})
 }
@@ -212,5 +254,45 @@ mod tests {
         assert_eq!(body["to"][0], "x");
         assert_eq!(widget_body(&vec!["l".repeat(300); 10])["lines"].as_array().map(Vec::len), Some(8));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_notice_carries_its_own_key_and_the_answer_says_what_to_do() {
+        let m = Outgoing {
+            id: "c-7-1".into(),
+            to: vec![r"DDS\anita".into()],
+            text: "t".into(),
+            title: "T".into(),
+            kind: "mention".into(),
+            ..Outgoing::default()
+        };
+        let body = notice_body(&m);
+        assert_eq!(
+            (body["key"].as_str(), body["kind"].as_str(), body["to"][0].as_str()),
+            (Some("sheets:c-7-1"), Some("mention"), Some(r"DDS\anita"))
+        );
+        assert_eq!(notice_body(&m), body, "sent again, it is the same notice with the same key");
+        assert!(notice_body(&Outgoing::default()).get("kind").is_none(), "an outbox written by 1.7.1 or earlier has no kind");
+        // an outbox written before the field existed still loads
+        let old: Outgoing =
+            serde_json::from_str(r#"{"id":"a","to":["x"],"text":"hi","title":"T","lines":[],"created":1,"tries":0,"next":1}"#).expect("old row");
+        assert_eq!((old.id.as_str(), old.kind.as_str()), ("a", ""));
+
+        let answer = |v: serde_json::Value| notice_answer(&v);
+        assert_eq!(answer(serde_json::json!({"ok": true, "results": [{"to": "x", "status": "delivered", "via": "nib"}]})), NoticeAnswer::Delivered);
+        assert_eq!(
+            answer(serde_json::json!({"ok": true, "results": [{"to": "x", "status": "duplicate"}]})),
+            NoticeAnswer::Delivered,
+            "already there is a success"
+        );
+        assert_eq!(answer(serde_json::json!({"ok": false, "results": [{"to": "x", "status": "unknown"}]})), NoticeAnswer::Unknown);
+        assert_eq!(answer(serde_json::json!({"ok": false, "results": []})), NoticeAnswer::Unknown);
+        assert_eq!(
+            answer(serde_json::json!({"results": [{"status": "delivered"}, {"status": "failed"}]})),
+            NoticeAnswer::Failed,
+            "the same key again reaches only the rest"
+        );
+        assert_eq!(answer(serde_json::json!({"ok": false, "error": "not found"})), NoticeAnswer::Older);
+        assert_eq!(answer(serde_json::Value::Null), NoticeAnswer::Older);
     }
 }

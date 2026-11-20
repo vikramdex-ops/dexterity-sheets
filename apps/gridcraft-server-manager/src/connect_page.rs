@@ -161,7 +161,7 @@ impl App {
         card(ui, |ui| {
             ui.label(RichText::new("Send notices to Connect").strong());
             ui.label(
-                RichText::new("When someone is mentioned or given a cell to look at, they also get a Direct message in Connect with a link that opens the spreadsheet at that cell, and everyone's Pulse shows a Sheets card. Make an integration token in Connect (Control room › Integrations) and paste it here. Optional: without it, notices stay in Dexterity Sheets.")
+                RichText::new("When someone is mentioned or given a cell to look at, they are also told in Connect, by Nib, with a link that opens the spreadsheet at that cell, and everyone's Pulse shows a Sheets card. Make an integration token in Connect (Control room › Integrations) and paste it here. Optional: without it, notices stay in Dexterity Sheets.")
                     .color(DIM),
             );
             ui.add_space(4.0);

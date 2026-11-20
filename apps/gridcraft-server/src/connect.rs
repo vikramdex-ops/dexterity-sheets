@@ -1,4 +1,5 @@
-//! Posts the server's mention and assignment notices to Dexterity Connect, and keeps the
+//! Posts the server's mention and assignment notices to Dexterity Connect (they reach people
+//! through Nib; a hub from before `POST /api/bot/notify` gets them as Direct messages), and keeps the
 //! "Sheets pulse" card up to date, when an administrator set a hub in the Server Manager
 //! (`connect.json`). Runs on its own thread: a hub that is down or slow never holds up the
 //! server, and what could not be sent waits in the outbox for the next try. The integration
@@ -7,7 +8,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use gridcraft_collab::connect::{self, ConnectConfig};
+use gridcraft_collab::connect::{self, ConnectConfig, NoticeAnswer, Outgoing};
 use gridcraft_collab::server::Server;
 use sha2::Digest;
 
@@ -56,17 +57,58 @@ fn pinned(c: &reqwest::blocking::Client, cfg: &ConnectConfig) -> Result<(), Stri
     Ok(())
 }
 
-fn post(c: &reqwest::blocking::Client, cfg: &ConnectConfig, path: &str, body: &serde_json::Value) -> Sent {
+/// The hub's status and what it said (`Null` when that is not JSON); `Err` when it did not answer.
+fn send(c: &reqwest::blocking::Client, cfg: &ConnectConfig, path: &str, body: &serde_json::Value) -> Result<(u16, serde_json::Value), String> {
     let r = c
         .post(format!("{}{path}", cfg.hub))
         .bearer_auth(cfg.token.trim())
         .header("Content-Type", "application/json")
         .body(serde_json::to_vec(body).unwrap_or_default())
-        .send();
-    match r {
-        Ok(r) => classify(r.status().as_u16()),
-        Err(e) => Sent::Later(format!("the hub did not answer: {}", e.without_url())),
+        .send()
+        .map_err(|e| format!("the hub did not answer: {}", e.without_url()))?;
+    let status = r.status().as_u16();
+    // The answer to a notice is a few hundred bytes; anything much larger is not one.
+    let said = r.bytes().ok().filter(|b| b.len() <= 256 * 1024).and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or(serde_json::Value::Null);
+    Ok((status, said))
+}
+
+fn post(c: &reqwest::blocking::Client, cfg: &ConnectConfig, path: &str, body: &serde_json::Value) -> Sent {
+    match send(c, cfg, path, body) {
+        Ok((status, _)) => classify(status),
+        Err(why) => Sent::Later(why),
     }
+}
+
+/// What the hub's answer to `POST /api/bot/notify` means for the notice; `None` when the hub is
+/// from before that request and the notice goes as a Direct message instead.
+fn notice_outcome(status: u16, said: &serde_json::Value) -> Option<Sent> {
+    match status {
+        200..=299 => Some(match connect::notice_answer(said) {
+            NoticeAnswer::Delivered => Sent::Ok,
+            NoticeAnswer::Unknown => Sent::Dropped("nobody on Connect has that Windows account".into()),
+            NoticeAnswer::Failed => Sent::Later("the hub could not deliver the notice yet".into()),
+            // 2xx without results: something that is not a Connect hub answered; keep the notice.
+            NoticeAnswer::Older => Sent::Later("the hub's answer was not one to a notice".into()),
+        }),
+        404 if connect::notice_answer(said) == NoticeAnswer::Older => None,
+        429 => Some(Sent::Later("the hub asked to wait (too many notices in a minute)".into())),
+        _ => Some(classify(status)),
+    }
+}
+
+/// One notice: through Nib (`/api/bot/notify`), or as a Direct message on an older hub. `older`
+/// remembers for the rest of the round that the hub does not know notices.
+fn tell(c: &reqwest::blocking::Client, cfg: &ConnectConfig, m: &Outgoing, older: &mut bool) -> Sent {
+    if !*older {
+        match send(c, cfg, "/api/bot/notify", &connect::notice_body(m)) {
+            Err(why) => return Sent::Later(why),
+            Ok((status, said)) => match notice_outcome(status, &said) {
+                Some(sent) => return sent,
+                None => *older = true,
+            },
+        }
+    }
+    post(c, cfg, "/api/bot/message", &connect::message_body(m))
 }
 
 fn classify(status: u16) -> Sent {
@@ -102,8 +144,9 @@ fn round(server: &Server, last_pulse: &mut (Vec<String>, i64)) {
             return;
         }
     };
+    let mut older = false;
     for m in due {
-        match post(&c, &cfg, "/api/bot/message", &connect::message_body(&m)) {
+        match tell(&c, &cfg, &m, &mut older) {
             Sent::Ok => server.connect_done(&m.id),
             Sent::Dropped(why) => {
                 log::warn!("Dexterity Connect: a notice for {} was not delivered: {why}", m.to.join(", "));
@@ -145,5 +188,25 @@ mod tests {
         assert!(matches!(classify(401), Sent::Later(_)), "a refused token is kept until it is fixed");
         assert!(matches!(classify(503), Sent::Later(_)));
         assert!(matches!(classify(413), Sent::Dropped(_)));
+    }
+
+    #[test]
+    fn a_notice_is_done_kept_or_sent_the_older_way() {
+        let json = |s: &str| serde_json::from_str::<serde_json::Value>(s).unwrap_or(serde_json::Value::Null);
+        assert_eq!(notice_outcome(200, &json(r#"{"ok":true,"results":[{"to":"x","status":"delivered","via":"nib"}]}"#)), Some(Sent::Ok));
+        assert_eq!(
+            notice_outcome(200, &json(r#"{"ok":true,"results":[{"to":"x","status":"duplicate"}]}"#)),
+            Some(Sent::Ok),
+            "sent twice, shown once"
+        );
+        assert!(matches!(notice_outcome(200, &json(r#"{"ok":false,"results":[{"to":"x","status":"unknown"}]}"#)), Some(Sent::Dropped(_))));
+        assert!(matches!(notice_outcome(200, &json(r#"{"results":[{"status":"failed"}]}"#)), Some(Sent::Later(_))));
+        assert!(matches!(notice_outcome(200, &serde_json::Value::Null), Some(Sent::Later(_))), "not a hub's answer: nothing is thrown away");
+        assert_eq!(notice_outcome(404, &json(r#"{"ok":false,"error":"not found"}"#)), None, "a hub from before notices: a Direct message instead");
+        assert_eq!(notice_outcome(404, &serde_json::Value::Null), None);
+        assert!(matches!(notice_outcome(429, &json(r#"{"ok":false,"retryAfterSec":12}"#)), Some(Sent::Later(_))));
+        assert!(matches!(notice_outcome(401, &serde_json::Value::Null), Some(Sent::Later(_))), "a refused token is kept until it is fixed");
+        assert!(matches!(notice_outcome(500, &serde_json::Value::Null), Some(Sent::Later(_))));
+        assert!(matches!(notice_outcome(400, &serde_json::Value::Null), Some(Sent::Dropped(_))));
     }
 }
