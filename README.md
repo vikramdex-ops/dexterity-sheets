@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <sub><!-- dex:release -->Version <b>1.7.1</b> · 20 November 2026 · based on GridCraft 0.19.1<!-- /dex:release --> · Windows 10 and 11 · no administrator rights needed · updates itself</sub>
+  <sub><!-- dex:release -->Version <b>1.7.2</b> · 20 November 2026 · based on GridCraft 0.19.1<!-- /dex:release --> · Windows 10 and 11 · no administrator rights needed · updates itself</sub>
 </p>
 
 <p align="center">
@@ -108,11 +108,9 @@
 ## What's new
 
 <!-- dex:whatsnew -->
-- More fixes and improvements from official GridCraft (still GridCraft 0.19.1): 2 changes, the newest below. The release notes on GitHub list them all.
-- From GridCraft: xlsx: delegate XLSB record and package parsing to craft-xlsx
-- From GridCraft: mcp: delegate server framing to craft-mcp-server
+- **Sheets notices arrive through Nib:** with a Connect hub set in Server Manager › Dexterity Connect, mentions and assignments now arrive in each person's conversation with Nib in Dexterity Connect, marked **Dexterity Sheets** · Mention or Task, instead of as Direct messages from a separate Sheets contact. A notice is never shown twice, even when the server had to send it again. Nothing to set up again: the same hub and token are used, and a Connect hub that has not been updated yet keeps receiving them as Direct messages. In Connect, an administrator can switch this off per integration (Control room › Integrations › Notices through Nib).
 
-[Everything in 1.7.1](https://github.com/vikramdex-ops/dexterity-sheets/releases/tag/v1.7.1).
+[Everything in 1.7.2](https://github.com/vikramdex-ops/dexterity-sheets/releases/tag/v1.7.2).
 <!-- /dex:whatsnew -->
 
 Dexterity Sheets is built on the open-source [GridCraft](https://github.com/storytold/gridcraft)
@@ -258,7 +256,7 @@ Everything else is in the Server Manager too, so the job can be handed to anyone
 |---|---|
 | **Server** | Running or stopped, with Start / Stop / Restart; the name, computer name and addresses teammates use; whether the firewall is open (and a button to open it); the data folder and its size; the server log |
 | **People and devices** | Everyone who has connected, with their PCs (device code, PC name, last seen): approve or revoke a PC, change a role, remove a person. PCs waiting for approval are at the top. The last administrator can't be locked out. |
-| **Dexterity Connect** | Tokens for the read-only API Dexterity Connect asks on TCP 47812 (assignments, mentions, shared spreadsheets), shown once and revocable; optionally the Connect hub and integration token, so mentions and assignments also arrive in Connect with a Sheets pulse card |
+| **Dexterity Connect** | Tokens for the read-only API Dexterity Connect asks on TCP 47812 (assignments, mentions, shared spreadsheets), shown once and revocable; optionally the Connect hub and integration token, so mentions and assignments also arrive in Connect, through Nib, with a Sheets pulse card |
 | **App updates** | Fetch new versions of Dexterity Sheets from this GitHub repository automatically, or add an `.msi` by hand; every PC on the network is offered it |
 | **Backup and restore** | One `.zip` with everyone's profile and PCs, every shared workbook, edit history and version; restoring keeps the data it replaces |
 | **Installed versions** | Which Dexterity Sheets version each PC runs, its channel and when it was last seen, with a count per version |

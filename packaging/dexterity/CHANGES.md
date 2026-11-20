@@ -13,6 +13,10 @@ its newest changes); the release notes on GitHub list every one of them with its
 - **You are told when a spreadsheet is shared with you.** Sharing with everyone at the office (the default) now sends each person a Windows notification with **Open Spreadsheet**, as sharing with named people does; someone not connected is told at their next sign-in. Choices made in the Share dialog are sent with the workbook, so each person is told once.
 - **Watch teammates type, live.** In a shared spreadsheet, what a teammate types in a cell now shows in that cell as they type, letter by letter, with a caret and their name tag in their colour, before they press Enter, as co-editing works in Slate. It disappears when they press Enter (their edit arrives) or Esc. Python cell code stays private until it is entered.
 
+## 1.7.2 · 20 November 2026
+
+- **Sheets notices arrive through Nib:** with a Connect hub set in Server Manager › Dexterity Connect, mentions and assignments now arrive in each person's conversation with Nib in Dexterity Connect, marked **Dexterity Sheets** · Mention or Task, instead of as Direct messages from a separate Sheets contact. A notice is never shown twice, even when the server had to send it again. Nothing to set up again: the same hub and token are used, and a Connect hub that has not been updated yet keeps receiving them as Direct messages. In Connect, an administrator can switch this off per integration (Control room › Integrations › Notices through Nib).
+
 ## 1.7.1 · 20 November 2026
 
 - More fixes and improvements from official GridCraft (still GridCraft 0.19.1): 2 changes, the newest below. The release notes on GitHub list them all.

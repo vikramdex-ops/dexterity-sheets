@@ -252,17 +252,24 @@ thread per connection, at most 32 at once (`503` past that); at most 500 rows pe
 
 **Send notices to Connect.** With the hub's address (`https://<hub>:47900`), an integration token
 from Connect (Control room › Integrations) and, for a hub with its own certificate, that
-certificate's SHA-256 fingerprint, the server also sends each mention and assignment as a Direct
-message to the person in Connect (`POST /api/bot/message`, matched by Windows account), with the
-`dexterity://…?at=` link in the text, and keeps a **Sheets pulse** card on everyone's Pulse up to
+certificate's SHA-256 fingerprint, the server also sends each mention and assignment to the person
+in Connect as a notice (`POST /api/bot/notify`, matched by Windows account), with the
+`dexterity://…?at=` link in the text. It arrives in their conversation with Nib, Connect's companion,
+marked **Dexterity Sheets** · Mention or Task (Connect writes that line itself). Each notice carries
+its own key (`sheets:<id>`), so Connect shows it once however often the server sends it again. A hub
+from before notices answers `404`; the same words then go as a Direct message
+(`POST /api/bot/message`), and the server asks again on its next round, so nothing has to be changed
+when the hub is updated. An administrator of Connect can switch *Notices through Nib* off for the
+integration; they then arrive as Direct messages from it. The contract is Connect's
+`docs/TOOL-NOTICES.md`. The server also keeps a **Sheets pulse** card on everyone's Pulse up to
 date (`POST /api/bot/widget`, key `sheets-pulse`: workbooks, people connected, open and overdue
 assignments, the busiest workbooks; sent when it changes and at least every five minutes). The
 settings are in `connect.json` (readable only by SYSTEM and Administrators, like the rest of the
 data folder; the token is never logged). With a fingerprint set, the server checks the hub's
 certificate before the token is sent and sends nothing to a hub showing another one. Notices wait in
-`connect-outbox.json` while the hub is away or refuses the token, and are tried again (from 30
-seconds up to an hour apart; dropped after three days, or at once when Connect knows nobody with
-that account). Posting runs on its own thread and never holds up the server. *Turn off* stops it
+`connect-outbox.json` while the hub is away, refuses the token, asks the server to wait or could not
+write the notice, and are tried again (from 30 seconds up to an hour apart; dropped after three days,
+or at once when Connect knows nobody with that account). Posting runs on its own thread and never holds up the server. *Turn off* stops it
 and forgets the token.
 
 ## Using it (everyone)
