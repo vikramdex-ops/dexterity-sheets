@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <sub><!-- dex:release -->Version <b>1.7.3</b> · 20 November 2026 · based on GridCraft 0.19.1<!-- /dex:release --> · Windows 10 and 11 · no administrator rights needed · updates itself</sub>
+  <sub><!-- dex:release -->Version <b>1.7.4</b> · 21 November 2026 · based on GridCraft 0.19.1<!-- /dex:release --> · Windows 10 and 11 · no administrator rights needed · updates itself</sub>
 </p>
 
 <p align="center">
@@ -108,14 +108,11 @@
 ## What's new
 
 <!-- dex:whatsnew -->
-- More fixes and improvements from official GridCraft (still GridCraft 0.19.1): 10 changes, the newest below. The release notes on GitHub list them all.
-- From GridCraft: xlsx: preserve external workbook target relationships on XLSB -> XLSX save
-- From GridCraft: xlsx: adopt craft-libs#1347 for XLSB external-book formula decoding (craft-libs#778)
-- From GridCraft: xlsx: add full workbook import/save/reopen round-trip parity test (craft-libs#778)
-- From GridCraft: mcp: add protocol transcript tests for initialize, cancel, and batch
-- From GridCraft: i18n(ru): translate 547 more labels, dialog strings and tooltips
+- **Save works in shared spreadsheets again.** Since 1.7.0 (people are Windows accounts), Save in a shared spreadsheet failed with "network or disk error: The system cannot find the path specified. (os error 3)", and the server's hourly versions were not kept either. The office server needs this version for the fix.
+- **You are told when a spreadsheet is shared with you.** Sharing with everyone at the office (the default) now sends each person a Windows notification with **Open Spreadsheet**, as sharing with named people does; someone not connected is told at their next sign-in. Choices made in the Share dialog are sent with the workbook, so each person is told once.
+- **Watch teammates type, live.** In a shared spreadsheet, what a teammate types in a cell now shows in that cell as they type, letter by letter, with a caret and their name tag in their colour, before they press Enter, as co-editing works in Slate. It disappears when they press Enter (their edit arrives) or Esc. Python cell code stays private until it is entered.
 
-[Everything in 1.7.3](https://github.com/vikramdex-ops/dexterity-sheets/releases/tag/v1.7.3) and 3 more.
+[Everything in 1.7.4](https://github.com/vikramdex-ops/dexterity-sheets/releases/tag/v1.7.4).
 <!-- /dex:whatsnew -->
 
 Dexterity Sheets is built on the open-source [GridCraft](https://github.com/storytold/gridcraft)
