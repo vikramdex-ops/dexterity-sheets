@@ -1,11 +1,16 @@
-//! Data-only XLSB import, delegated to `craft_xlsx::Package`.
-//! Formula caches become constants. Styles, macros and other workbook features are not run or imported.
+//! XLSB import, delegated to `craft_xlsx::Package`.
+//! Cell values, formulas, defined names, and merged cells are imported; formatting, charts,
+//! images, macros and other workbook features are not imported.
 
+use std::collections::BTreeMap;
+use std::fmt::Write as _;
 use std::sync::Arc;
 
 use gridcraft_core::{CellError, CellRef, DateSystem, RangeRef, Value};
-use gridcraft_model::{Cell, Sheet, Visibility, Workbook};
+use gridcraft_model::{Cell, DefinedName, Formula, Preserved, PreservedPart, PreservedRel, PreservedXml, Sheet, StyleId, Visibility, Workbook};
 
+use crate::write::{NS_MAIN, NS_REL, XML_DECL};
+use crate::xml::{esc, esc_attr};
 use crate::{IoError, ReadReport};
 
 fn map_error(err: craft_xlsx::Error) -> IoError {
@@ -55,10 +60,63 @@ fn map_visibility(visibility: craft_xlsx::Visibility) -> Visibility {
     }
 }
 
-/// Imports worksheet scalar values and saved formula results. Number formats are omitted;
-/// dates remain serial numbers with the workbook's original date system. Inspect warnings.
+pub(super) fn import_limits() -> craft_xlsx::Limits {
+    let limits = craft_xlsx::Limits::default();
+    // Keep the lower decoded-text budget in the browser's WebAssembly heap.
+    if cfg!(target_arch = "wasm32") { craft_xlsx::Limits { binary_text: 64 << 20, ..limits } } else { limits }
+}
+
+fn map_formula(f: &craft_xlsx::CellFormula, at: craft_xlsx::CellRef, report: &mut ReadReport) -> Option<Formula> {
+    let text = crate::fmla::from_file(f.text.trim());
+    if text.is_empty() {
+        return None;
+    }
+    match f.kind {
+        craft_xlsx::FormulaKind::Normal | craft_xlsx::FormulaKind::Shared => Some(Formula::new(&text)),
+        craft_xlsx::FormulaKind::Array => {
+            let pos = CellRef::new(at.row, at.col);
+            let mut fm = Formula::new(&text);
+            fm.array = Some(
+                f.range
+                    .map(|r| RangeRef::new(CellRef::new(r.first.row, r.first.col), CellRef::new(r.last.row, r.last.col)))
+                    .unwrap_or_else(|| RangeRef::cell(pos)),
+            );
+            Some(fm)
+        }
+        craft_xlsx::FormulaKind::DataTable => {
+            report.warn("what-if data tables are not supported; kept their values");
+            None
+        }
+    }
+}
+
+fn import_defined_names(book: &craft_xlsx::Workbook, file_to_model: &[Option<usize>], wb: &mut Workbook) {
+    for d in &book.defined_names {
+        let scope = match d.local_sheet_id {
+            Some(i) => match file_to_model.get(i as usize).copied().flatten() {
+                Some(m) => Some(m),
+                None => continue,
+            },
+            None => None,
+        };
+        let lname = d.name.to_ascii_lowercase();
+        if lname == "_xlnm._filterdatabase" || lname.starts_with("_xlchart.") || lname == "_xlnm.print_area" || lname == "_xlnm.print_titles" {
+            continue;
+        }
+        wb.names.push(DefinedName {
+            name: d.name.clone(),
+            scope,
+            formula: crate::fmla::from_file(d.formula.trim()),
+            comment: d.comment.clone(),
+            hidden: d.hidden,
+        });
+    }
+}
+
+/// Imports worksheet cell values, formulas, defined names, and merged cells. Number formats are
+/// omitted; dates remain serial numbers with the workbook's original date system. Inspect warnings.
 pub fn read_xlsb(bytes: &[u8]) -> Result<(Workbook, ReadReport), IoError> {
-    let limits = craft_xlsx::Limits { binary_text: 64 << 20, ..craft_xlsx::Limits::default() };
+    let limits = import_limits();
     let mut package = craft_xlsx::Package::open(bytes, &limits).map_err(map_error)?;
     if !package.is_binary() {
         return Err(IoError::Format("XLSB: not a binary workbook".into()));
@@ -95,13 +153,15 @@ pub fn read_xlsb(bytes: &[u8]) -> Result<(Workbook, ReadReport), IoError> {
     wb.sheets.clear();
     wb.date_system = if book.date_1904 { DateSystem::D1904 } else { DateSystem::D1900 };
     let mut report = ReadReport::default();
-    report.warn("XLSB data-only import: formulas become their saved results and will not recalculate. Formatting, charts, images, macros and other features are not imported; dates, currency and percentages may display as numbers. Save a new .xlsx file; XLSB saving is not supported.");
+    report.warn("XLSB import: formatting, charts, images, macros and other features are not imported; dates, currency and percentages may display as numbers. Save a new .xlsx file; XLSB saving is not supported.");
+    let mut file_to_model = Vec::with_capacity(book.sheets.len());
     for entry in &book.sheets {
         if entry.kind != craft_xlsx::SheetKind::Worksheet {
             if !matches!(entry.kind, craft_xlsx::SheetKind::Chartsheet | craft_xlsx::SheetKind::Dialogsheet | craft_xlsx::SheetKind::Macrosheet) {
                 return Err(IoError::Format("XLSB: unknown sheet relationship type".into()));
             }
             report.warn("XLSB non-worksheet sheets were skipped.");
+            file_to_model.push(None);
             continue;
         }
         wb.check_sheet_name(&entry.name, None).map_err(|e| IoError::Format(format!("XLSB: {e}")))?;
@@ -116,8 +176,12 @@ pub fn read_xlsb(bytes: &[u8]) -> Result<(Workbook, ReadReport), IoError> {
             .sheet(entry, |row| {
                 for cell in row.cells {
                     let value = map_value(cell.value.resolve(&strings, book.date_1904));
-                    if !value.is_empty() {
-                        sheet.cells.set(CellRef::new(cell.at.row, cell.at.col), Cell::value(value));
+                    let formula = cell.formula.as_ref().and_then(|f| map_formula(f, cell.at, &mut report));
+                    if !value.is_empty() || formula.is_some() {
+                        sheet.cells.set(
+                            CellRef::new(cell.at.row, cell.at.col),
+                            Cell { value, formula: formula.map(Arc::new), style: StyleId::DEFAULT, py: None },
+                        );
                     }
                 }
                 Ok(())
@@ -125,7 +189,13 @@ pub fn read_xlsb(bytes: &[u8]) -> Result<(Workbook, ReadReport), IoError> {
             .map_err(map_error)?;
         sheet.merges =
             part.merges.into_iter().map(|r| RangeRef::new(CellRef::new(r.first.row, r.first.col), CellRef::new(r.last.row, r.last.col))).collect();
+        file_to_model.push(Some(wb.sheets.len()));
         wb.sheets.push(Arc::new(sheet));
+    }
+    import_defined_names(&book, &file_to_model, &mut wb);
+    let external_links = package.external_links(&book).map_err(map_error)?;
+    if let Some(preserved) = preserve_external_links(&external_links) {
+        wb.preserved = Some(Arc::new(preserved));
     }
     for warning in package.warnings() {
         report.warn(warning);
@@ -139,4 +209,111 @@ pub fn read_xlsb(bytes: &[u8]) -> Result<(Workbook, ReadReport), IoError> {
 
 pub(crate) fn is_xlsb(bytes: &[u8]) -> bool {
     craft_xlsx::is_xlsb(bytes)
+}
+
+fn preserve_external_links(links: &[(String, Option<craft_xlsx::ExternalLink>)]) -> Option<Preserved> {
+    if links.is_empty() {
+        return None;
+    }
+    const CT_EXT_LINK: &str = "application/vnd.openxmlformats-officedocument.spreadsheetml.externalLink+xml";
+    let mut p = Preserved::default();
+    let mut refs_xml = format!("<externalReferences xmlns:r=\"{NS_REL}\">");
+    let mut has_any = false;
+    for (i, (_, link)) in links.iter().enumerate() {
+        let Some(link) = link else {
+            // Preserve the 1-based `[n]` ordinal for later links when an earlier slot is missing.
+            refs_xml.push_str("<externalReference/>");
+            continue;
+        };
+        has_any = true;
+        let rid = format!("rId{}", i + 1);
+        let part_name = format!("xl/externalLinks/externalLink{}.xml", i + 1);
+        let (xml, rels) = external_link_part_xml(link);
+        p.rels.push(PreservedRel { id: rid.clone(), rel_type: format!("{NS_REL}/externalLink"), target: part_name.clone(), external: false });
+        p.parts.push(PreservedPart { name: part_name, content_type: CT_EXT_LINK.into(), data: xml.into_bytes().into(), rels });
+        let _ = write!(refs_xml, "<externalReference r:id=\"{rid}\"/>");
+    }
+    if !has_any {
+        return None;
+    }
+    refs_xml.push_str("</externalReferences>");
+    p.elements.push(PreservedXml { slot: "externalReferences".into(), xml: refs_xml });
+    Some(p)
+}
+
+fn external_link_part_xml(link: &craft_xlsx::ExternalLink) -> (String, Vec<PreservedRel>) {
+    let mut xml = format!("{XML_DECL}<externalLink xmlns=\"{NS_MAIN}\" xmlns:r=\"{NS_REL}\">");
+    let mut rels = Vec::new();
+    if let craft_xlsx::ExternalLink::Book(book) = link {
+        xml.push_str("<externalBook");
+        if let Some(target) = &book.target {
+            xml.push_str(" r:id=\"rId1\"");
+            rels.push(PreservedRel { id: "rId1".into(), rel_type: format!("{NS_REL}/externalLinkPath"), target: target.clone(), external: true });
+        }
+        xml.push('>');
+        if !book.sheet_names.is_empty() {
+            xml.push_str("<sheetNames>");
+            for name in &book.sheet_names {
+                let _ = write!(xml, "<sheetName val=\"{}\"/>", esc_attr(name));
+            }
+            xml.push_str("</sheetNames>");
+        }
+        if !book.defined_names.is_empty() {
+            xml.push_str("<definedNames>");
+            for dn in &book.defined_names {
+                let _ = write!(xml, "<definedName name=\"{}\"", esc_attr(&dn.name));
+                if let Some(refers_to) = &dn.refers_to {
+                    let _ = write!(xml, " refersTo=\"{}\"", esc_attr(refers_to));
+                }
+                if let Some(sheet_id) = dn.sheet_id {
+                    let _ = write!(xml, " sheetId=\"{sheet_id}\"");
+                }
+                xml.push_str("/>");
+            }
+            xml.push_str("</definedNames>");
+        }
+        if !book.sheet_data.is_empty() {
+            xml.push_str("<sheetDataSet>");
+            for sd in &book.sheet_data {
+                let _ = write!(xml, "<sheetData sheetId=\"{}\"", sd.sheet_id);
+                if sd.refresh_error {
+                    xml.push_str(" refreshError=\"1\"");
+                }
+                xml.push('>');
+                let mut rows: BTreeMap<u32, Vec<(craft_xlsx::CellRef, &craft_xlsx::Value)>> = BTreeMap::new();
+                for (pos, val) in &sd.cells {
+                    rows.entry(pos.row).or_default().push((*pos, val));
+                }
+                for (r, cells) in rows {
+                    let _ = write!(xml, "<row r=\"{}\">", r + 1);
+                    for (pos, val) in cells {
+                        let r_attr = CellRef::new(pos.row, pos.col);
+                        match val {
+                            craft_xlsx::Value::Empty => {
+                                let _ = write!(xml, "<cell r=\"{r_attr}\"/>");
+                            }
+                            craft_xlsx::Value::Number(n) => {
+                                let _ = write!(xml, "<cell r=\"{r_attr}\"><v>{n}</v></cell>");
+                            }
+                            craft_xlsx::Value::Text(t) => {
+                                let _ = write!(xml, "<cell r=\"{r_attr}\" t=\"str\"><v>{}</v></cell>", esc(t));
+                            }
+                            craft_xlsx::Value::Bool(b) => {
+                                let _ = write!(xml, "<cell r=\"{r_attr}\" t=\"b\"><v>{}</v></cell>", if *b { "1" } else { "0" });
+                            }
+                            craft_xlsx::Value::Error(e) => {
+                                let _ = write!(xml, "<cell r=\"{r_attr}\" t=\"e\"><v>{}</v></cell>", esc(map_cell_error(*e).as_str()));
+                            }
+                        }
+                    }
+                    xml.push_str("</row>");
+                }
+                xml.push_str("</sheetData>");
+            }
+            xml.push_str("</sheetDataSet>");
+        }
+        xml.push_str("</externalBook>");
+    }
+    xml.push_str("</externalLink>");
+    (xml, rels)
 }

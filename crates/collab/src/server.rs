@@ -1769,7 +1769,7 @@ impl State {
                 self.reply(conn, &ServerMsg::Books { books });
             }
             ClientMsg::CreateBook { name, xlsx, source, sha256, access } => {
-                return self.on_create_book(conn, Caller { user, role, display }, name, xlsx, source, sha256, access);
+                return self.on_create_book(conn, Caller { user, role, display }, name, (xlsx, sha256), source, access);
             }
             ClientMsg::OpenBook { book } => return self.on_open_book(conn, Caller { user, role, display }, book),
             ClientMsg::CloseBook { book } => return self.on_close_book(conn, Caller { user, role, display }, book),
@@ -2105,15 +2105,14 @@ impl State {
         Ok(())
     }
 
-    #[allow(clippy::too_many_arguments)]
+    /// `upload`: the .xlsx (base64) and its checksum, as `CreateBook` sends them.
     fn on_create_book(
         &mut self,
         conn: u64,
         who: Caller,
         name: String,
-        xlsx: Option<String>,
+        (xlsx, sha256): (Option<String>, Option<String>),
         source: Option<FileSource>,
-        sha256: Option<String>,
         access: Option<Access>,
     ) -> Result<()> {
         let Caller { user, role, display } = who;
