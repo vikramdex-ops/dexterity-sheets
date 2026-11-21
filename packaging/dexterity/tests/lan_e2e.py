@@ -22,6 +22,8 @@ REL = os.path.abspath(sys.argv[1] if len(sys.argv) > 1 else os.path.join("target
 APP = next((os.path.join(REL, n) for n in ("DexteritySheets.exe", "gridcraft.exe") if os.path.exists(os.path.join(REL, n))), None)
 SERVER = os.path.join(REL, "DexSheetsServer.exe")
 PORT = 47900
+# Rahul's PC is in the DDS domain: the server keys people by their account in lower case.
+RAHUL = "dds\\rahul"
 OUT = os.environ.get("E2E_OUT", os.path.join(os.getcwd(), "tests", "out"))
 results = []
 
@@ -32,7 +34,7 @@ def check(name, ok, detail=""):
 
 
 class App:
-    def __init__(self, port, token, who):
+    def __init__(self, port, token, who, domain=None):
         self.port, self.token, self.who = port, token, who
         # A profile of its own: the real build keeps crash-recovery copies, settings and the
         # remembered server under %LOCALAPPDATA% and %APPDATA%, and the test must never leave
@@ -47,7 +49,12 @@ class App:
             APPDATA=os.path.join(self.profile, "Roaming"),
             USERNAME=who,
         )
-        env.pop("USERDOMAIN", None)
+        # A PC in a domain signs in as DOMAIN\user: one person here does, as at the office (a
+        # backslash in the account once broke Save in every shared workbook).
+        if domain:
+            env["USERDOMAIN"] = domain
+        else:
+            env.pop("USERDOMAIN", None)
         os.makedirs(env["LOCALAPPDATA"])
         os.makedirs(env["APPDATA"])
         self.proc = subprocess.Popen([APP, "--control", str(port)], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -192,8 +199,26 @@ def blank_share_regression(a, b, data):
     ok = wait(lambda: a.value("B1") == "from B")
     check("B's edit reaches A without reopening", ok)
 
+    # Live typing: what A types shows in B's window as A types, before Enter (as in Slate).
+    a.run("selection.set", range="C3")
+    time.sleep(0.4)
+    a.call("ui.text", {"text": "150-P-30"})
 
-def shared_files(a, b, c):
+    def a_draft():
+        return next((p for d in b.status()["docs"] if d["active"] for p in d["peers"] if p.get("draft")), None)
+
+    p = wait(lambda: (lambda p: p if p and p["draft"] == "150-P-30" else None)(a_draft()), timeout=5, step=0.02)
+    check("B sees A's typing live, before Enter", p and p.get("draftCell") == "C3", json.dumps(p or [d["peers"] for d in b.status()["docs"] if d["active"]]))
+    a.call("ui.text", {"text": "02"})
+    p = wait(lambda: (lambda p: p if p and p["draft"] == "150-P-3002" else None)(a_draft()), timeout=5, step=0.02)
+    check("each further keystroke follows", p is not None, json.dumps(a_draft()))
+    b.shot(os.path.join(OUT, "b-sees-a-typing.png"))
+    a.call("ui.key", {"key": "Enter"})
+    ok = wait(lambda: b.value("C3") == "150-P-3002" and a_draft() is None)
+    check("Enter: the value arrives and the live draft goes", ok, json.dumps([b.value("C3"), a_draft()]))
+
+
+def shared_files(a, b, c, data):
     """Sharing a workbook from wherever it is saved: the file keeps everyone's edits."""
     job = tempfile.mkdtemp(prefix="Job 12 ")
     line = os.path.join(job, "Line list.xlsx")
@@ -207,6 +232,18 @@ def shared_files(a, b, c):
     check("vikram shares a file from a project folder", d and same_path(d["file"]["path"], line), json.dumps(d and d["file"]))
     check("the shared workbook takes the file's window", len(a.call("ui.inspect")["documents"]) == windows)
 
+    # Shared with the whole office (the default): everyone else is told (their Windows
+    # notification), once.
+    def shared_notices(app):
+        h = (app.run("collab.notifications") or {}).get("history", [])
+        return [n for n in h if n.get("kind") == "shared" and n.get("name") == "Line list"]
+
+    ok = wait(lambda: shared_notices(b) and shared_notices(c))
+    n = (shared_notices(b) or [{}])[0]
+    check("anita and rahul are told vikram shared it", ok and n.get("by") == "Vikram" and n.get("permission") == "editor", json.dumps(n))
+    time.sleep(1.0)
+    check("each is told once, and vikram not at all", len(shared_notices(b)) == 1 and len(shared_notices(c)) == 1 and not shared_notices(a))
+
     # Anita opens the same file: she joins the live workbook instead of editing her own copy.
     b.call("app.open", {"path": line})
     ok = wait(lambda: (lambda d: d and d["active"])(shared_doc(b, line)))
@@ -215,6 +252,7 @@ def shared_files(a, b, c):
     ok = wait(lambda: a.value("B2") == "anita was here")
     ok = ok and wait(lambda: "anita was here" in file_text(line), timeout=20)
     check("anita's edit is saved into vikram's file", ok)
+
     # Rahul picks it from the shared list, where it shows as vikram's file.
     book = next((x for x in c.status()["books"] if same_path(x.get("file"), line)), None)
     check("the shared list says which file it is", book is not None, json.dumps(book))
@@ -225,6 +263,13 @@ def shared_files(a, b, c):
     wait(lambda: a.value("C2") in (4242.5, "4242.5"))
     a.run("file.save")
     check("Save writes the file at once", "4242.5" in file_text(line))
+    # Save in a shared workbook by someone signed in as DOMAIN\user keeps a version on the
+    # server with no error (it once failed with "os error 3": the backslash went into the
+    # version's file name).
+    c.run("file.save")
+    found = wait(lambda: [f for root, _, fs in os.walk(os.path.join(data, "books")) for f in fs if f.endswith("-dds_rahul.xlsx")] or None)
+    msg = (c.call("ui.inspect").get("message") or {}).get("text") or ""
+    check("rahul (DDS\\rahul) saves the shared workbook: a version is kept, no error", found and "error" not in msg.lower(), msg or str(found))
 
     # Stop sharing: the file has every edit; the others are told and keep a copy.
     b.run("cell.set", cell="D2", input="last edit by anita")
@@ -319,7 +364,7 @@ def main():
     try:
         a = App(7981, "e2e-token-aaaaaaaaaaaa", "vikram")
         b = App(7982, "e2e-token-bbbbbbbbbbbb", "anita")
-        c = App(7983, "e2e-token-cccccccccccc", "rahul")
+        c = App(7983, "e2e-token-cccccccccccc", "rahul", domain="DDS")
         apps = [a, b, c]
         server = f"127.0.0.1:{PORT}"
 
@@ -396,7 +441,7 @@ def main():
 
         # Presence: anita sees where rahul is.
         c.run("selection.set", range="C5:D7")
-        ok = wait(lambda: any(p["user"] == "rahul" and p["range"] == "C5:D7" for d in b.status()["docs"] for p in d["peers"]))
+        ok = wait(lambda: any(p["user"] == RAHUL and p["range"] == "C5:D7" for d in b.status()["docs"] for p in d["peers"]))
         check("anita sees rahul's selection", ok)
         b.shot(os.path.join(OUT, "anita-sees-rahul.png"))
 
@@ -427,10 +472,10 @@ def main():
                         hist_path = os.path.join(root, "audit.jsonl")
         lines = open(hist_path, encoding="utf-8").read().splitlines() if hist_path else []
         users = {json.loads(l)["user"] for l in lines}
-        check("server audit trail names every editor", {"vikram", "anita", "rahul"} <= users, f"{len(lines)} audit lines, users={sorted(users)}")
+        check("server audit trail names every editor", {"vikram", "anita", RAHUL} <= users, f"{len(lines)} audit lines, users={sorted(users)}")
         a.shot(os.path.join(OUT, "vikram-window.png"))
         mentions(a, b, c, server)
-        shared_files(a, b, c)
+        shared_files(a, b, c, data)
         time.sleep(1.5)
     finally:
         for x in apps:

@@ -99,6 +99,11 @@ struct BookMeta {
     /// The last edit each person had when they closed it (for "changed while you were away").
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     seen: BTreeMap<String, u64>,
+    /// Everyone given access when it was shared was told then, so a later change of access is
+    /// news to each of them (a different permission, or no longer shared). False for workbooks
+    /// shared before servers did this.
+    #[serde(default)]
+    announced: bool,
 }
 
 struct Book {
@@ -808,6 +813,9 @@ fn book_of(m: &ClientMsg) -> Option<String> {
         _ => None,
     }
 }
+
+/// The longest typing-in-progress text relayed to others (characters).
+const MAX_DRAFT: usize = 2000;
 
 fn encode(msg: &ServerMsg) -> Option<Arc<Vec<u8>>> {
     let mut buf = Vec::new();
@@ -1576,6 +1584,7 @@ impl State {
             source,
             access: Access::default(),
             seen: BTreeMap::new(),
+            announced: true,
         };
         self.save_meta(&meta)?;
         self.metas.insert(id, meta.clone());
@@ -1624,7 +1633,11 @@ impl State {
         let time = now_ms();
         b.last_version = time;
         let clean: String = label.chars().map(|c| if c.is_alphanumeric() || c == ' ' || c == '-' { c } else { '_' }).take(60).collect();
-        let vid = format!("{time}-{}-{}", b.meta.seq, user);
+        // The id is a file name: a Windows account (`DOMAIN\user`)
+        // would put a folder separator in it (os error 3 on every Save). Only the characters
+        // `version_path` accepts.
+        let who: String = user.chars().map(|c| if c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.') { c } else { '_' }).collect();
+        let vid = format!("{time}-{}-{who}", b.meta.seq);
         write_atomic(&dir.join(format!("{vid}.xlsx")), &b.snapshot)?;
         let info = VersionInfo {
             id: vid.clone(),
@@ -1755,8 +1768,8 @@ impl State {
                 let books = self.books_for(&user, role);
                 self.reply(conn, &ServerMsg::Books { books });
             }
-            ClientMsg::CreateBook { name, xlsx, source, sha256 } => {
-                return self.on_create_book(conn, Caller { user, role, display }, name, xlsx, source, sha256);
+            ClientMsg::CreateBook { name, xlsx, source, sha256, access } => {
+                return self.on_create_book(conn, Caller { user, role, display }, name, (xlsx, sha256), source, access);
             }
             ClientMsg::OpenBook { book } => return self.on_open_book(conn, Caller { user, role, display }, book),
             ClientMsg::CloseBook { book } => return self.on_close_book(conn, Caller { user, role, display }, book),
@@ -1767,12 +1780,15 @@ impl State {
                     self.reply(conn, &ServerMsg::Rejected { book, cseq, reason: e.to_string() });
                 }
             }
-            ClientMsg::Presence { book, sheet, range, editing } => {
+            ClientMsg::Presence { book, sheet, range, editing, draft_cell, draft } => {
                 // Only where the person may look: a selection is not shown on a workbook they
                 // have no access to (nor relayed to its readers).
                 self.require(&user, role, &book, false)?;
                 let Some(u) = self.users.iter().find(|u| u.user == user) else { return Ok(()) };
-                let peer = Peer { user: user.clone(), display: u.display.clone(), color: u.color, sheet, range, editing, conn };
+                // A draft is shown in one cell: bounded, as a cell's own text is.
+                let draft: String = if editing { draft.chars().take(MAX_DRAFT).collect() } else { String::new() };
+                let draft_cell = if draft.is_empty() { String::new() } else { draft_cell.chars().take(16).collect() };
+                let peer = Peer { user: user.clone(), display: u.display.clone(), color: u.color, sheet, range, editing, draft_cell, draft, conn };
                 if let Some(c) = self.conns.get_mut(&conn) {
                     c.peer.insert(book.clone(), peer.clone());
                 }
@@ -2089,16 +2105,17 @@ impl State {
         Ok(())
     }
 
+    /// `upload`: the .xlsx (base64) and its checksum, as `CreateBook` sends them.
     fn on_create_book(
         &mut self,
         conn: u64,
         who: Caller,
         name: String,
-        xlsx: Option<String>,
+        (xlsx, sha256): (Option<String>, Option<String>),
         source: Option<FileSource>,
-        sha256: Option<String>,
+        access: Option<Access>,
     ) -> Result<()> {
-        let Caller { user, role, .. } = who;
+        let Caller { user, role, display } = who;
         if !role.can_edit() {
             return Err(Error::Denied("view-only accounts can't create workbooks".into()));
         }
@@ -2113,8 +2130,32 @@ impl State {
             Some(s) => Some(proto::unb64_checked(&s, sha256.as_deref().unwrap_or(""))?),
             None => None,
         };
-        let meta = self.create_book(&user, &name, bytes.as_deref(), source)?;
+        let mut meta = self.create_book(&user, &name, bytes.as_deref(), source)?;
         log::info!("{user} created \"{}\"", meta.name);
+        if let Some(a) = access {
+            meta.access = self.clean_access(a);
+            self.save_meta(&meta)?;
+            self.metas.insert(meta.id.clone(), meta.clone());
+        }
+        // Everyone it is now shared with hears of it (a desktop notification on their PC):
+        // the whole office for an office-wide share, the named people otherwise.
+        let now = now_ms();
+        let told: Vec<(String, &'static str)> =
+            self.users.iter().filter(|u| u.user != user).filter_map(|u| Some((u.user.clone(), permission(&meta, &u.user, u.role, now)?))).collect();
+        for (who, p) in told {
+            self.notify(
+                &who,
+                Notice {
+                    kind: "shared".into(),
+                    book: meta.id.clone(),
+                    name: meta.name.clone(),
+                    by: display.clone(),
+                    permission: p.into(),
+                    text: format!("{display} shared a spreadsheet with you · {}", if p == "editor" { "can edit" } else { "can view" }),
+                    ..Notice::default()
+                },
+            );
+        }
         self.broadcast_books();
         self.dispatch(conn, ClientMsg::OpenBook { book: meta.id })
     }
@@ -2212,14 +2253,10 @@ impl State {
         Ok(())
     }
 
-    fn on_set_access(&mut self, conn: u64, who: Caller, book: String, access: Access) -> Result<()> {
-        let Caller { user, role, display } = who;
-        let m = self.metas.get(&book).cloned().ok_or_else(|| Error::Denied("no such workbook".into()))?;
-        if role != Role::Admin && m.created_by != user {
-            return Err(Error::Denied("only the workbook's creator or an administrator can change who has access".into()));
-        }
+    /// Access as the server keeps it: known people only, `editor` or `viewer`.
+    fn clean_access(&self, access: Access) -> Access {
         let clean = |p: &str| if p == "viewer" { "viewer".to_string() } else { "editor".to_string() };
-        let access = Access {
+        Access {
             mode: if access.mode == "people" { "people".into() } else { "office".into() },
             everyone: clean(&access.everyone),
             people: access
@@ -2231,7 +2268,16 @@ impl State {
                 .collect(),
             expires: access.expires,
             download: access.download,
-        };
+        }
+    }
+
+    fn on_set_access(&mut self, conn: u64, who: Caller, book: String, access: Access) -> Result<()> {
+        let Caller { user, role, display } = who;
+        let m = self.metas.get(&book).cloned().ok_or_else(|| Error::Denied("no such workbook".into()))?;
+        if role != Role::Admin && m.created_by != user {
+            return Err(Error::Denied("only the workbook's creator or an administrator can change who has access".into()));
+        }
+        let access = self.clean_access(access);
         let now = now_ms();
         let before: Vec<(String, Option<&'static str>)> =
             self.users.iter().filter(|u| u.user != user).map(|u| (u.user.clone(), permission(&m, &u.user, u.role, now))).collect();
@@ -2247,10 +2293,15 @@ impl State {
         for (who, was) in before {
             let role_of = self.users.iter().find(|u| u.user == who).map_or(Role::Viewer, |u| u.role);
             let now_p = permission(&next, &who, role_of, now);
-            // Only the people it concerns: named before or now, or who have had it open.
-            let involved = m.access.people.contains_key(&who) || next.access.people.contains_key(&who) || m.seen.contains_key(&who);
-            // Access they never used (the whole office could open it) counts as newly shared.
-            let fresh = !m.seen.contains_key(&who) && !m.access.people.contains_key(&who);
+            // Only the people it concerns: named before or now, who have had it open, or who were
+            // told when it was shared.
+            let involved = m.access.people.contains_key(&who)
+                || next.access.people.contains_key(&who)
+                || m.seen.contains_key(&who)
+                || (m.announced && was.is_some());
+            // Access they never used and were never told of (the whole office could open it)
+            // counts as newly shared.
+            let fresh = !m.announced && !m.seen.contains_key(&who) && !m.access.people.contains_key(&who);
             let was = if fresh && now_p.is_some() { None } else { was };
             if was == now_p || !involved {
                 continue;

@@ -567,6 +567,11 @@ fn apply_access(app: &mut SheetApp, a: Access) -> Result<Json, String> {
     }
 }
 
+/// The access chosen in the Share dialog for a workbook being shared now: sent with it.
+pub fn take_pending_access(app: &mut SheetApp) -> Option<Access> {
+    app.collab.share.pending_access.take().map(|(_, a)| a)
+}
+
 /// A shared workbook arrived: if it was shared from the dialog, its access is set now.
 pub fn opened(app: &mut SheetApp, book: &proto::BookInfo) {
     let me = app.collab.me.as_ref().map(|m| m.user.clone()).unwrap_or_default();

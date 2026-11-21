@@ -126,8 +126,8 @@ pub struct Collab {
     dropped: Option<String>,
     /// Workbooks asked for and not yet arrived.
     opening: Vec<String>,
-    /// The last presence sent: (doc uid, sheet, range, editing).
-    presence: Option<(u64, String, String, bool)>,
+    /// The last presence sent.
+    presence: Option<Presence>,
     presence_at: f64,
     pub history: HistoryPane,
     pub versions: Vec<VersionInfo>,
@@ -455,7 +455,7 @@ pub fn tick(app: &mut SheetApp, ctx: &egui::Context) {
             app.collab.send(ClientMsg::OpenBook { book: id });
         }
     }
-    send_presence(app);
+    send_presence(app, ctx);
     // Ask again every four hours, so a long-running window still hears of new versions.
     if app.collab.client.as_ref().is_some_and(Client::online) && crate::now_ms() - app.collab.last_update_check > 4.0 * 3600.0 * 1000.0 {
         app.collab.last_update_check = crate::now_ms();
@@ -501,20 +501,47 @@ fn send_local(app: &mut SheetApp) {
     }
 }
 
-fn send_presence(app: &mut SheetApp) {
+/// Where this person is and, while they type in a cell, what they have typed so far: sent on
+/// each keystroke (bursts within [`PRESENCE_MS`] go as one), so the others watch the text being
+/// written live, as in Slate, rather than seeing it only after Enter.
+fn send_presence(app: &mut SheetApp, ctx: &egui::Context) {
     let Some(d) = app.session.active() else { return };
     let Some(sd) = app.collab.shared(d.uid) else { return };
     let sheet = d.wb.active().map(|s| s.name.clone()).unwrap_or_default();
     let range = d.selection.ranges.iter().map(RangeRef::a1).collect::<Vec<_>>().join(",");
-    let now = (d.uid, sheet, range, app.editor.is_some());
-    if app.collab.presence.as_ref() == Some(&now) || crate::now_ms() - app.collab.presence_at < 80.0 {
+    let draft = match &app.editor {
+        // A Python cell's code stays private to the person writing it until it is entered.
+        Some(e) if e.doc == d.uid && !e.py_cell && !e.python => (e.cell.a1(), e.text.clone()),
+        _ => (String::new(), String::new()),
+    };
+    let now = (d.uid, sheet, range, app.editor.is_some(), draft);
+    if app.collab.presence.as_ref() == Some(&now) {
+        return;
+    }
+    let wait = PRESENCE_MS - (crate::now_ms() - app.collab.presence_at);
+    if wait > 0.0 {
+        // The last keystroke of a burst still goes out.
+        ctx.request_repaint_after(std::time::Duration::from_millis(wait.ceil() as u64));
         return;
     }
     let book = sd.book.id.clone();
     app.collab.presence_at = crate::now_ms();
-    app.collab.send(ClientMsg::Presence { book, sheet: now.1.clone(), range: now.2.clone(), editing: now.3 });
+    app.collab.send(ClientMsg::Presence {
+        book,
+        sheet: now.1.clone(),
+        range: now.2.clone(),
+        editing: now.3,
+        draft_cell: now.4.0.clone(),
+        draft: now.4.1.clone(),
+    });
     app.collab.presence = Some(now);
 }
+
+/// What a presence message said: (doc uid, sheet, range, editing, (draft cell, draft text)).
+type Presence = (u64, String, String, bool, (String, String));
+
+/// The shortest gap between two presence messages (ms): about one per keystroke.
+const PRESENCE_MS: f64 = 40.0;
 
 fn handle(app: &mut SheetApp, e: Event) {
     match e {
@@ -893,7 +920,7 @@ pub fn run_command(app: &mut SheetApp, id: &str, p: &Json) -> Option<Result<Json
         }
         "collab.create" => {
             let name = p.get("name").and_then(Json::as_str).unwrap_or("").to_string();
-            app.collab.send(ClientMsg::CreateBook { name, xlsx: None, source: None, sha256: None });
+            app.collab.send(ClientMsg::CreateBook { name, xlsx: None, source: None, sha256: None, access: None });
             Ok(Json::Null)
         }
         "collab.status" => {
@@ -904,7 +931,7 @@ pub fn run_command(app: &mut SheetApp, id: &str, p: &Json) -> Option<Result<Json
                 .map(|d| {
                     json!({
                         "book": d.book.name, "id": d.book.id, "seq": d.seq, "pending": d.pending_len(), "state": sync_state(c, d).key(),
-                        "peers": d.peers.iter().map(|p| json!({"user": p.user, "sheet": p.sheet, "range": p.range, "editing": p.editing})).collect::<Vec<_>>(),
+                        "peers": d.peers.iter().map(|p| json!({"user": p.user, "sheet": p.sheet, "range": p.range, "editing": p.editing, "draftCell": p.draft_cell, "draft": p.draft})).collect::<Vec<_>>(),
                         "active": app.session.active().is_some_and(|a| a.uid == d.doc_uid),
                         // Where that window is: the active sheet and cell.
                         "at": app.session.documents().iter().find(|x| x.uid == d.doc_uid).and_then(|x| x.wb.active().map(|s| format!("{}!{}", s.name, x.selection.active.a1()))),
@@ -1038,7 +1065,9 @@ fn share_doc(app: &mut SheetApp, uid: u64, name: Option<&str>) -> Result<Json, S
     };
     app.collab.joining.push(Joining { key: source.as_ref().map(|s| s.key.clone()), name: name.clone(), doc_uid: uid, wb, link, uploaded: true });
     let sha256 = Some(proto::sha256_hex(&bytes));
-    app.collab.send(ClientMsg::CreateBook { name, xlsx: Some(proto::b64(&bytes)), source, sha256 });
+    // Who it is for (the Share dialog) goes with it, so each of them is told once.
+    let access = crate::dex_ui::share::take_pending_access(app);
+    app.collab.send(ClientMsg::CreateBook { name, xlsx: Some(proto::b64(&bytes)), source, sha256, access });
     app.toast = Some((note, crate::now_ms()));
     Ok(Json::Null)
 }
@@ -1802,7 +1831,7 @@ fn books_list(app: &mut SheetApp, ui: &mut Ui, t: &Tokens, me: &UserInfo, close:
             ui.add(egui::TextEdit::singleline(&mut app.collab.new_name).hint_text("Name of a new shared workbook").desired_width(300.0));
             if ui.button("New shared workbook").clicked() && !app.collab.new_name.trim().is_empty() {
                 let name = std::mem::take(&mut app.collab.new_name);
-                app.collab.send(ClientMsg::CreateBook { name, xlsx: None, source: None, sha256: None });
+                app.collab.send(ClientMsg::CreateBook { name, xlsx: None, source: None, sha256: None, access: None });
             }
             let can_share = app.session.active().is_some_and(|d| app.collab.shared(d.uid).is_none());
             if ui
@@ -1940,7 +1969,35 @@ pub fn paint_peers(p: &Painter, geo: &Geo, sh: &Sheet, app: &SheetApp, rows: (u3
                 p.galley(tag.min + vec2(4.0, 1.0), galley, Color32::WHITE);
             }
         }
+        paint_draft(p, geo, sh, peer, c, rows, cols);
     }
+}
+
+/// What a teammate is typing, live in the cell they type in (as in Slate): the text so far on
+/// the cell's background, widening to the right as a long entry would, with a caret in their
+/// colour. It goes when they press Enter (the edit itself then arrives) or Esc.
+fn paint_draft(p: &Painter, geo: &Geo, sh: &Sheet, peer: &proto::Peer, c: Color32, rows: (u32, u32), cols: (u32, u32)) {
+    if !peer.editing || peer.draft_cell.is_empty() {
+        return;
+    }
+    let Some(at) = CellRef::parse(&peer.draft_cell) else { return };
+    if at.row < rows.0 || at.row > rows.1 || at.col < cols.0 || at.col > cols.1 {
+        return;
+    }
+    let t = Tokens::get(p.ctx());
+    let cell = geo.cell_rect(sh, at);
+    let line = peer.draft.lines().last().unwrap_or("");
+    let galley = p.layout_no_wrap(line.to_string(), FontId::proportional(13.0), t.text);
+    let w = (galley.size().x + 10.0).clamp(cell.width(), cell.width().max(480.0));
+    let h = cell.height().max(galley.size().y + 4.0);
+    let rect = egui::Rect::from_min_size(cell.min, vec2(w, h));
+    p.rect_filled(rect, 0.0, t.grid_bg);
+    p.rect_stroke(rect, 0.0, Stroke::new(2.0, c), StrokeKind::Inside);
+    let clip = p.with_clip_rect(rect.shrink(2.0).intersect(p.clip_rect()));
+    let text_at = pos2(rect.left() + 4.0, rect.center().y - galley.size().y / 2.0);
+    let caret_x = (text_at.x + galley.size().x + 1.0).min(rect.right() - 3.0);
+    clip.galley(text_at, galley, t.text);
+    clip.line_segment([pos2(caret_x, rect.top() + 3.0), pos2(caret_x, rect.bottom() - 3.0)], Stroke::new(2.0, c));
 }
 
 // ---------------------------------------------------------------------------------------------

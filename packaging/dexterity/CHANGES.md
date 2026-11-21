@@ -9,6 +9,10 @@ its newest changes); the release notes on GitHub list every one of them with its
 
 ## Unreleased
 
+- **Save works in shared spreadsheets again.** Since 1.7.0 (people are Windows accounts), Save in a shared spreadsheet failed with "network or disk error: The system cannot find the path specified. (os error 3)", and the server's hourly versions were not kept either. The office server needs this version for the fix.
+- **You are told when a spreadsheet is shared with you.** Sharing with everyone at the office (the default) now sends each person a Windows notification with **Open Spreadsheet**, as sharing with named people does; someone not connected is told at their next sign-in. Choices made in the Share dialog are sent with the workbook, so each person is told once.
+- **Watch teammates type, live.** In a shared spreadsheet, what a teammate types in a cell now shows in that cell as they type, letter by letter, with a caret and their name tag in their colour, before they press Enter, as co-editing works in Slate. It disappears when they press Enter (their edit arrives) or Esc. Python cell code stays private until it is entered.
+
 ## 1.7.3 · 20 November 2026
 
 - More fixes and improvements from official GridCraft (still GridCraft 0.19.1): 10 changes, the newest below. The release notes on GitHub list them all.

@@ -98,6 +98,10 @@ pub enum ClientMsg {
         /// [`sha256_hex`] of the .xlsx: the server refuses an upload that arrived damaged.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         sha256: Option<String>,
+        /// Who may open it, chosen in the Share dialog (everyone at the office as editors when
+        /// absent). Set with the workbook, so everyone it is shared with is told once.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        access: Option<Access>,
     },
     OpenBook {
         book: String,
@@ -175,6 +179,12 @@ pub enum ClientMsg {
         range: String,
         #[serde(default)]
         editing: bool,
+        /// While `editing`: the cell being typed in (A1) and what is typed so far, sent on each
+        /// keystroke so the others watch it being written, before Enter.
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        draft_cell: String,
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        draft: String,
     },
     /// Edits of one cell (`cell` given) or of the workbook, newest first.
     History {
@@ -600,6 +610,11 @@ pub struct Peer {
     pub range: String,
     #[serde(default)]
     pub editing: bool,
+    /// The cell being typed in and the text so far ([`ClientMsg::Presence`]).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub draft_cell: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub draft: String,
     /// One entry per connection, so the same person on two machines shows twice.
     pub conn: u64,
 }
