@@ -9,6 +9,11 @@ its newest changes); the release notes on GitHub list every one of them with its
 
 ## Unreleased
 
+- More fixes and improvements from official GridCraft (still GridCraft 0.19.1): 3 changes, the newest below. The release notes on GitHub list them all.
+- From GridCraft: xlsx: drop unresolved/non-workbook XLSB external formulas before remapping
+- From GridCraft: xlsx: emit schema-valid externalLink child for missing/other XLSB slots
+- From GridCraft: xlsx: emit placeholder externalLink part and r:id for missing XLSB link slots
+
 ## 1.7.4 · 21 November 2026
 
 - **Save works in shared spreadsheets again.** Since 1.7.0 (people are Windows accounts), Save in a shared spreadsheet failed with "network or disk error: The system cannot find the path specified. (os error 3)", and the server's hourly versions were not kept either. The office server needs this version for the fix.
