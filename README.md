@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <sub><!-- dex:release -->Version <b>1.7.4</b> · 21 November 2026 · based on GridCraft 0.19.1<!-- /dex:release --> · Windows 10 and 11 · no administrator rights needed · updates itself</sub>
+  <sub><!-- dex:release -->Version <b>1.7.5</b> · 23 November 2026 · based on GridCraft 0.19.1<!-- /dex:release --> · Windows 10 and 11 · no administrator rights needed · updates itself</sub>
 </p>
 
 <p align="center">
@@ -108,11 +108,12 @@
 ## What's new
 
 <!-- dex:whatsnew -->
-- **Save works in shared spreadsheets again.** Since 1.7.0 (people are Windows accounts), Save in a shared spreadsheet failed with "network or disk error: The system cannot find the path specified. (os error 3)", and the server's hourly versions were not kept either. The office server needs this version for the fix.
-- **You are told when a spreadsheet is shared with you.** Sharing with everyone at the office (the default) now sends each person a Windows notification with **Open Spreadsheet**, as sharing with named people does; someone not connected is told at their next sign-in. Choices made in the Share dialog are sent with the workbook, so each person is told once.
-- **Watch teammates type, live.** In a shared spreadsheet, what a teammate types in a cell now shows in that cell as they type, letter by letter, with a caret and their name tag in their colour, before they press Enter, as co-editing works in Slate. It disappears when they press Enter (their edit arrives) or Esc. Python cell code stays private until it is entered.
+- More fixes and improvements from official GridCraft (still GridCraft 0.19.1): 3 changes, the newest below. The release notes on GitHub list them all.
+- From GridCraft: xlsx: drop unresolved/non-workbook XLSB external formulas before remapping
+- From GridCraft: xlsx: emit schema-valid externalLink child for missing/other XLSB slots
+- From GridCraft: xlsx: emit placeholder externalLink part and r:id for missing XLSB link slots
 
-[Everything in 1.7.4](https://github.com/vikramdex-ops/dexterity-sheets/releases/tag/v1.7.4).
+[Everything in 1.7.5](https://github.com/vikramdex-ops/dexterity-sheets/releases/tag/v1.7.5).
 <!-- /dex:whatsnew -->
 
 Dexterity Sheets is built on the open-source [GridCraft](https://github.com/storytold/gridcraft)

@@ -9,6 +9,8 @@ its newest changes); the release notes on GitHub list every one of them with its
 
 ## Unreleased
 
+## 1.7.5 · 23 November 2026
+
 - More fixes and improvements from official GridCraft (still GridCraft 0.19.1): 3 changes, the newest below. The release notes on GitHub list them all.
 - From GridCraft: xlsx: drop unresolved/non-workbook XLSB external formulas before remapping
 - From GridCraft: xlsx: emit schema-valid externalLink child for missing/other XLSB slots
