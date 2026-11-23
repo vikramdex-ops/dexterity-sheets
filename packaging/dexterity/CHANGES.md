@@ -9,6 +9,12 @@ its newest changes); the release notes on GitHub list every one of them with its
 
 ## Unreleased
 
+- More fixes and improvements from official GridCraft (still GridCraft 0.19.1): 7 changes, the newest below. The release notes on GitHub list them all.
+- From GridCraft: PivotTables: Distinct Count as a value summary
+- From GridCraft: Dropdown filter
+- From GridCraft: engine, model: one workbook-wide reference rewrite; rule formulas follow their ranges (ODS groundwork)
+- From GridCraft: Charts: series drawn and saved by their own kind; XLSX groups per drawn kind (groundwork for ODS)
+
 ## 1.7.6 · 23 November 2026
 
 - More fixes and improvements from official GridCraft (still GridCraft 0.19.1): 2 changes, the newest below. The release notes on GitHub list them all.
