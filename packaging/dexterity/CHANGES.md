@@ -9,6 +9,8 @@ its newest changes); the release notes on GitHub list every one of them with its
 
 ## Unreleased
 
+## 1.7.6 · 23 November 2026
+
 - More fixes and improvements from official GridCraft (still GridCraft 0.19.1): 2 changes, the newest below. The release notes on GitHub list them all.
 - From GridCraft: i18n: fill-handle and Home › Fill menu labels in every catalog
 
