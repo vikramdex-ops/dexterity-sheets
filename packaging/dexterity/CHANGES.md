@@ -9,6 +9,8 @@ its newest changes); the release notes on GitHub list every one of them with its
 
 ## Unreleased
 
+## 1.7.7 · 24 November 2026
+
 - More fixes and improvements from official GridCraft (still GridCraft 0.19.1): 7 changes, the newest below. The release notes on GitHub list them all.
 - From GridCraft: PivotTables: Distinct Count as a value summary
 - From GridCraft: Dropdown filter

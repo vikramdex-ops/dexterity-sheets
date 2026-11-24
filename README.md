@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <sub><!-- dex:release -->Version <b>1.7.6</b> · 23 November 2026 · based on GridCraft 0.19.1<!-- /dex:release --> · Windows 10 and 11 · no administrator rights needed · updates itself</sub>
+  <sub><!-- dex:release -->Version <b>1.7.7</b> · 24 November 2026 · based on GridCraft 0.19.1<!-- /dex:release --> · Windows 10 and 11 · no administrator rights needed · updates itself</sub>
 </p>
 
 <p align="center">
@@ -108,10 +108,13 @@
 ## What's new
 
 <!-- dex:whatsnew -->
-- More fixes and improvements from official GridCraft (still GridCraft 0.19.1): 2 changes, the newest below. The release notes on GitHub list them all.
-- From GridCraft: i18n: fill-handle and Home › Fill menu labels in every catalog
+- More fixes and improvements from official GridCraft (still GridCraft 0.19.1): 7 changes, the newest below. The release notes on GitHub list them all.
+- From GridCraft: PivotTables: Distinct Count as a value summary
+- From GridCraft: Dropdown filter
+- From GridCraft: engine, model: one workbook-wide reference rewrite; rule formulas follow their ranges (ODS groundwork)
+- From GridCraft: Charts: series drawn and saved by their own kind; XLSX groups per drawn kind (groundwork for ODS)
 
-[Everything in 1.7.6](https://github.com/vikramdex-ops/dexterity-sheets/releases/tag/v1.7.6).
+[Everything in 1.7.7](https://github.com/vikramdex-ops/dexterity-sheets/releases/tag/v1.7.7).
 <!-- /dex:whatsnew -->
 
 Dexterity Sheets is built on the open-source [GridCraft](https://github.com/storytold/gridcraft)
