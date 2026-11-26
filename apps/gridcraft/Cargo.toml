@@ -38,7 +38,7 @@ winit = { version = "0.30", default-features = false, features = ["x11", "waylan
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 # Same craft-libs revision as the workspace's craft-update and craft-window (see the root
 # Cargo.toml).
-craft-print = { git = "https://github.com/storytold/craft-libs", rev = "aa84415bae3b765fef6b7ef42404f66ad1cff9d9" }
+craft-print = { workspace = true }
 craft-update = { workspace = true }
 rfd = { workspace = true }
 arboard = { workspace = true, features = ["image-data"] }
@@ -54,6 +54,8 @@ arboard = { workspace = true, features = ["image-data", "wayland-data-control"] 
 pollster = "1"
 # Regional settings (`regional.rs`): HKCU\Control Panel\International. Already in the tree.
 windows-registry = "0.6"
+# The explicit AppUserModelID the nightly channel sets before its first window (`process_identity.rs`).
+winsafe = { version = "0.0.29", features = ["user", "shell"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 muda = { version = "0.21", default-features = false }
