@@ -248,7 +248,7 @@ fn append_file_sharing(w: &mut String, wb: &Workbook) {
     // Office needs a userName beside a legacy reservationPassword, so a nameless one gets a placeholder
     // rather than losing the password.
     let legacy = matches!(r.password, Some(gridcraft_model::PasswordHash::Legacy(_)));
-    let name = if r.user_name.is_empty() && legacy { "GridCraft" } else { r.user_name.as_str() };
+    let name = if r.user_name.is_empty() && legacy { "Dexterity Sheets" } else { r.user_name.as_str() };
     if !name.is_empty() {
         let _ = write!(w, " userName=\"{}\"", esc_attr(name));
     }

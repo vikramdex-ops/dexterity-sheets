@@ -9,6 +9,16 @@ its newest changes); the release notes on GitHub list every one of them with its
 
 ## Unreleased
 
+- More fixes and improvements from official GridCraft (still GridCraft 0.19.1): 53 changes, the newest below. The release notes on GitHub list them all.
+- From GridCraft: XLSX: keep an unedited embedded chart's XML on save
+- From GridCraft: i18n: add Vietnamese (vi) interface translations
+- From GridCraft: cargo xtask bench: calculation benchmarks on fixed in-code workbooks
+- From GridCraft: Tables never hold merged cells, which Excel removes the table for on open
+- From GridCraft: i18n: Paste Special's Add and Text to Columns' Comma get their own keys
+- From GridCraft: Make HYPERLINK formula cells behave as clickable links
+- From GridCraft: Print: Print Selection in File > Print > Settings, several selected areas print one after the other
+- From GridCraft: Cap text at 32,767 characters like Excel
+
 ## 1.7.7 · 24 November 2026
 
 - More fixes and improvements from official GridCraft (still GridCraft 0.19.1): 7 changes, the newest below. The release notes on GitHub list them all.
