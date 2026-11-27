@@ -297,19 +297,13 @@ fn validate_xlsx_workbook(wb: &Workbook) -> Result<(), IoError> {
     if wb.sheets.iter().any(|sheet| sheet.cell_pictures.keys().any(|c| sheet.cell(*c).is_some_and(|cell| cell.formula.is_some()))) {
         return Err(IoError::Format("a static cell picture cannot also contain a formula".into()));
     }
-<<<<<<< Dexterity Sheets
-    check_sheet_names(wb)?;
-    // Formulas written from here on spell this workbook's bare table names `Table[]`.
-    let _tables = crate::fmla::TableNames::of(wb);
-||||||| before
-    check_sheet_names(wb)?;
-=======
     check_sheet_names(wb)
 }
 
 pub fn write_xlsx_named_with(wb: &Workbook, kind: XlsxKind, book_name: Option<&str>, functions: FunctionInfo) -> Result<Vec<u8>, IoError> {
     validate_xlsx_workbook(wb)?;
->>>>>>> official GridCraft
+    // Formulas written from here on spell this workbook's bare table names `Table[]`.
+    let _tables = crate::fmla::TableNames::of(wb);
     let mut out = Out {
         parts: vec![],
         overrides: vec![],

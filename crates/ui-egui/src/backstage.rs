@@ -825,16 +825,9 @@ fn account(app: &mut SheetApp, ui: &mut Ui) {
     let t = Tokens::get(ui.ctx());
     let lang = app.ui.language;
     section(ui, lang, "Product Information");
-<<<<<<< Dexterity Sheets
-    ui.label(RichText::new("Dexterity Sheets").font(theme::ui_bold(16.0)).color(t.text));
-||||||| before
-    ui.label(RichText::new("GridCraft").font(theme::ui_bold(16.0)).color(t.text));
-=======
     ui.label(RichText::new(crate::channel::name()).font(theme::ui_bold(16.0)).color(t.text));
->>>>>>> official GridCraft
     ui.add_space(8.0);
     egui::Grid::new("backstage_account").num_columns(2).spacing(vec2(18.0, 8.0)).show(ui, |ui| {
-<<<<<<< Dexterity Sheets
         for (label, value) in [
             ("Version", gridcraft_collab::APP_VERSION.trim().to_string()),
             ("Publisher", "Dexterity Design Services Pvt. Ltd.".to_string()),
@@ -842,15 +835,6 @@ fn account(app: &mut SheetApp, ui: &mut Ui) {
             ("Licence", env!("CARGO_PKG_LICENSE").to_string()),
             ("Based on", format!("GridCraft {} by the ArtCraft team (MIT/Apache-2.0)", gridcraft_collab::GRIDCRAFT_RELEASE.trim())),
         ] {
-||||||| before
-        for (label, value) in
-            [("Version", env!("CARGO_PKG_VERSION").to_string()), ("Platform", platform()), ("Licence", env!("CARGO_PKG_LICENSE").to_string())]
-        {
-=======
-        for (label, value) in
-            [("Version", crate::channel::version().to_string()), ("Platform", platform()), ("Licence", env!("CARGO_PKG_LICENSE").to_string())]
-        {
->>>>>>> official GridCraft
             ui.label(RichText::new(lang.tr(label)).color(t.text_dim));
             ui.label(value);
             ui.end_row();

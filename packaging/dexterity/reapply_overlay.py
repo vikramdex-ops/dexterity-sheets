@@ -339,6 +339,9 @@ insert(
     "pub fn follow_link(app: &mut SheetApp, target: &str) {\n",
     "    if crate::dex_ui::suite::follow_link(app, target) {\n        return;\n    }\n",
 )
+# Help › About names Dexterity Sheets' own version (packaging/dexterity/VERSION). Upstream's line
+# reads the build channel's version since GridCraft 0.19 (`crate::channel::version()`).
+replace(f"{UI}/dialogs/about.rs", 'ui.label(format!("Version {}", crate::channel::version()));', 'ui.label(format!("Version {}", gridcraft_collab::APP_VERSION.trim()));', required=False)
 insert(
     f"{UI}/dialogs/about.rs",
     "dex_ui::releases::about_details(",
@@ -356,6 +359,9 @@ insert(
 )
 replace(MAIN, '"../../../assets/app-icon/gridcraft-macos-512.png"', '"../../../assets/app-icon/dexterity-sheets-macos-512.png"', required=False)
 replace(MAIN, '.map(|c| c.join("gridcraft"))', '.map(|c| c.join("dexterity-sheets"))', required=False)
+# Since GridCraft 0.19 the settings folder is resolved in app_dirs.rs (code and its tests).
+if os.path.exists(os.path.join(ROOT, "apps/gridcraft/src/app_dirs.rs")):
+    replace("apps/gridcraft/src/app_dirs.rs", '.join("gridcraft")', '.join("dexterity-sheets")', required=False)
 replace(MAIN, "//! GridCraft desktop app.\n", "//! Dexterity Sheets desktop app (GridCraft-based; the binary is `DexteritySheets`).\n", required=False)
 replace(MAIN, "//! Usage: `gridcraft [", "//! Usage: `DexteritySheets [", required=False)
 for p in glob.glob(os.path.join(ROOT, UI, "ribbon", "*.rs")):
@@ -373,11 +379,14 @@ insert(
     "    let mut app = SheetApp::new(session, services());\n",
     "    // Dexterity Sheets: crash recovery, links and notifications belong to the desktop app only.\n    gridcraft_ui_egui::dex_ui::enable_desktop();\n",
 )
+# The desktop's eframe::App wrapper held the SheetApp as `self.0` up to GridCraft 0.19 and as
+# `self.app` since its multi-window shell.
+APP_FIELD = "app" if "self.app.logic(ctx)" in read(MAIN) else "0"
 insert(
     "apps/gridcraft/src/main.rs",
     "dex_ui::recovery::clean_exit(",
     "    fn on_exit(&mut self) {\n        print::finish_pending_jobs();\n",
-    "        // Dexterity Sheets: a normal exit leaves no crash-recovery copies behind.\n        gridcraft_ui_egui::dex_ui::recovery::clean_exit(&mut self.0);\n",
+    "        // Dexterity Sheets: a normal exit leaves no crash-recovery copies behind.\n        gridcraft_ui_egui::dex_ui::recovery::clean_exit(&mut self." + APP_FIELD + ");\n",
 )
 insert(
     f"{UI}/grid/show.rs",
@@ -482,10 +491,12 @@ for indent in ("        ", "            "):
         break
 else:
     problems.append(f"{FMLA}: where `_xlpm.` prefixes are stripped (`Expr::Call(n, args) => Expr::Call(strip_param_prefix(n), args),`) not found for [Expr::Name(s.table)]")
+# Since GridCraft 0.19 the checks live in `validate_xlsx_workbook`, called first by the writer.
+WRITE_ANCHOR = "    validate_xlsx_workbook(wb)?;\n" if "    validate_xlsx_workbook(wb)?;\n" in read("crates/xlsx/src/write.rs") else "    check_sheet_names(wb)?;\n"
 insert(
     "crates/xlsx/src/write.rs",
     "crate::fmla::TableNames::of(wb)",
-    "    check_sheet_names(wb)?;\n",
+    WRITE_ANCHOR,
     "    // Formulas written from here on spell this workbook's bare table names `Table[]`.\n    let _tables = crate::fmla::TableNames::of(wb);\n",
 )
 
@@ -704,6 +715,20 @@ replace(
     B,
     """        for (label, value) in
             [("Version", env!("CARGO_PKG_VERSION").to_string()), ("Platform", platform()), ("Licence", env!("CARGO_PKG_LICENSE").to_string())]
+        {""",
+    """        for (label, value) in [
+            ("Version", gridcraft_collab::APP_VERSION.trim().to_string()),
+            ("Publisher", "Dexterity Design Services Pvt. Ltd.".to_string()),
+            ("Platform", platform()),
+            ("Licence", env!("CARGO_PKG_LICENSE").to_string()),
+            ("Based on", format!("GridCraft {} by the ArtCraft team (MIT/Apache-2.0)", gridcraft_collab::GRIDCRAFT_RELEASE.trim())),
+        ] {""",
+    required=False,
+)
+replace(
+    B,
+    """        for (label, value) in
+            [("Version", crate::channel::version().to_string()), ("Platform", platform()), ("Licence", env!("CARGO_PKG_LICENSE").to_string())]
         {""",
     """        for (label, value) in [
             ("Version", gridcraft_collab::APP_VERSION.trim().to_string()),

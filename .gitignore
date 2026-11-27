@@ -8,7 +8,6 @@ plan/
 /.claude/
 /target-*/
 /craft-fonts/
-<<<<<<< Dexterity Sheets
 
 /tests/out/
 /dist/
@@ -17,12 +16,8 @@ __pycache__/
 /media/
 /notes/
 /excel-watch/
-||||||| before
-=======
 
 # Checked out inside the workspace by the shared nightly workflows (craft-common-actions).
 /.nightly-tools
 /.nightly-input
 /craft-i18n
-__pycache__/
->>>>>>> official GridCraft

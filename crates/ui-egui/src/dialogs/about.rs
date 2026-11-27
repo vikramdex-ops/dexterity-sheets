@@ -15,20 +15,12 @@ pub(super) fn about(ui: &mut egui::Ui, d: &mut Dialog) {
         "Contributors" => crate::credits::contributors_ui(ui),
         "Models" => crate::credits::models_ui(ui),
         _ => {
-<<<<<<< Dexterity Sheets
-            ui.heading("Dexterity Sheets");
+            ui.heading(crate::channel::name());
             ui.label(format!("Version {}", gridcraft_collab::APP_VERSION.trim()));
             crate::dex_ui::releases::about_details(ui);
-||||||| before
-            ui.heading("GridCraft");
-            ui.label(format!("Version {}", env!("CARGO_PKG_VERSION")));
-=======
-            ui.heading(crate::channel::name());
-            ui.label(format!("Version {}", crate::channel::version()));
             if let Some(commit) = crate::channel::commit() {
                 ui.label(egui::RichText::new(format!("Built from {commit}")).small());
             }
->>>>>>> official GridCraft
             ui.add_space(4.0);
             ui.label("Internal spreadsheet of Dexterity Design Services Pvt. Ltd.");
             ui.add_space(4.0);

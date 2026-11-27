@@ -18,7 +18,7 @@ fn default_config_dir(platform: &str, env: &impl Fn(&str) -> Option<OsString>) -
             .filter(|v| !v.is_empty())
             .map(PathBuf::from)
             .or_else(|| env("HOME").map(|h| PathBuf::from(h).join(".config")))
-            .map(|c| c.join("gridcraft")),
+            .map(|c| c.join("dexterity-sheets")),
     }
 }
 
@@ -61,10 +61,10 @@ mod tests {
             config_dir_for("macos", &env(&[("HOME", &home.to_string_lossy())]), None),
             Some(home.join("Library/Application Support/Dexterity Sheets"))
         );
-        assert_eq!(config_dir_for("linux", &env(&[("HOME", &home.to_string_lossy())]), None), Some(home.join(".config").join("gridcraft")));
+        assert_eq!(config_dir_for("linux", &env(&[("HOME", &home.to_string_lossy())]), None), Some(home.join(".config").join("dexterity-sheets")));
         assert_eq!(
             config_dir_for("linux", &env(&[("XDG_CONFIG_HOME", "/xdg"), ("HOME", &home.to_string_lossy())]), None),
-            Some(PathBuf::from("/xdg").join("gridcraft"))
+            Some(PathBuf::from("/xdg").join("dexterity-sheets"))
         );
         assert_eq!(config_dir_for("linux", &env(&[("XDG_CONFIG_HOME", "")]), None), None);
     }
@@ -75,11 +75,11 @@ mod tests {
         let home_str = home.to_string_lossy().into_owned();
         assert_eq!(
             config_dir_for("linux", &env(&[("XDG_CONFIG_HOME", ""), ("HOME", &home_str)]), None),
-            Some(home.join(".config").join("gridcraft"))
+            Some(home.join(".config").join("dexterity-sheets"))
         );
         assert_eq!(
             config_dir_for("linux", &env(&[("XDG_CONFIG_HOME", "/xdg"), ("HOME", &home_str)]), None),
-            Some(PathBuf::from("/xdg").join("gridcraft"))
+            Some(PathBuf::from("/xdg").join("dexterity-sheets"))
         );
     }
 

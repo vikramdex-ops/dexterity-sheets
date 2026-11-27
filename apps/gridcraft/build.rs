@@ -16,11 +16,6 @@ mod build_channel;
 
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
-<<<<<<< Dexterity Sheets
-    println!("cargo:rerun-if-changed=../../assets/app-icon/dexterity-sheets.ico");
-||||||| before
-    println!("cargo:rerun-if-changed=../../assets/app-icon/gridcraft.ico");
-=======
     println!("cargo:rerun-if-env-changed=GRIDCRAFT_BUILD_CHANNEL");
     println!("cargo:rustc-check-cfg=cfg(gridcraft_nightly_v1)");
     let nightly = match std::env::var("GRIDCRAFT_BUILD_CHANNEL").as_deref() {
@@ -35,9 +30,8 @@ fn main() {
             std::process::exit(1);
         }
     };
-    println!("cargo:rerun-if-changed=../../assets/app-icon/gridcraft.ico");
+    println!("cargo:rerun-if-changed=../../assets/app-icon/dexterity-sheets.ico");
     println!("cargo:rerun-if-changed=../../assets/app-icon/gridcraft-nightly.ico");
->>>>>>> official GridCraft
     println!("cargo:rerun-if-env-changed=GRIDCRAFT_REQUIRE_WINRES");
     println!("cargo:rerun-if-env-changed=GRIDCRAFT_VERSION");
     let built_version = if nightly {
@@ -57,7 +51,6 @@ fn main() {
         return;
     }
     let mut res = winresource::WindowsResource::new();
-<<<<<<< Dexterity Sheets
     res.set_icon("../../assets/app-icon/dexterity-sheets.ico")
         .set("ProductName", "Dexterity Sheets")
         .set("FileDescription", "Dexterity Sheets spreadsheet")
@@ -68,27 +61,11 @@ fn main() {
         )
         .set("OriginalFilename", "DexteritySheets.exe")
         .set("InternalName", "DexteritySheets");
-||||||| before
-    res.set_icon("../../assets/app-icon/gridcraft.ico")
-        .set("ProductName", "GridCraft")
-        .set("FileDescription", "GridCraft spreadsheet")
-        .set("CompanyName", "Learning Machines LLC")
-        .set("LegalCopyright", "Copyright (c) the GridCraft authors. MIT OR Apache-2.0.")
-        .set("OriginalFilename", "gridcraft.exe")
-        .set("InternalName", "gridcraft");
-=======
-    res.set_icon(build_channel::windows_icon_path(nightly))
-        .set("ProductName", if nightly { "GridCraft Nightly" } else { "GridCraft" })
-        .set("FileDescription", if nightly { "GridCraft Nightly spreadsheet" } else { "GridCraft spreadsheet" })
-        .set("CompanyName", "Learning Machines LLC")
-        .set("LegalCopyright", "Copyright (c) the GridCraft authors. MIT OR Apache-2.0.")
-        .set("OriginalFilename", "gridcraft.exe")
-        .set("InternalName", "gridcraft");
     if nightly {
+        res.set_icon(build_channel::windows_icon_path(nightly));
         // The Launcher compares the PE ProductVersion with the exact feed identity.
         res.set("ProductVersion", &built_version);
     }
->>>>>>> official GridCraft
     if let Err(e) = res.compile() {
         if std::env::var_os("GRIDCRAFT_REQUIRE_WINRES").is_some() {
             eprintln!("embedding Windows resources failed: {e}");

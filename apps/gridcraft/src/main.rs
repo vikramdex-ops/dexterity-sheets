@@ -26,13 +26,9 @@ mod native_menu;
 mod nightly_session;
 mod opener;
 mod print;
-<<<<<<< Dexterity Sheets
-mod regional;
-||||||| before
-=======
 mod process_identity;
 mod profile_root;
->>>>>>> official GridCraft
+mod regional;
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -90,15 +86,9 @@ impl eframe::App for App {
     }
     fn on_exit(&mut self) {
         print::finish_pending_jobs();
-<<<<<<< Dexterity Sheets
         // Dexterity Sheets: a normal exit leaves no crash-recovery copies behind.
-        gridcraft_ui_egui::dex_ui::recovery::clean_exit(&mut self.0);
-        save_prefs(&self.0);
-||||||| before
-        save_prefs(&self.0);
-=======
+        gridcraft_ui_egui::dex_ui::recovery::clean_exit(&mut self.app);
         save_prefs(&self.app);
->>>>>>> official GridCraft
         // A ready update installs once the process has exited. The macOS exit below skips
         // dropping the app, so the helper is started here. A nightly has no updater at all.
         if gridcraft_ui_egui::channel::stable_services_allowed() {
@@ -124,31 +114,7 @@ impl eframe::App for App {
 /// The settings folder: the validated nightly profile, else the platform's own folder
 /// (`app_dirs`). Every writer of user state goes through it.
 fn config_dir() -> Option<std::path::PathBuf> {
-<<<<<<< Dexterity Sheets
-    if cfg!(target_os = "macos") {
-        std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join("Library/Application Support/Dexterity Sheets"))
-    } else if cfg!(windows) {
-        std::env::var_os("APPDATA").map(|a| std::path::PathBuf::from(a).join("Dexterity Sheets"))
-    } else {
-        std::env::var_os("XDG_CONFIG_HOME")
-            .map(std::path::PathBuf::from)
-            .or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".config")))
-            .map(|c| c.join("dexterity-sheets"))
-    }
-||||||| before
-    if cfg!(target_os = "macos") {
-        std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join("Library/Application Support/GridCraft"))
-    } else if cfg!(windows) {
-        std::env::var_os("APPDATA").map(|a| std::path::PathBuf::from(a).join("GridCraft"))
-    } else {
-        std::env::var_os("XDG_CONFIG_HOME")
-            .map(std::path::PathBuf::from)
-            .or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".config")))
-            .map(|c| c.join("gridcraft"))
-    }
-=======
     app_dirs::config_dir()
->>>>>>> official GridCraft
 }
 
 /// Runs without preferences (`GRIDCRAFT_NO_PREFS`, agents' test runs) neither read nor write
@@ -317,18 +283,18 @@ fn refusal_dialog(flavor: build_flavor::BuildFlavor, desktop_session: bool, maco
 /// app's event loop (Windows, X11/Wayland), and on standard error always. A headless form (`--version`
 /// on a runner) never gets here: the version query is answered before this and before any profile work.
 fn report_launch_profile_error(error: &str) {
-    eprintln!("GridCraft launch profile: {error}");
+    eprintln!("Dexterity Sheets launch profile: {error}");
     let desktop_session = cfg!(windows)
         || cfg!(target_os = "macos")
         || (cfg!(target_os = "linux") && ["DISPLAY", "WAYLAND_DISPLAY"].into_iter().any(|key| std::env::var_os(key).is_some_and(|v| !v.is_empty())));
     if refusal_dialog(build_flavor::COMPILED, desktop_session, cfg!(target_os = "macos")) {
         if let Err(error) = initialize_nightly_process_identity() {
-            eprintln!("GridCraft launch profile: {error}");
+            eprintln!("Dexterity Sheets launch profile: {error}");
             return;
         }
         #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         let _ = rfd::MessageDialog::new()
-            .set_title("GridCraft Nightly")
+            .set_title("Dexterity Sheets Nightly")
             .set_description(error)
             .set_level(rfd::MessageLevel::Error)
             .set_buttons(rfd::MessageButtons::Ok)
@@ -480,23 +446,15 @@ fn main() -> eframe::Result<()> {
         }
         return Ok(());
     }
-<<<<<<< Dexterity Sheets
-    if args.iter().any(|a| a == "--version" || a == "-V") {
-        println!("Dexterity Sheets {}", env!("CARGO_PKG_VERSION"));
-||||||| before
-    if args.iter().any(|a| a == "--version" || a == "-V") {
-        println!("GridCraft {}", env!("CARGO_PKG_VERSION"));
-=======
     // Before `--` only: everything after it is a file, even one named `--version`.
     if arguments.iter().take_while(|a| *a != "--").any(|a| a == "--version" || a == "-V") {
-        println!("GridCraft {}", gridcraft_ui_egui::channel::version());
->>>>>>> official GridCraft
+        println!("Dexterity Sheets {}", gridcraft_ui_egui::channel::version());
         return Ok(());
     }
     // The control channel is a stable-only service: a nightly window owns no port, writes no
     // token and never inherits the stable app's `GRIDCRAFT_CONTROL_PORT`/`GRIDCRAFT_CONTROL_TOKEN`.
     if nightly_control_refused(nightly, &args) {
-        eprintln!("GridCraft Nightly: the control channel is not part of the nightly channel");
+        eprintln!("Dexterity Sheets Nightly: the control channel is not part of the nightly channel");
         std::process::exit(2);
     }
     let control_port: Option<u16> = (!nightly).then(|| std::env::var("GRIDCRAFT_CONTROL_PORT").ok().and_then(|p| p.parse().ok())).flatten();
@@ -510,15 +468,9 @@ fn main() -> eframe::Result<()> {
     if let Some(logger) = logger {
         match log_dir().filter(|_| prefs_enabled()) {
             Some(dir) => match logger.attach_dir(&dir) {
-<<<<<<< Dexterity Sheets
-                Ok(path) => log::info!("Dexterity Sheets {}, log file {}", env!("CARGO_PKG_VERSION"), path.display()),
-||||||| before
-                Ok(path) => log::info!("GridCraft {}, log file {}", env!("CARGO_PKG_VERSION"), path.display()),
-=======
                 Ok(path) => {
                     log::info!("{} {}, log file {}", gridcraft_ui_egui::channel::name(), gridcraft_ui_egui::channel::version(), path.display())
                 }
->>>>>>> official GridCraft
                 // Standard error only by now (`attach_dir` gave up on the file); unlike `eprintln!`, never panics.
                 Err(e) => log::warn!("no log file: {e}"),
             },
@@ -559,14 +511,14 @@ fn main() -> eframe::Result<()> {
                 && watch.previous_unclean()
             {
                 app.notice = Some(gridcraft_ui_egui::Notice {
-                    text: "The last GridCraft Nightly session did not finish cleanly. Your saved workbooks are as you left them; only unsaved changes are affected.".into(),
+                    text: "The last Dexterity Sheets Nightly session did not finish cleanly. Your saved workbooks are as you left them; only unsaved changes are affected.".into(),
                     kind: gridcraft_ui_egui::NoticeKind::Warning,
                     action: None,
                 });
                 nightly_notice_shown = true;
             }
             if unavailable {
-                log::warn!("this window shares a GridCraft Nightly profile another window owns; its exit is not recorded");
+                log::warn!("this window shares a Dexterity Sheets Nightly profile another window owns; its exit is not recorded");
             }
             *session_watch.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = watch;
         }
@@ -587,13 +539,7 @@ fn main() -> eframe::Result<()> {
     let window_app_id =
         std::env::var("FLATPAK_ID").ok().filter(|id| !id.is_empty()).unwrap_or_else(|| gridcraft_ui_egui::channel::app_id().to_string());
     let mut viewport = egui::ViewportBuilder::default()
-<<<<<<< Dexterity Sheets
-        .with_title("Dexterity Sheets")
-||||||| before
-        .with_title("GridCraft")
-=======
         .with_title(gridcraft_ui_egui::channel::default_title())
->>>>>>> official GridCraft
         .with_inner_size([1440.0, 900.0])
         .with_min_inner_size([640.0, 420.0])
         .with_app_id(window_app_id)
@@ -635,13 +581,7 @@ fn main() -> eframe::Result<()> {
     let pending = std::cell::Cell::new(Some(app));
     let run = |options: eframe::NativeOptions| {
         eframe::run_native(
-<<<<<<< Dexterity Sheets
-            "Dexterity Sheets",
-||||||| before
-            "GridCraft",
-=======
             gridcraft_ui_egui::channel::name(),
->>>>>>> official GridCraft
             options,
             Box::new(|cc| {
                 let Some(mut app) = pending.take() else {

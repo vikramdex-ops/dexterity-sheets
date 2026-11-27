@@ -93,20 +93,16 @@ fn main() -> ExitCode {
     if let Some(code) = gridcraft_sandbox::handle_args(&raw) {
         return ExitCode::from(u8::try_from(code).unwrap_or(1));
     }
-<<<<<<< Dexterity Sheets
     if let Err(e) = apply_locale() {
         eprintln!("gridcraft-cli: {e}");
         return ExitCode::FAILURE;
     }
-||||||| before
-=======
     // The nightly profile protocol belongs to the desktop app: the Launcher's selector is not a
     // CLI option, and a CLI that silently ignored it would act on the wrong files.
     if let Some(flag) = launch_profile_argument(&raw) {
         eprintln!("gridcraft-cli: {flag} belongs to the GridCraft desktop app, not this CLI");
         return ExitCode::from(2);
     }
->>>>>>> official GridCraft
     let args: Vec<String> = std::env::args().skip(1).collect();
     let rest = args.get(1..).unwrap_or_default();
     let r = match args.first().map(String::as_str) {
