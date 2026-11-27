@@ -19,6 +19,7 @@ pub mod macros;
 pub mod pivot;
 pub mod print;
 pub mod python;
+pub mod quick_analysis;
 pub mod review;
 pub mod sheet;
 pub mod slicer;
@@ -191,6 +192,7 @@ pub fn command_specs() -> &'static [CommandSpec] {
         // Dexterity Sheets additions; an id upstream GridCraft registers itself is left to upstream's.
         let dex: Vec<CommandSpec> = dex::specs().into_iter().filter(|d| !v.iter().any(|c| c.id == d.id)).collect();
         v.extend(dex);
+        v.extend(quick_analysis::specs());
         v
     })
 }

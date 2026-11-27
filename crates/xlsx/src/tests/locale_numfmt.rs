@@ -28,7 +28,7 @@ fn replace_part(bytes: &[u8], name: &str, content: &str) -> Vec<u8> {
         let mut f = zip.by_index(i).unwrap();
         let mut b = vec![];
         f.read_to_end(&mut b).unwrap();
-        let n = f.name().to_string();
+        let n = f.name().unwrap().to_string();
         let b = if n == name { content.as_bytes().to_vec() } else { b };
         parts.push((n, b));
     }

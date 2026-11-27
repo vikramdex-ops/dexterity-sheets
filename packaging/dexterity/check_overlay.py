@@ -9,6 +9,7 @@ CI workflows run this check and fail if any marker is missing.
 Usage: python packaging/dexterity/check_overlay.py [repo root]
 """
 import glob
+import json
 import os
 import re
 import sys
@@ -42,6 +43,7 @@ HOOKS = [
     ("crates/ui-egui/src/{ribbon.rs,ribbon/*.rs}", "collab_ui::share_menu(app, ui)", "title-bar Share menu"),
     ("apps/gridcraft/Cargo.toml", 'name = "DexteritySheets"', "executable name"),
     ("apps/gridcraft/src/main.rs", "regional::apply();", "Windows regional settings (dates, grouping) like Excel"),
+    ("apps/gridcraft/src/app_dirs.rs", 'c.join("dexterity-sheets")', "the settings folder on Linux is Dexterity Sheets' own"),
     ("apps/gridcraft/src/main.rs", "mod regional;", "the regional-settings module is compiled in"),
     ("apps/gridcraft/src/main.rs", "dexterity-sheets-macos-512.png", "the macOS window icon is ours (the GridCraft one is not in the tree)"),
     ("crates/ui-egui/src/updates_ui.rs", "pub const APP: craft_update::App", "the update check looks at the Dexterity Sheets releases, never GridCraft's"),
@@ -98,7 +100,7 @@ HOOKS = [
     ("crates/numfmt/src/render.rs", "parts.buf.push(dex.thousands)", "the locale's thousands separator"),
     ("crates/numfmt/src/render.rs", "crate::dex::ctx().grouping.separator_at(n - i)", "grouping when a section has no integer placeholder"),
     ("crates/numfmt/src/render.rs", "crate::dex::ctx().decimal.encode_utf8(", "numbers show the locale's decimal point"),
-    ("apps/gridcraft/src/main.rs", "gridcraft_ui_egui::dex_ui::recovery::clean_exit(&mut self.0);", "a normal exit removes the crash-recovery copies"),
+    ("apps/gridcraft/src/main.rs", "gridcraft_ui_egui::dex_ui::recovery::clean_exit(&mut self.", "a normal exit removes the crash-recovery copies"),
     ("apps/gridcraft/src/main.rs", "gridcraft_ui_egui::dex_ui::enable_desktop();", "crash recovery, links and notifications run in the desktop app only (never in tests)"),
     ("crates/ui-egui/src/{dialogs.rs,dialogs/*.rs}", "crate::dex_ui::releases::about_details(ui);", "About shows the build, update channel and repository"),
     ("crates/ui-egui/src/{lib.rs,app.rs,app/*.rs}", "crate::dex_ui::share::open_link(self, path)", "dexterity:// links open shared spreadsheets"),
@@ -168,7 +170,26 @@ def unprotected_files(root):
     if r is None or r.returncode != 0:
         print("NOTE: new-file protection not checked (no git history for the recorded GridCraft commit)")
         return []
-    return [f"{p}: added by Dexterity but not in OURS (sync_upstream.py); add it or a pattern that covers it" for p in r.stdout.split() if not sync_upstream.matches(p, sync_upstream.OURS)]
+    # While a parked merge is being finished (sync-state.json present), GRIDCRAFT_COMMIT still
+    # names the GridCraft commit merged last time, so every file upstream added since then would
+    # look added by Dexterity: the files of the upstream commit being merged are upstream's.
+    upstream_files = set()
+    state = os.path.join(root, "packaging/dexterity/sync-state.json")
+    if os.path.exists(state):
+        try:
+            with open(state, encoding="utf-8") as f:
+                head = json.load(f).get("upstream") or ""
+        except (OSError, ValueError):
+            head = ""
+        if head:
+            t = subprocess.run(["git", "ls-tree", "-r", "--name-only", head], cwd=root, capture_output=True, text=True, encoding="utf-8")
+            if t.returncode == 0:
+                upstream_files = set(t.stdout.splitlines())
+    return [
+        f"{p}: added by Dexterity but not in OURS (sync_upstream.py); add it or a pattern that covers it"
+        for p in r.stdout.split()
+        if p not in upstream_files and not sync_upstream.matches(p, sync_upstream.OURS)
+    ]
 
 
 def main() -> int:

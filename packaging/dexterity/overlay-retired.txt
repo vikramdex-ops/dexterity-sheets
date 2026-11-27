@@ -1,0 +1,10 @@
+# Dexterity lines that may be missing from an upstream-owned file (see UPSTREAM.md, "the whole-tree
+# ledger"). One `path: line` per entry, with the reason in a comment above it.
+
+# GridCraft 0.19 moved the settings folder out of main.rs into app_dirs.rs; Dexterity's folder name
+# is now set there (reapply_overlay.py rule, check_overlay.py marker on app_dirs.rs).
+apps/gridcraft/src/main.rs: .map(|c| c.join("dexterity-sheets"))
+
+# GridCraft 0.19's zip upgrade made `ZipFile::name()` return a Result; this Dexterity test now
+# reads it as upstream's own tests do (`f.name().unwrap().to_string()`).
+crates/xlsx/src/tests/locale_numfmt.rs: let n = f.name().to_string();
