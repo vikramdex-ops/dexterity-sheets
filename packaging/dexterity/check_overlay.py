@@ -9,6 +9,7 @@ CI workflows run this check and fail if any marker is missing.
 Usage: python packaging/dexterity/check_overlay.py [repo root]
 """
 import glob
+import json
 import os
 import re
 import sys
@@ -169,7 +170,26 @@ def unprotected_files(root):
     if r is None or r.returncode != 0:
         print("NOTE: new-file protection not checked (no git history for the recorded GridCraft commit)")
         return []
-    return [f"{p}: added by Dexterity but not in OURS (sync_upstream.py); add it or a pattern that covers it" for p in r.stdout.split() if not sync_upstream.matches(p, sync_upstream.OURS)]
+    # While a parked merge is being finished (sync-state.json present), GRIDCRAFT_COMMIT still
+    # names the GridCraft commit merged last time, so every file upstream added since then would
+    # look added by Dexterity: the files of the upstream commit being merged are upstream's.
+    upstream_files = set()
+    state = os.path.join(root, "packaging/dexterity/sync-state.json")
+    if os.path.exists(state):
+        try:
+            with open(state, encoding="utf-8") as f:
+                head = json.load(f).get("upstream") or ""
+        except (OSError, ValueError):
+            head = ""
+        if head:
+            t = subprocess.run(["git", "ls-tree", "-r", "--name-only", head], cwd=root, capture_output=True, text=True, encoding="utf-8")
+            if t.returncode == 0:
+                upstream_files = set(t.stdout.splitlines())
+    return [
+        f"{p}: added by Dexterity but not in OURS (sync_upstream.py); add it or a pattern that covers it"
+        for p in r.stdout.split()
+        if p not in upstream_files and not sync_upstream.matches(p, sync_upstream.OURS)
+    ]
 
 
 def main() -> int:
